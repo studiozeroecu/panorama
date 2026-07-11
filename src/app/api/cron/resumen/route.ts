@@ -88,6 +88,35 @@ export async function GET(req: NextRequest) {
     secciones.push("🧾 <b>Cheques próximos (7 días)</b>: ninguno pendiente.");
   }
 
+  // Pedidos de tela atrasados (producción)
+  const { data: pedidosPend } = await supabase
+    .from("prod_pedidos_tela")
+    .select("nombre_tela, fecha_pedido, estado, proveedor_id")
+    .in("estado", ["pendiente", "en_camino"]);
+  if (pedidosPend?.length) {
+    const { data: provs } = await supabase.from("prod_proveedores").select("id, empresa, dias_entrega");
+    const atrasados: string[] = [];
+    for (const p of pedidosPend) {
+      const prov = provs?.find((x) => x.id === p.proveedor_id);
+      if (!prov || !p.fecha_pedido) continue;
+      // fecha estimada: días laborables desde el pedido
+      const d = new Date(`${p.fecha_pedido}T12:00:00Z`);
+      let sumados = 0;
+      while (sumados < prov.dias_entrega) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) sumados++;
+      }
+      const estimada = d.toISOString().slice(0, 10);
+      if (estimada < hoy) {
+        const dias = Math.round((new Date(`${hoy}T12:00Z`).getTime() - d.getTime()) / 86400000);
+        atrasados.push(`🔴 ${p.nombre_tela} (${prov.empresa}) — atrasado ${dias} día${dias !== 1 ? "s" : ""}`);
+      }
+    }
+    if (atrasados.length) {
+      secciones.push(`🧵 <b>Pedidos de tela atrasados</b>\n${atrasados.join("\n")}`);
+    }
+  }
+
   // Stock crítico (del último snapshot)
   if (s) {
     secciones.push(

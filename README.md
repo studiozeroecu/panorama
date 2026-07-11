@@ -76,6 +76,24 @@ Setup adicional (una sola vez):
    ```
 4. Prueba de la integración con Claude sin tocar Telegram: `node scripts/smoke-claude.mjs`.
 
+## Fase 3 — Control de Producción (/produccion)
+
+La app de producción (antes HTML independiente con localStorage/Supabase propio) vive ahora
+en `/produccion`, detrás del mismo login: prendas, proveedores, costos fijos, pedidos de tela,
+llegada, corte (con inventario de tela y cortes parciales), maquila, envío (estampado / stock
+online / locales con vínculo opcional a productos VATEX), estampados (costo configurable y
+validación de unidades), venta online (con fecha y precio reales) y resumen mensual coherente.
+
+Setup (una sola vez):
+
+1. Ejecuta `supabase/schema_fase3.sql` en el SQL Editor de Supabase.
+2. Ejecuta `supabase/migracion_produccion.sql` (una sola vez) — trae los datos del proyecto
+   viejo de Supabase de la app original. Regenerable con
+   `node scripts/generar-migracion-produccion.mjs`.
+
+El bot puede consultar producción: "¿cuánta tela me queda?", "¿qué hay en maquila?",
+"stock online". El resumen del lunes avisa de pedidos de tela atrasados.
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

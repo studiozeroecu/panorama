@@ -443,6 +443,121 @@ select {
   gap: 16px;
 }
 
+/* ---------- módulo producción ---------- */
+.prod-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 26px;
+  padding-bottom: 0;
+}
+.prod-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-family: var(--font-inter), sans-serif;
+  font-size: 13px;
+  padding: 9px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+.prod-tab:hover {
+  color: var(--text);
+}
+.prod-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+.prod-tab .count {
+  margin-left: 5px;
+  font-size: 10.5px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-family: var(--font-mono), monospace;
+}
+
+.pinput {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-inter), sans-serif;
+  color-scheme: dark;
+  width: 100%;
+}
+.pinput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+textarea.pinput {
+  resize: vertical;
+}
+
+.prod-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  background: var(--surface-2);
+  border: 1px solid var(--good);
+  color: var(--good);
+  border-radius: 10px;
+  padding: 11px 18px;
+  font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.prod-toast-error {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.prod-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-bottom: 12px;
+}
+.prod-card h4 {
+  font-family: var(--font-grotesk), sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+.prod-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-top: 3px;
+}
+.prod-progress {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  flex: 1;
+}
+.prod-progress > div {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+.prod-progress > div.done {
+  background: var(--good);
+}
+.matriz input {
+  width: 56px;
+  text-align: center;
+  padding: 5px 4px;
+}
+
 ::-webkit-scrollbar {
   height: 8px;
   width: 8px;

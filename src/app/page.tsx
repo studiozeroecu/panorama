@@ -23,7 +23,10 @@ export default async function HomePage() {
           <h1>Panorama — Bear &amp; Trend</h1>
           <p className="sub">Ventas, ingreso neto y stock por local. Cada carga queda guardada como snapshot.</p>
         </div>
-        <LogoutButton />
+        <div style={{ display: "flex", gap: 10 }}>
+          <Link href="/produccion" className="btn">✂ Producción</Link>
+          <LogoutButton />
+        </div>
       </header>
 
       <UploadPanel />

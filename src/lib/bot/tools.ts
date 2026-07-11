@@ -116,6 +116,24 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ["id", "estado"],
     },
   },
+  {
+    name: "stock_telas",
+    description:
+      "Inventario de tela: pedidos de tela entregados con su saldo disponible (metros comprados menos metros consumidos en cortes). Úsala para '¿cuánta tela me queda?', '¿qué telas tengo?'.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "ordenes_en_proceso",
+    description:
+      "Estado de la producción en curso: pedidos de tela pendientes/en camino (con atraso si lo hay), lotes en maquila con su avance, y lotes en taller de estampado. Úsala para '¿qué tengo en maquila?', '¿cómo va la producción?'.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "stock_online_produccion",
+    description:
+      "Stock online de producción propia (prenda/color/estampado/talla) y ventas online recientes. Distinto del stock de los locales VATEX (para eso usa stock_critico).",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 // ---------------------------------------------------------------
@@ -319,6 +337,122 @@ export async function executeTool(
         const { error } = await supabase.from("cheques").update({ estado }).eq("id", matches[0].id);
         if (error) return `Error: ${error.message}`;
         return `Cheque de ${money(Number(matches[0].monto))} a ${matches[0].beneficiario} marcado como "${estado}".`;
+      }
+
+      case "stock_telas": {
+        const [{ data: pedidos, error: e1 }, { data: cortes, error: e2 }] = await Promise.all([
+          supabase
+            .from("prod_pedidos_tela")
+            .select("id, nombre_tela, colores, total_metros, fecha_entrega_real")
+            .eq("estado", "entregado")
+            .order("fecha_entrega_real", { ascending: false })
+            .limit(30),
+          supabase.from("prod_cortes").select("pedido_id, metros_consumidos"),
+        ]);
+        if (e1 || e2) return `Error: ${e1?.message ?? e2?.message}`;
+        if (!pedidos?.length) return "No hay pedidos de tela entregados registrados.";
+        const consumido = new Map<string, number>();
+        for (const c of cortes ?? []) {
+          consumido.set(c.pedido_id, (consumido.get(c.pedido_id) ?? 0) + Number(c.metros_consumidos ?? 0));
+        }
+        const lines = pedidos.map((p) => {
+          const saldo = Number(p.total_metros) - (consumido.get(p.id) ?? 0);
+          const colores = (p.colores as { color: string; metros: number }[])
+            .map((c) => c.color)
+            .join(", ");
+          return `${p.nombre_tela}: saldo ${saldo.toFixed(1)} m de ${Number(p.total_metros).toFixed(1)} m (colores: ${colores})`;
+        });
+        return `Inventario de tela (pedidos entregados):\n${lines.join("\n")}\nNota: los cortes sin metros registrados no descuentan saldo.`;
+      }
+
+      case "ordenes_en_proceso": {
+        const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+        const [pedidosR, maquilasR, cortesR, lotesR] = await Promise.all([
+          supabase
+            .from("prod_pedidos_tela")
+            .select("nombre_tela, estado, fecha_pedido, proveedor_id, total_metros")
+            .in("estado", ["pendiente", "en_camino"]),
+          supabase.from("prod_maquilas").select("id, corte_id, colores, total_unidades, costo_unitario"),
+          supabase.from("prod_cortes").select("id, pedido_id, fecha"),
+          supabase
+            .from("prod_lotes_estampado")
+            .select("prenda_nombre, color, total_unidades, estado, fecha_envio")
+            .in("estado", ["pendiente", "en_taller"]),
+        ]);
+        const secciones: string[] = [];
+        if (pedidosR.data?.length) {
+          secciones.push(
+            "Pedidos de tela pendientes:\n" +
+              pedidosR.data
+                .map((p) => `- ${p.nombre_tela} (${p.estado === "en_camino" ? "en camino" : "pendiente"}, pedido ${p.fecha_pedido}, ${Number(p.total_metros).toFixed(0)} m)`)
+                .join("\n")
+          );
+        }
+        const activas = (maquilasR.data ?? []).filter((m) =>
+          (m.colores as { estado: string }[]).some((c) => c.estado !== "entregado")
+        );
+        if (activas.length) {
+          secciones.push(
+            "En maquila:\n" +
+              activas
+                .map((m) => {
+                  const cols = m.colores as { color: string; estado: string; unidades: number }[];
+                  const entregados = cols.filter((c) => c.estado === "entregado").length;
+                  const detalle = cols.map((c) => `${c.color}(${c.estado})`).join(", ");
+                  return `- ${m.total_unidades} und., ${entregados}/${cols.length} colores entregados: ${detalle}`;
+                })
+                .join("\n")
+          );
+        }
+        const porProcesar = (maquilasR.data ?? []).reduce(
+          (s, m) =>
+            s + (m.colores as { estado: string; procesado?: boolean }[]).filter((c) => c.estado === "entregado" && !c.procesado).length,
+          0
+        );
+        if (porProcesar > 0) secciones.push(`Lotes entregados por maquila esperando destino en Envío: ${porProcesar}.`);
+        if (lotesR.data?.length) {
+          secciones.push(
+            "Estampados:\n" +
+              lotesR.data
+                .map((l) => `- ${l.prenda_nombre} ${l.color}, ${l.total_unidades} und. (${l.estado === "en_taller" ? `en taller desde ${l.fecha_envio}` : "pendiente de enviar al taller"})`)
+                .join("\n")
+          );
+        }
+        void cortesR;
+        void hoy;
+        return secciones.length ? secciones.join("\n\n") : "No hay órdenes de producción en proceso ahora mismo.";
+      }
+
+      case "stock_online_produccion": {
+        const [{ data: stock, error: e1 }, { data: ventas }] = await Promise.all([
+          supabase
+            .from("prod_stock_online")
+            .select("prenda_nombre, color, estampado, talla, disponibles, vendidas")
+            .gt("disponibles", 0)
+            .order("prenda_nombre")
+            .limit(60),
+          supabase
+            .from("prod_ventas_online")
+            .select("fecha, prenda_nombre, talla, cantidad, total")
+            .order("fecha", { ascending: false })
+            .limit(5),
+        ]);
+        if (e1) return `Error: ${e1.message}`;
+        if (!stock?.length) return "No hay stock online de producción disponible.";
+        const grupos = new Map<string, { disp: number; tallas: string[] }>();
+        for (const s of stock) {
+          const k = `${s.prenda_nombre} · ${s.color}${s.estampado ? ` · ${s.estampado}` : ""}`;
+          const g = grupos.get(k) ?? { disp: 0, tallas: [] };
+          g.disp += s.disponibles;
+          g.tallas.push(`${s.talla}:${s.disponibles}`);
+          grupos.set(k, g);
+        }
+        const lines = [...grupos.entries()].map(([k, g]) => `${k}: ${g.disp} und. (${g.tallas.join(" ")})`);
+        const ventasTxt = ventas?.length
+          ? "\nÚltimas ventas online:\n" +
+            ventas.map((v) => `${v.fecha}: ${v.prenda_nombre} ${v.talla} × ${v.cantidad} = ${money(Number(v.total))}`).join("\n")
+          : "";
+        return `Stock online (producción):\n${lines.join("\n")}${ventasTxt}`;
       }
 
       default:
