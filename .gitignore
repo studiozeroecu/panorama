@@ -4,3 +4,7 @@ node_modules/
 .env*.local
 *.tsbuildinfo
 next-env.d.ts
+
+# Arreglo solo-Windows para el `&` en la ruta local (script-shell=powershell).
+# No debe llegar a Vercel/Linux, donde no existe powershell.
+.npmrc
