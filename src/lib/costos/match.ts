@@ -1,9 +1,13 @@
 /**
- * Asignación de costo a líneas de venta VATEX por descripción.
- * Regla (definida por el dueño): todas las keywords del costo deben aparecer
- * en la descripción; si varias prendas matchean, gana la de MÁS keywords
- * (más específica). Empate = ambiguo = sin match. Un vínculo manual por
- * código (costos_vinculos) tiene prioridad sobre las keywords.
+ * Asignación de costo a líneas de venta VATEX por CATEGORÍA (reglas definidas
+ * una sola vez en /costos, no línea por línea):
+ *  - match_keywords: TODAS deben aparecer en la descripción. Cada entrada
+ *    admite alternativas con "|" (ej. "BASICA|COLOR ENTERO" = cualquiera).
+ *  - match_excluir: NINGUNA debe aparecer (ej. HODDIE sin BASICA → estampada).
+ *  - Si varias categorías aplican, gana la de más keywords; empate = ambigua.
+ *  - Lo que no matchea cae en "sin categoría" y NO bloquea el cálculo del resto.
+ * Un vínculo manual por código (costos_vinculos) sigue teniendo prioridad,
+ * como corrección puntual.
  */
 
 export interface CostoPrenda {
@@ -23,6 +27,7 @@ export interface CostoPrenda {
   precio_mayoreo_3_5: number | null;
   precio_mayoreo_6plus: number | null;
   match_keywords: string[];
+  match_excluir: string[];
 }
 
 export const COMISION_VATEX = 0.612; // lo que queda tras el 38.8% de VATEX
@@ -44,10 +49,14 @@ export function matchCosto(
   let mejorScore = 0;
   let empate = false;
 
+  // cada keyword admite alternativas separadas por "|"
+  const cumple = (k: string) => k.split("|").some((alt) => alt.trim() && desc.includes(norm(alt.trim())));
+
   for (const c of costos) {
     const kws = c.match_keywords ?? [];
     if (!kws.length) continue;
-    if (!kws.every((k) => desc.includes(norm(k)))) continue;
+    if (!kws.every(cumple)) continue;
+    if ((c.match_excluir ?? []).some(cumple)) continue;
     if (kws.length > mejorScore) {
       mejor = c;
       mejorScore = kws.length;

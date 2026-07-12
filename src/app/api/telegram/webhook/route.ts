@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createSnapshot, type ExistingSnapshot } from "@/lib/snapshots";
-import { handleText, extractCheque } from "@/lib/bot/claude";
+import { handleText, extractCheque, extractGuia, corregirGuia, type GuiaExtraccion } from "@/lib/bot/claude";
 import { parsePeriodo } from "@/lib/bot/periodo";
 import {
   sendMessage,
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
   if (!chatId) return NextResponse.json({ ok: true });
 
-  // 2) Un solo usuario autorizado
+  // 2) Identidad: dueño (env) o usuaria de logística (user_roles.telegram_chat_id)
   const allowed = process.env.TELEGRAM_ALLOWED_CHAT_ID;
   if (!allowed) {
     await sendMessage(
@@ -64,8 +64,42 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json({ ok: true });
   }
-  if (String(chatId) !== String(allowed)) {
-    // silencio total para desconocidos
+
+  const esAdmin = String(chatId) === String(allowed);
+  let logisticaUserId: string | null = null;
+  if (!esAdmin) {
+    try {
+      const svc = createServiceClient();
+      const { data } = await svc
+        .from("user_roles")
+        .select("user_id, rol")
+        .eq("telegram_chat_id", String(chatId))
+        .maybeSingle();
+      if (data?.rol === "logistica") logisticaUserId = data.user_id;
+    } catch {
+      // tabla de roles aún no migrada: se comporta como antes
+    }
+  }
+
+  if (!esAdmin && !logisticaUserId) {
+    // desconocidos: silencio, salvo /start que les dice su id para que el
+    // admin pueda registrarlos si corresponde
+    if (update.message?.text === "/start") {
+      await sendMessage(
+        chatId,
+        `Bot privado de Bear &amp; Trend. Tu chat_id es <code>${chatId}</code> — si deberías tener acceso, pásaselo al administrador.`
+      );
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (logisticaUserId) {
+    try {
+      await handleLogistica(update, chatId, logisticaUserId);
+    } catch (e) {
+      console.error("webhook logistica error:", e);
+      await sendMessage(chatId, "⚠️ Algo falló. Inténtalo de nuevo.");
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -85,6 +119,201 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+// ---------------------------------------------------------------
+// Flujo de logística: guía por foto + confirmación (nada manual)
+// ---------------------------------------------------------------
+
+function resumenGuia(g: GuiaExtraccion): string {
+  const items = (g.items ?? [])
+    .map(
+      (i) =>
+        `• ${i.codigo ? `<code>${esc(i.codigo)}</code> ` : ""}${esc(i.descripcion)} × ${i.cantidad}${i.precio_unitario != null ? ` @ ${money(i.precio_unitario)}` : ""}`
+    )
+    .join("\n");
+  const totalU = (g.items ?? []).reduce((s, i) => s + (i.cantidad || 0), 0);
+  const totalV = (g.items ?? []).reduce((s, i) => s + (i.cantidad || 0) * (i.precio_unitario ?? 0), 0);
+  return [
+    `Leí esta guía:`,
+    `Local destino: <b>${g.local_destino ?? "⚠ no detectado"}</b>`,
+    `Fecha: ${g.fecha ?? "hoy"}`,
+    items || "⚠ sin productos detectados",
+    `Total: <b>${totalU}</b> unidades · <b>${money(totalV)}</b>`,
+  ].join("\n");
+}
+
+function botonesGuia(pendingId: string) {
+  return [
+    [
+      { text: "✅ Confirmar", callback_data: `g:conf:${pendingId}` },
+      { text: "✏️ Corregir", callback_data: `g:corr:${pendingId}` },
+    ],
+    [{ text: "✖️ Cancelar", callback_data: `g:cancel:${pendingId}` }],
+  ];
+}
+
+async function handleLogistica(update: TgUpdate, chatId: number, userId: string) {
+  const supabase = createServiceClient();
+
+  // Botones de una guía pendiente
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const [prefix, action, pendingId] = (cb.data ?? "").split(":");
+    await answerCallbackQuery(cb.id);
+    if (prefix !== "g" || !pendingId || !cb.message) return;
+
+    const { data: pending } = await supabase
+      .from("bot_pending_actions")
+      .select("id, kind, payload, resolved")
+      .eq("id", pendingId)
+      .single();
+    if (!pending || pending.kind !== "guia" || pending.resolved) {
+      await editMessageText(chatId, cb.message.message_id, "Esta guía ya fue procesada o expiró.");
+      return;
+    }
+    const payload = pending.payload as { extraccion: GuiaExtraccion; file_id: string };
+
+    if (action === "cancel") {
+      await supabase.from("bot_pending_actions").update({ resolved: true }).eq("id", pendingId);
+      await editMessageText(chatId, cb.message.message_id, "Guía descartada. Mándame otra foto cuando quieras.");
+      return;
+    }
+
+    if (action === "corr") {
+      await supabase
+        .from("bot_pending_actions")
+        .update({ payload: { ...payload, esperando_correccion: true } })
+        .eq("id", pendingId);
+      await editMessageText(
+        chatId,
+        cb.message.message_id,
+        resumenGuia(payload.extraccion) +
+          "\n\n✏️ Escríbeme la corrección en un mensaje (ej: <i>“el local es QUITO y la camiseta negra son 12, no 2”</i>)."
+      );
+      return;
+    }
+
+    if (action === "conf") {
+      const g = payload.extraccion;
+      const items = (g.items ?? [])
+        .filter((i) => i.descripcion && i.cantidad > 0)
+        .map((i) => ({
+          codigo: (i.codigo ?? "").toUpperCase(),
+          descripcion: i.descripcion,
+          cantidad: Math.round(i.cantidad),
+          precio_unitario: i.precio_unitario ?? 0,
+        }));
+      if (!g.local_destino || !items.length) {
+        await sendMessage(chatId, "Falta el local destino o los productos — usa ✏️ Corregir antes de confirmar.");
+        return;
+      }
+      // foto de respaldo
+      let fotoPath: string | null = null;
+      const buffer = await downloadFile(payload.file_id);
+      if (buffer) {
+        const path = `tg-${pendingId}.jpg`;
+        const { error: upErr } = await supabase.storage
+          .from("guias")
+          .upload(path, buffer, { contentType: "image/jpeg", upsert: true });
+        if (!upErr) fotoPath = path;
+      }
+      const fecha = g.fecha && /^\d{4}-\d{2}-\d{2}$/.test(g.fecha)
+        ? g.fecha
+        : new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+      const { error } = await supabase.from("guias_transferencia").insert({
+        fecha,
+        local_destino: g.local_destino,
+        items,
+        total_unidades: items.reduce((s, i) => s + i.cantidad, 0),
+        total_valor: +items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0).toFixed(2),
+        subido_por: userId,
+        foto_path: fotoPath,
+      });
+      if (error) {
+        await sendMessage(chatId, `⚠️ No se pudo guardar: ${esc(error.message)}`);
+        return;
+      }
+      await supabase.from("bot_pending_actions").update({ resolved: true }).eq("id", pendingId);
+      await editMessageText(
+        chatId,
+        cb.message.message_id,
+        `✅ Guía guardada: <b>${g.local_destino}</b> · ${items.reduce((s, i) => s + i.cantidad, 0)} unidades · ${fecha}`
+      );
+      return;
+    }
+    return;
+  }
+
+  // Foto de guía → extracción con IA
+  if (update.message?.photo?.length) {
+    await setChatAction(chatId);
+    const best = update.message.photo[update.message.photo.length - 1];
+    const buffer = await downloadFile(best.file_id);
+    if (!buffer) {
+      await sendMessage(chatId, "No pude descargar la foto. Inténtalo de nuevo.");
+      return;
+    }
+    const extraccion = await extractGuia(buffer, "image/jpeg");
+    if (!extraccion || !extraccion.legible) {
+      await sendMessage(chatId, "No pude leer una guía en esa foto. Prueba con más luz y la hoja completa en el encuadre.");
+      return;
+    }
+    const { data: pending, error } = await supabase
+      .from("bot_pending_actions")
+      .insert({
+        chat_id: String(chatId),
+        kind: "guia",
+        payload: { extraccion, file_id: best.file_id },
+      })
+      .select("id")
+      .single();
+    if (error || !pending) {
+      await sendMessage(chatId, `⚠️ Error interno: ${esc(error?.message ?? "")}`);
+      return;
+    }
+    await sendMessage(chatId, resumenGuia(extraccion), botonesGuia(pending.id));
+    return;
+  }
+
+  // Texto: corrección de una guía pendiente, o ayuda
+  if (update.message?.text) {
+    const texto = update.message.text.trim();
+    if (texto === "/start" || texto === "/ayuda") {
+      await sendMessage(
+        chatId,
+        "Hola 👋 Mándame la <b>foto de la guía de transferencia</b> y yo leo el local, los productos y las cantidades. Tú solo confirmas con un botón."
+      );
+      return;
+    }
+    const { data: pendientes } = await supabase
+      .from("bot_pending_actions")
+      .select("id, payload")
+      .eq("chat_id", String(chatId))
+      .eq("kind", "guia")
+      .eq("resolved", false)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const pending = pendientes?.[0];
+    const payload = pending?.payload as
+      | { extraccion: GuiaExtraccion; file_id: string; esperando_correccion?: boolean }
+      | undefined;
+    if (pending && payload?.esperando_correccion) {
+      await setChatAction(chatId);
+      const corregida = await corregirGuia(payload.extraccion, texto);
+      if (!corregida) {
+        await sendMessage(chatId, "No entendí la corrección — dímela de otra forma.");
+        return;
+      }
+      await supabase
+        .from("bot_pending_actions")
+        .update({ payload: { ...payload, extraccion: corregida, esperando_correccion: false } })
+        .eq("id", pending.id);
+      await sendMessage(chatId, resumenGuia(corregida), botonesGuia(pending.id));
+      return;
+    }
+    await sendMessage(chatId, "Mándame la foto de la guía 📷 — es lo único que necesito.");
+  }
 }
 
 // ---------------------------------------------------------------

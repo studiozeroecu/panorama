@@ -27,6 +27,7 @@ export default async function HomePage() {
           <Link href="/produccion" className="btn">✂ Producción</Link>
           <Link href="/costos" className="btn">$ Costos</Link>
           <Link href="/finanzas" className="btn">◈ Finanzas</Link>
+          <Link href="/logistica" className="btn">📦 Logística</Link>
           <LogoutButton />
         </div>
       </header>

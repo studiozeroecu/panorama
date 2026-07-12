@@ -133,6 +133,20 @@ Alta de la usuaria: ejecutar schema_fase6.sql → crear su cuenta en Authenticat
 Users → `insert into user_roles (user_id, rol) values ('<su-uuid>', 'logistica')` →
 darle la URL de la app.
 
+## Actualización — match por categorías y bot de logística
+
+Ejecutar `supabase/actualizacion_match_y_bot.sql`. El match de costos funciona por
+**reglas de categoría** definidas una vez en /costos: "debe contener" (todas, con
+alternativas `A|B`) y "no debe contener" (ninguna) — ej. HODDIE sin BASICA → hoddies
+estampadas. Lo que no matchea cae en "sin categoría" sin bloquear el cálculo. /costos
+también permite agregar prendas nuevas.
+
+Bot de logística: la usuaria manda la **foto de la guía** por Telegram; la IA extrae
+local, productos, cantidades y precios; ella confirma con un botón (o corrige por
+texto) y recién ahí se guarda con la foto de respaldo. Registro: ella le escribe
+/start al bot (que le dice su chat_id) y el admin ejecuta
+`update user_roles set telegram_chat_id = '<chat_id>' where rol = 'logistica';`
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

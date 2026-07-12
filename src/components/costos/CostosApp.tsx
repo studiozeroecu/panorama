@@ -44,6 +44,7 @@ export default function CostosApp() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [nuevaAbierta, setNuevaAbierta] = useState(false);
 
   const avisar = useCallback((msg: string) => {
     setToast(msg);
@@ -105,15 +106,15 @@ export default function CostosApp() {
     }
   }
 
-  async function guardarKeywords(c: CostoPrenda, texto: string) {
-    const kws = texto.split(",").map((s) => s.trim()).filter(Boolean);
+  async function guardarRegla(c: CostoPrenda, campo: "match_keywords" | "match_excluir", texto: string) {
+    const lista = texto.split(",").map((s) => s.trim()).filter(Boolean);
     const { error } = await supabase
       .from("costos_prendas")
-      .update({ match_keywords: kws, updated_at: new Date().toISOString() })
+      .update({ [campo]: lista, updated_at: new Date().toISOString() })
       .eq("id", c.id);
     if (error) avisar(`Error: ${error.message}`);
     else {
-      avisar("Keywords guardadas");
+      avisar("Regla guardada");
       await reload();
     }
   }
@@ -177,7 +178,10 @@ export default function CostosApp() {
           )}
 
           <section>
-            <div className="section-head"><h2>Costos por prenda</h2></div>
+            <div className="section-head">
+              <h2>Costos por prenda</h2>
+              <button className="btn primary" onClick={() => setNuevaAbierta(true)}>+ Nueva prenda</button>
+            </div>
             <div className="table-scroll">
               <table>
                 <thead>
@@ -238,22 +242,31 @@ export default function CostosApp() {
 
           <section>
             <div className="section-head">
-              <h2>Keywords de asignación <span className="sub" style={{ fontWeight: 400 }}>· separadas por coma; todas deben aparecer en la descripción</span></h2>
+              <h2>Reglas de categorías <span className="sub" style={{ fontWeight: 400 }}>· se definen una vez y aplican a todos los reportes</span></h2>
             </div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>Producto</th><th>Keywords</th></tr></thead>
+                <thead><tr><th>Categoría</th><th>Debe contener (todas)</th><th>NO debe contener (ninguna)</th></tr></thead>
                 <tbody>
                   {costos.map((c) => (
                     <tr key={c.id}>
                       <td style={{ whiteSpace: "nowrap" }}><strong>{c.producto}</strong></td>
                       <td>
-                        <input className="pinput" style={{ maxWidth: 420 }}
+                        <input className="pinput" style={{ maxWidth: 320 }}
                           defaultValue={(c.match_keywords ?? []).join(", ")}
-                          placeholder="sin keywords = solo vínculo manual"
+                          placeholder="sin reglas = solo corrección puntual"
                           onBlur={(e) => {
-                            const nuevo = e.target.value;
-                            if (nuevo.trim() !== (c.match_keywords ?? []).join(", ").trim()) guardarKeywords(c, nuevo);
+                            if (e.target.value.trim() !== (c.match_keywords ?? []).join(", ").trim())
+                              guardarRegla(c, "match_keywords", e.target.value);
+                          }} />
+                      </td>
+                      <td>
+                        <input className="pinput" style={{ maxWidth: 260 }}
+                          defaultValue={(c.match_excluir ?? []).join(", ")}
+                          placeholder="—"
+                          onBlur={(e) => {
+                            if (e.target.value.trim() !== (c.match_excluir ?? []).join(", ").trim())
+                              guardarRegla(c, "match_excluir", e.target.value);
                           }} />
                       </td>
                     </tr>
@@ -261,13 +274,21 @@ export default function CostosApp() {
                 </tbody>
               </table>
             </div>
+            <p className="sub" style={{ fontSize: 12, marginTop: 10 }}>
+              Separa con comas. Una entrada admite alternativas con “|”: <code>BASICA|COLOR ENTERO</code> significa
+              “cualquiera de las dos”. Ejemplo: <b>hoddies</b> = contiene HODDIE y no contiene BASICA ni COLOR ENTERO.
+            </p>
           </section>
 
           {resumen.lineasSinMatch.length > 0 && (
             <section>
               <div className="section-head">
-                <h2>Sin costo asignado <span className="sub" style={{ fontWeight: 400 }}>· del reporte {periodo}, por ingreso</span></h2>
+                <h2>Sin categoría <span className="sub" style={{ fontWeight: 400 }}>· {resumen.lineasSinMatch.length} productos · {money(resumen.lineasSinMatch.reduce((s, l) => s + l.neto, 0))} del reporte {periodo}</span></h2>
               </div>
+              <p className="sub" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 12 }}>
+                Estas líneas no bloquean nada — la ganancia estimada se calcula sin ellas. Para cubrirlas,
+                ajusta las reglas de arriba (lo normal) o vincula un código puntual aquí (la excepción).
+              </p>
               <div className="table-scroll">
                 <table>
                   <thead>
@@ -299,7 +320,106 @@ export default function CostosApp() {
         </>
       )}
 
+      <NuevaPrendaModal
+        abierto={nuevaAbierta}
+        onCerrar={() => setNuevaAbierta(false)}
+        onGuardada={async () => {
+          setNuevaAbierta(false);
+          avisar("Prenda agregada");
+          await reload();
+        }}
+      />
+
       {toast && <div className="prod-toast">✓ {toast}</div>}
+    </div>
+  );
+}
+
+function NuevaPrendaModal({
+  abierto, onCerrar, onGuardada,
+}: {
+  abierto: boolean;
+  onCerrar: () => void;
+  onGuardada: () => void;
+}) {
+  const supabase = useMemo(() => createClient(), []);
+  const [f, setF] = useState({
+    producto: "", nombre_tela: "", costo_tela: "", maquila: "", dtf: "", corte: "",
+    insumos: "", etiqueta: "", pvp_vatex: "", precio_online: "", keywords: "", excluir: "",
+  });
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (abierto) {
+      setF({ producto: "", nombre_tela: "", costo_tela: "", maquila: "", dtf: "", corte: "",
+        insumos: "", etiqueta: "", pvp_vatex: "", precio_online: "", keywords: "", excluir: "" });
+      setErr(null);
+    }
+  }, [abierto]);
+
+  const n = (v: string, def = 0) => (v === "" ? def : parseFloat(v));
+  const lista = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
+
+  async function guardar() {
+    if (!f.producto.trim()) return setErr("El nombre del producto es requerido.");
+    if (!(n(f.costo_tela) >= 0)) return setErr("Costo de tela inválido.");
+    const { error } = await supabase.from("costos_prendas").insert({
+      producto: f.producto.trim(),
+      nombre_tela: f.nombre_tela.trim(),
+      costo_tela: n(f.costo_tela), maquila: n(f.maquila), dtf: n(f.dtf),
+      corte: n(f.corte), insumos: n(f.insumos), etiqueta: n(f.etiqueta),
+      pvp_vatex: f.pvp_vatex === "" ? null : n(f.pvp_vatex),
+      precio_online: f.precio_online === "" ? null : n(f.precio_online),
+      match_keywords: lista(f.keywords),
+      match_excluir: lista(f.excluir),
+    });
+    if (error) {
+      return setErr(error.message.includes("duplicate") ? "Ya existe una prenda con ese nombre." : error.message);
+    }
+    onGuardada();
+  }
+
+  if (!abierto) return null;
+  const campo = (label: string, key: keyof typeof f, props: Record<string, unknown> = {}) => (
+    <div className="field" style={{ flex: 1, minWidth: 130, marginBottom: 12 }}>
+      <label>{label}</label>
+      <input className="pinput" value={f[key]} {...props}
+        onChange={(e) => setF({ ...f, [key]: e.target.value })} />
+    </div>
+  );
+
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && onCerrar()}>
+      <div className="dialog" style={{ maxWidth: 640, maxHeight: "90vh", overflowY: "auto" }}>
+        <h3 style={{ marginTop: 0 }}>Nueva prenda</h3>
+        {err && <div className="error-banner">{err}</div>}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {campo("Producto *", "producto", { placeholder: "Ej: gorra estampada" })}
+          {campo("Tela", "nombre_tela", { placeholder: "Ej: topper" })}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {campo("Costo tela $", "costo_tela", { type: "number", step: "0.01", min: "0" })}
+          {campo("Maquila $", "maquila", { type: "number", step: "0.01", min: "0" })}
+          {campo("DTF $", "dtf", { type: "number", step: "0.01", min: "0" })}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {campo("Corte $", "corte", { type: "number", step: "0.01", min: "0" })}
+          {campo("Insumos $", "insumos", { type: "number", step: "0.01", min: "0" })}
+          {campo("Etiqueta $", "etiqueta", { type: "number", step: "0.01", min: "0" })}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {campo("PVP VATEX $", "pvp_vatex", { type: "number", step: "0.01", min: "0" })}
+          {campo("Precio online $", "precio_online", { type: "number", step: "0.01", min: "0" })}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {campo("Debe contener (comas, | para alternativas)", "keywords", { placeholder: "Ej: GORRA" })}
+          {campo("NO debe contener", "excluir", { placeholder: "Ej: BASICA" })}
+        </div>
+        <div className="actions" style={{ marginTop: 16 }}>
+          <button className="btn" onClick={onCerrar}>Cancelar</button>
+          <button className="btn primary" onClick={guardar}>Agregar prenda</button>
+        </div>
+      </div>
     </div>
   );
 }
