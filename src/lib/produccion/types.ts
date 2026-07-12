@@ -153,6 +153,7 @@ export interface EnvioLocal {
   ingreso: number;
   margen: number;
   producto_codigo: string | null;
+  local_destino: string | null;
 }
 
 export const TALLA_ORDER = ["XS", "S", "M", "L", "XL", "XXL"];

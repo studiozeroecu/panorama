@@ -116,6 +116,23 @@ Bot: `flujo_semana` ("¿qué tengo que pagar esta semana?"), lunes con facturas 
 pagos próximos, y cron diario 8:00 Ecuador (`/api/cron/urgencias`) que avisa solo si algo
 vence en menos de 3 días — repite cada mañana mientras siga pendiente.
 
+## Fase 6 — Logística y roles (/logistica)
+
+`schema_fase6.sql` **reescribe la seguridad de toda la base**: tabla `user_roles`
+(admin / logistica), funciones `fn_es_admin()`/`fn_es_logistica()`, y políticas RLS
+admin-only en todas las tablas de negocio. El rol logistica solo puede: subir guías,
+ver las suyas y leer el catálogo `products`. El middleware la enruta siempre a
+`/logistica`. El bot y los crons usan service role — no les afecta.
+
+Guías de transferencia: fecha, local VATEX, productos con cantidades/precios,
+"recibido por" y foto opcional (bucket `guias`). En /produccion → Envío, el admin ve
+el cruce guía↔envío (mismo local, ±3 días, unidades) con semáforo de discrepancias
+(por eso Envío ahora pide "local destino" al mandar lotes a locales).
+
+Alta de la usuaria: ejecutar schema_fase6.sql → crear su cuenta en Authentication →
+Users → `insert into user_roles (user_id, rol) values ('<su-uuid>', 'logistica')` →
+darle la URL de la app.
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

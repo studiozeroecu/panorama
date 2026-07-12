@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { Campo, Fila, Badge, Vacio, Tallas } from "./ui";
 import { money, ordenarTallas, type Maquila, type ColorMaquila, type Diseno } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/produccion/fechas";
 import { sumarStock } from "@/lib/produccion/stock";
+import { LOCALES, type Guia } from "@/lib/locales";
+import { useEffect } from "react";
 
 interface Lote {
   maquila: Maquila;
@@ -36,6 +38,7 @@ export default function EnvioTab() {
       )}
 
       <Historial />
+      <GuiasLogistica />
     </section>
   );
 }
@@ -56,6 +59,7 @@ function LoteCard({ lote }: { lote: Lote }) {
     return init;
   });
   const [productoCodigo, setProductoCodigo] = useState("");
+  const [localDestino, setLocalDestino] = useState("");
   const [ocupado, setOcupado] = useState(false);
 
   const cfPorUnidad = data.costosFijos.reduce((s, c) => s + Number(c.valor), 0);
@@ -177,6 +181,7 @@ function LoteCard({ lote }: { lote: Lote }) {
           ingreso: +ingreso.toFixed(2),
           margen: +(ingreso - costo).toFixed(2),
           producto_codigo: productoCodigo.trim() || null,
+          local_destino: localDestino || null,
         });
         if (error) throw new Error(error.message);
         await restoAStock(porTalla);
@@ -277,6 +282,12 @@ function LoteCard({ lote }: { lote: Lote }) {
             ))}
           </div>
           <Fila>
+            <Campo label="Local destino (para cruzar con las guías de logística)">
+              <select className="pinput" value={localDestino} onChange={(e) => setLocalDestino(e.target.value)}>
+                <option value="">— Sin especificar —</option>
+                {LOCALES.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </Campo>
             <Campo label="Producto VATEX (opcional — para cruzar con ventas)">
               <input className="pinput" list="productos-vatex" placeholder="Código, ej: MS0164I"
                 value={productoCodigo} onChange={(e) => setProductoCodigo(e.target.value)} />
@@ -304,6 +315,65 @@ function LoteCard({ lote }: { lote: Lote }) {
           {ocupado ? "Procesando…" : "Procesar lote"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Cruce guías (logística) ↔ envíos a locales (producción).
+ * Una guía "cuadra" si existe un envío al mismo local con fecha a ±3 días
+ * y las unidades coinciden; si no, se marca la discrepancia.
+ */
+function GuiasLogistica() {
+  const { data, supabase } = useProd();
+  const [guias, setGuias] = useState<Guia[] | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("guias_transferencia")
+      .select("*")
+      .order("fecha", { ascending: false })
+      .limit(20)
+      .then(({ data: g }) => setGuias((g ?? []) as Guia[]));
+  }, [supabase]);
+
+  if (!guias?.length) return null;
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="label" style={{ marginBottom: 10 }}>
+        Guías de logística · cruce con producción
+      </div>
+      <div className="card" style={{ padding: "6px 16px" }}>
+        {guias.map((g) => {
+          const candidatos = data.enviosLocales.filter(
+            (e) =>
+              e.local_destino === g.local_destino &&
+              Math.abs(diasHasta(e.fecha) - diasHasta(g.fecha)) <= 3
+          );
+          const unidadesProd = candidatos.reduce((s, e) => s + e.unidades, 0);
+          const sinDato = !candidatos.length;
+          const cuadra = !sinDato && unidadesProd === g.total_unidades;
+          return (
+            <div key={g.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, flexWrap: "wrap" }}>
+              <span>
+                {fmtFecha(g.fecha)} · <span className="local-tag">{g.local_destino}</span> · {g.total_unidades} und.
+                {g.recibido_por && <span className="sub"> · recibió {g.recibido_por}</span>}
+              </span>
+              {cuadra ? (
+                <Badge color="verde">✓ cuadra con producción</Badge>
+              ) : sinDato ? (
+                <Badge color="ambar">sin envío de producción registrado (±3 días)</Badge>
+              ) : (
+                <Badge color="rojo">⚠ producción registró {unidadesProd} und.</Badge>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="sub" style={{ fontSize: 12, marginTop: 8 }}>
+        Para que el cruce funcione, elige el local destino al procesar lotes a locales.
+      </p>
     </div>
   );
 }

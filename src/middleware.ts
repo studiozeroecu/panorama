@@ -33,10 +33,26 @@ export async function middleware(request: NextRequest) {
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
-  if (user && isLogin) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
+  if (user) {
+    // Fase 6: enrutamiento por rol. El rol "logistica" solo ve /logistica;
+    // si la tabla de roles aún no existe (fases previas), se comporta como antes.
+    const { data: rolRow } = await supabase
+      .from("user_roles")
+      .select("rol")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const esLogistica = rolRow?.rol === "logistica";
+
+    if (isLogin) {
+      const url = request.nextUrl.clone();
+      url.pathname = esLogistica ? "/logistica" : "/";
+      return NextResponse.redirect(url);
+    }
+    if (esLogistica && !request.nextUrl.pathname.startsWith("/logistica")) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/logistica";
+      return NextResponse.redirect(url);
+    }
   }
   return response;
 }
