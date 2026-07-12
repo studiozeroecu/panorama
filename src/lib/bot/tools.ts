@@ -117,6 +117,17 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
   {
+    name: "flujo_semana",
+    description:
+      "Qué hay que pagar y cobrar en los próximos días: cuentas por pagar, facturas por cobrar y cheques, ordenados por vencimiento con totales. Úsala para '¿qué tengo que pagar esta semana?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dias: { type: "number", description: "Horizonte en días (default 7)" },
+      },
+    },
+  },
+  {
     name: "margen_producto",
     description:
       "Costo, precios y ganancia real de una prenda ('¿cuánto me deja la camiseta?'). Devuelve costo total desglosado, PVP VATEX, ingreso neto post-comisión y ganancia por unidad.",
@@ -349,6 +360,60 @@ export async function executeTool(
         const { error } = await supabase.from("cheques").update({ estado }).eq("id", matches[0].id);
         if (error) return `Error: ${error.message}`;
         return `Cheque de ${money(Number(matches[0].monto))} a ${matches[0].beneficiario} marcado como "${estado}".`;
+      }
+
+      case "flujo_semana": {
+        const dias = Math.min(Math.max(Number(input.dias) || 7, 1), 60);
+        const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+        const hasta = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
+        const [cxp, cxc, chq] = await Promise.all([
+          supabase
+            .from("cuentas_por_pagar")
+            .select("proveedor, concepto, monto, fecha_vencimiento")
+            .eq("estado", "pendiente")
+            .or(`fecha_vencimiento.lte.${hasta},fecha_vencimiento.is.null`),
+          supabase
+            .from("cuentas_por_cobrar")
+            .select("cliente, concepto, monto, fecha_vencimiento")
+            .eq("estado", "pendiente")
+            .lte("fecha_vencimiento", hasta),
+          supabase
+            .from("cheques")
+            .select("tipo, monto, beneficiario, fecha_cobro")
+            .eq("estado", "pendiente")
+            .lte("fecha_cobro", hasta),
+        ]);
+        if (cxp.error) return `Error: ${cxp.error.message}`;
+        type Item = { fecha: string | null; texto: string; monto: number };
+        const pagar: Item[] = [
+          ...(cxp.data ?? []).map((x) => ({
+            fecha: x.fecha_vencimiento,
+            texto: `${x.proveedor}${x.concepto ? ` (${x.concepto})` : ""}`,
+            monto: Number(x.monto),
+          })),
+          ...(chq.data ?? [])
+            .filter((c) => c.tipo === "por_pagar")
+            .map((c) => ({ fecha: c.fecha_cobro, texto: `cheque a ${c.beneficiario}`, monto: Number(c.monto) })),
+        ].sort((a, b) => (a.fecha ?? "9999").localeCompare(b.fecha ?? "9999"));
+        const cobrar: Item[] = [
+          ...(cxc.data ?? []).map((x) => ({
+            fecha: x.fecha_vencimiento,
+            texto: `${x.cliente}${x.concepto ? ` (${x.concepto})` : ""}`,
+            monto: Number(x.monto),
+          })),
+          ...(chq.data ?? [])
+            .filter((c) => c.tipo === "por_cobrar")
+            .map((c) => ({ fecha: c.fecha_cobro, texto: `cheque de ${c.beneficiario}`, monto: Number(c.monto) })),
+        ].sort((a, b) => (a.fecha ?? "9999").localeCompare(b.fecha ?? "9999"));
+        const fmt = (i: Item) =>
+          `${i.fecha ?? "sin fecha"}${i.fecha && i.fecha < hoy ? " (VENCIDO)" : ""}: ${i.texto} — ${money(i.monto)}`;
+        const totPagar = pagar.reduce((s, i) => s + i.monto, 0);
+        const totCobrar = cobrar.reduce((s, i) => s + i.monto, 0);
+        return (
+          `Próximos ${dias} días (hoy ${hoy}):\n` +
+          `A PAGAR — total ${money(totPagar)}:\n${pagar.length ? pagar.map(fmt).join("\n") : "nada"}\n\n` +
+          `A COBRAR — total ${money(totCobrar)}:\n${cobrar.length ? cobrar.map(fmt).join("\n") : "nada"}`
+        );
       }
 
       case "margen_producto": {

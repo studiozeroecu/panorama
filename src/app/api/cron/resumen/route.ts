@@ -88,6 +88,38 @@ export async function GET(req: NextRequest) {
     secciones.push("🧾 <b>Cheques próximos (7 días)</b>: ninguno pendiente.");
   }
 
+  // Finanzas: facturas por cobrar vencidas + pagos próximos (7 días)
+  const [cxcR, cxpR] = await Promise.all([
+    supabase
+      .from("cuentas_por_cobrar")
+      .select("cliente, monto, fecha_vencimiento")
+      .eq("estado", "pendiente")
+      .not("fecha_vencimiento", "is", null)
+      .lt("fecha_vencimiento", hoy)
+      .order("fecha_vencimiento"),
+    supabase
+      .from("cuentas_por_pagar")
+      .select("proveedor, monto, fecha_vencimiento")
+      .eq("estado", "pendiente")
+      .not("fecha_vencimiento", "is", null)
+      .lte("fecha_vencimiento", en7)
+      .order("fecha_vencimiento"),
+  ]);
+  if (cxcR.data?.length) {
+    const total = cxcR.data.reduce((s, x) => s + Number(x.monto), 0);
+    secciones.push(
+      `📥 <b>Facturas por cobrar vencidas</b> (${money(total)})\n` +
+        cxcR.data.slice(0, 8).map((x) => `${x.cliente} · ${money(Number(x.monto))} · venció ${x.fecha_vencimiento}`).join("\n")
+    );
+  }
+  if (cxpR.data?.length) {
+    const total = cxpR.data.reduce((s, x) => s + Number(x.monto), 0);
+    secciones.push(
+      `📤 <b>Pagos próximos (7 días)</b> (${money(total)})\n` +
+        cxpR.data.slice(0, 8).map((x) => `${x.proveedor} · ${money(Number(x.monto))} · ${x.fecha_vencimiento}`).join("\n")
+    );
+  }
+
   // Pedidos de tela atrasados (producción)
   const { data: pedidosPend } = await supabase
     .from("prod_pedidos_tela")

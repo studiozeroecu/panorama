@@ -106,6 +106,16 @@ responde `margen_producto` ("¿cuánto me deja la camiseta?").
 Setup: ejecutar `supabase/schema_fase4.sql` y luego `supabase/migracion_costos.sql`
 (regenerable con `node scripts/generar-migracion-costos.mjs "ruta/al/excel.xlsx"`).
 
+## Fase 5 — Finanzas (/finanzas)
+
+`cuentas_por_cobrar` y `cuentas_por_pagar` (schema_fase5.sql; extiende `cheques` con
+vínculo a cuentas). Pantalla con 3 pestañas: por cobrar (semáforo de urgencia), por pagar
+(marcar pagada registra el gasto en `movimientos` automáticamente) y flujo de caja a 30
+días (entradas vs salidas, incluye cheques). El estado "vencido" se calcula, no se guarda.
+Bot: `flujo_semana` ("¿qué tengo que pagar esta semana?"), lunes con facturas vencidas y
+pagos próximos, y cron diario 8:00 Ecuador (`/api/cron/urgencias`) que avisa solo si algo
+vence en menos de 3 días — repite cada mañana mientras siga pendiente.
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)
