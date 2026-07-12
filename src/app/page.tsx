@@ -25,6 +25,7 @@ export default async function HomePage() {
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <Link href="/produccion" className="btn">✂ Producción</Link>
+          <Link href="/costos" className="btn">$ Costos</Link>
           <LogoutButton />
         </div>
       </header>

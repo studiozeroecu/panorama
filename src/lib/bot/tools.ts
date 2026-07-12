@@ -117,6 +117,18 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
   {
+    name: "margen_producto",
+    description:
+      "Costo, precios y ganancia real de una prenda ('¿cuánto me deja la camiseta?'). Devuelve costo total desglosado, PVP VATEX, ingreso neto post-comisión y ganancia por unidad.",
+    input_schema: {
+      type: "object",
+      properties: {
+        producto: { type: "string", description: "Nombre de la prenda (ej. camiseta, hoddie, polo mujer)" },
+      },
+      required: ["producto"],
+    },
+  },
+  {
     name: "stock_telas",
     description:
       "Inventario de tela: pedidos de tela entregados con su saldo disponible (metros comprados menos metros consumidos en cortes). Úsala para '¿cuánta tela me queda?', '¿qué telas tengo?'.",
@@ -337,6 +349,42 @@ export async function executeTool(
         const { error } = await supabase.from("cheques").update({ estado }).eq("id", matches[0].id);
         if (error) return `Error: ${error.message}`;
         return `Cheque de ${money(Number(matches[0].monto))} a ${matches[0].beneficiario} marcado como "${estado}".`;
+      }
+
+      case "margen_producto": {
+        const buscado = String(input.producto ?? "").trim();
+        if (!buscado) return "Error: indica el nombre de la prenda.";
+        const { data: costos, error } = await supabase.from("costos_prendas").select("*");
+        if (error) return `Error: ${error.message}`;
+        if (!costos?.length) return "No hay costos cargados todavía (falta ejecutar la migración de Fase 4).";
+        const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const b = norm(buscado);
+        const candidatos = costos.filter(
+          (c) => norm(c.producto).includes(b) || b.includes(norm(c.producto))
+        );
+        if (!candidatos.length) {
+          return `No encontré "${buscado}". Prendas disponibles: ${costos.map((c) => c.producto).join(", ")}.`;
+        }
+        if (candidatos.length > 1) {
+          return `Hay varias que coinciden: ${candidatos.map((c) => c.producto).join(", ")}. ¿Cuál?`;
+        }
+        const c = candidatos[0];
+        const costoTotal = Number(c.costo_total);
+        const pvp = c.pvp_vatex != null ? Number(c.pvp_vatex) : null;
+        const neto = pvp != null ? pvp * 0.612 : null;
+        const ganancia = neto != null ? neto - costoTotal : null;
+        const desglose = `tela ${money(Number(c.costo_tela))} + maquila ${money(Number(c.maquila))} + dtf ${money(Number(c.dtf))} + corte ${money(Number(c.corte))} + insumos ${money(Number(c.insumos))} + etiqueta ${money(Number(c.etiqueta))}`;
+        const online = c.precio_online != null
+          ? `\nOnline: precio ${money(Number(c.precio_online))} → ganancia ${money(Number(c.precio_online) - costoTotal)} (sin comisión VATEX)`
+          : "";
+        return (
+          `${c.producto} (tela ${c.nombre_tela}):\n` +
+          `Costo total: ${money(costoTotal)} (${desglose})\n` +
+          (pvp != null
+            ? `VATEX: PVP ${money(pvp)} → neto ${money(neto!)} (post-comisión 38.8%) → ganancia ${money(ganancia!)} por unidad (margen ${((ganancia! / neto!) * 100).toFixed(1)}%)`
+            : "Sin PVP VATEX definido.") +
+          online
+        );
       }
 
       case "stock_telas": {

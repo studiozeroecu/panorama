@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import TopProducts, { type TopProductRow } from "@/components/TopProducts";
 import StockAlerts, { type StockAlertRow } from "@/components/StockAlerts";
 import { money, periodo, fecha } from "@/lib/format";
+import { calcularGanancia, type CostoPrenda } from "@/lib/costos/match";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,24 @@ export default async function SnapshotPage({
   }));
   const alertRows: StockAlertRow[] = alerts ?? [];
 
+  // Fase 4: ganancia estimada del periodo (si la tabla de costos existe)
+  let gananciaCard: { value: string; hint: string } | null = null;
+  const [{ data: costos }, { data: vincs }] = await Promise.all([
+    supabase.from("costos_prendas").select("*"),
+    supabase.from("costos_vinculos").select("codigo, costo_id"),
+  ]);
+  if (costos?.length) {
+    const r = calcularGanancia(
+      salesRows.map((s) => ({ codigo: s.codigo, descripcion: s.descripcion, cantidad: s.cantidad, neto: s.neto })),
+      costos as CostoPrenda[],
+      new Map((vincs ?? []).map((v) => [v.codigo, v.costo_id]))
+    );
+    gananciaCard = {
+      value: money(r.gananciaEstimada),
+      hint: `sobre el ${r.coberturaPct.toFixed(0)}% de las ventas con costo asignado`,
+    };
+  }
+
   const cards = [
     {
       label: "Unidades vendidas",
@@ -54,6 +73,9 @@ export default async function SnapshotPage({
       value: money(Number(snapshot.total_neto)),
       hint: "lo que realmente te toca a ti",
     },
+    ...(gananciaCard
+      ? [{ label: "Ganancia estimada", value: gananciaCard.value, hint: gananciaCard.hint }]
+      : []),
     {
       label: "Alertas de stock",
       value: String(snapshot.num_alertas),

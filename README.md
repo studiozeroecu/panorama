@@ -94,6 +94,18 @@ Setup (una sola vez):
 El bot puede consultar producción: "¿cuánta tela me queda?", "¿qué hay en maquila?",
 "stock online". El resumen del lunes avisa de pedidos de tela atrasados.
 
+## Fase 4 — Costos reales y margen (/costos)
+
+Tabla `costos_prendas` (los derivados nunca se guardan: `costo_total` es columna generada
+y ganancias/márgenes se calculan al vuelo) + `costos_vinculos` (vínculo manual código→costo).
+Pantalla `/costos`: edición inline con recálculo en vivo, keywords de auto-asignación
+(regla: "COLOR ENTERO" = básica) y vinculación manual de productos sin match. El detalle
+de cada snapshot muestra la ganancia estimada del periodo con su % de cobertura, y el bot
+responde `margen_producto` ("¿cuánto me deja la camiseta?").
+
+Setup: ejecutar `supabase/schema_fase4.sql` y luego `supabase/migracion_costos.sql`
+(regenerable con `node scripts/generar-migracion-costos.mjs "ruta/al/excel.xlsx"`).
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)
