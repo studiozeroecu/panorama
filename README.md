@@ -147,6 +147,16 @@ texto) y recién ahí se guarda con la foto de respaldo. Registro: ella le escri
 /start al bot (que le dice su chat_id) y el admin ejecuta
 `update user_roles set telegram_chat_id = '<chat_id>' where rol = 'logistica';`
 
+## Migración de pagos (julio–septiembre 2026)
+
+`supabase/migracion_pagos.sql` (ejecutar UNA vez; regenerable con
+`node scripts/generar-migracion-pagos.mjs "ruta/al/excel.xlsx"`): 48 cuentas por pagar
+de las 3 hojas del Excel, separadas por la columna nueva `ambito` (personal / empresa),
+con 12 cheques insertados y vinculados a su cuenta. Las fechas se remapean al mes de
+cada hoja (el Excel arrastra fechas del mes anterior) y "MES ENTERO" = fin de mes.
+Al pagar una cuenta **personal** NO se registra gasto en `movimientos` — solo las de
+empresa entran a la contabilidad del negocio.
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

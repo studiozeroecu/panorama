@@ -22,6 +22,7 @@ interface CxP {
   id: string; proveedor: string; concepto: string; monto: number;
   fecha_factura: string; fecha_vencimiento: string | null;
   tipo_pago: string; categoria: string;
+  ambito?: "personal" | "empresa"; // columna agregada por migracion_pagos.sql
   estado: "pendiente" | "pagado"; fecha_pago: string | null; notas: string;
 }
 interface Cheque {
@@ -89,7 +90,10 @@ export default function FinanzasApp() {
     await reload();
   }
 
-  /** Marcar pagada registra automáticamente el gasto en movimientos (decisión del dueño). */
+  /**
+   * Marcar pagada registra automáticamente el gasto en movimientos — SOLO si
+   * es de empresa: los pagos personales no entran a la contabilidad del negocio.
+   */
   async function marcarPagado(x: CxP) {
     const hoy = hoyEcuador();
     const { error: e1 } = await supabase
@@ -97,6 +101,11 @@ export default function FinanzasApp() {
       .update({ estado: "pagado", fecha_pago: hoy })
       .eq("id", x.id);
     if (e1) return avisar(`Error: ${e1.message}`);
+    if (x.ambito === "personal") {
+      avisar("Pagada (personal — no entra a los gastos del negocio)");
+      await reload();
+      return;
+    }
     const { error: e2 } = await supabase.from("movimientos").insert({
       tipo: "gasto",
       monto: Number(x.monto),
@@ -187,7 +196,10 @@ export default function FinanzasApp() {
               </div>
               <TablaCuentas
                 filas={cxp}
-                cols={(x: CxP) => [x.proveedor, `${x.concepto}${x.concepto ? " · " : ""}${x.tipo_pago} · ${x.categoria}`]}
+                cols={(x: CxP) => [
+                  `${x.ambito === "personal" ? "👤 " : ""}${x.proveedor}`,
+                  `${x.concepto}${x.concepto ? " · " : ""}${x.tipo_pago}${x.ambito === "personal" ? " · personal" : ` · ${x.categoria}`}`,
+                ]}
                 onResolver={marcarPagado}
                 labelResolver="✓ Pagada"
                 labelResuelto="Pagada"
@@ -292,13 +304,14 @@ function FormCuenta({
   const [vence, setVence] = useState("");
   const [tipoPago, setTipoPago] = useState("efectivo");
   const [categoria, setCategoria] = useState("otros");
+  const [ambito, setAmbito] = useState<"empresa" | "personal">("empresa");
   const [notas, setNotas] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (abierto) {
       setQuien(""); setConcepto(""); setMonto(""); setFactura(hoyEcuador());
-      setVence(""); setTipoPago("efectivo"); setCategoria("otros"); setNotas(""); setErr(null);
+      setVence(""); setTipoPago("efectivo"); setCategoria("otros"); setAmbito("empresa"); setNotas(""); setErr(null);
     }
   }, [abierto]);
 
@@ -316,8 +329,24 @@ function FormCuenta({
     const { error } =
       tipo === "cobrar"
         ? await supabase.from("cuentas_por_cobrar").insert({ ...base, cliente: quien.trim() })
-        : await supabase.from("cuentas_por_pagar").insert({ ...base, proveedor: quien.trim(), tipo_pago: tipoPago, categoria });
-    if (error) return setErr(error.message);
+        : await supabase.from("cuentas_por_pagar").insert({
+            ...base,
+            proveedor: quien.trim(),
+            tipo_pago: tipoPago,
+            categoria,
+            ambito,
+          });
+    if (error) {
+      // si aún no se ejecutó migracion_pagos.sql, la columna ambito no existe
+      if (tipo === "pagar" && /ambito/.test(error.message)) {
+        const retry = await supabase.from("cuentas_por_pagar").insert({
+          ...base, proveedor: quien.trim(), tipo_pago: tipoPago, categoria,
+        });
+        if (!retry.error) return onGuardado();
+        return setErr(retry.error.message);
+      }
+      return setErr(error.message);
+    }
     onGuardado();
   }
 
@@ -355,6 +384,12 @@ function FormCuenta({
       </Fila>
       {tipo === "pagar" && (
         <Fila>
+          <Campo label="Ámbito">
+            <select className="pinput" value={ambito} onChange={(e) => setAmbito(e.target.value as "empresa" | "personal")}>
+              <option value="empresa">Empresa</option>
+              <option value="personal">Personal</option>
+            </select>
+          </Campo>
           <Campo label="Tipo de pago">
             <select className="pinput" value={tipoPago} onChange={(e) => setTipoPago(e.target.value)}>
               <option value="efectivo">Efectivo</option>
