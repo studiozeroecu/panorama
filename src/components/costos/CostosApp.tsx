@@ -5,9 +5,9 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
   calcularGanancia,
-  matchCosto,
   COMISION_VATEX,
   type CostoPrenda,
+  type CategoriaCosto,
   type LineaVenta,
 } from "@/lib/costos/match";
 
@@ -38,6 +38,7 @@ type CampoNum = (typeof CAMPOS_COSTO)[number][0] | (typeof CAMPOS_PRECIO)[number
 export default function CostosApp() {
   const supabase = useMemo(() => createClient(), []);
   const [costos, setCostos] = useState<CostoPrenda[]>([]);
+  const [categorias, setCategorias] = useState<CategoriaCosto[]>([]);
   const [vinculos, setVinculos] = useState<Map<string, string>>(new Map());
   const [ventas, setVentas] = useState<LineaVenta[]>([]);
   const [periodo, setPeriodo] = useState<string>("");
@@ -52,8 +53,9 @@ export default function CostosApp() {
   }, []);
 
   const reload = useCallback(async () => {
-    const [c, v, snap] = await Promise.all([
+    const [c, cat, v, snap] = await Promise.all([
       supabase.from("costos_prendas").select("*").order("producto"),
+      supabase.from("costos_categorias").select("*").order("prioridad"),
       supabase.from("costos_vinculos").select("codigo, costo_id"),
       supabase
         .from("snapshots")
@@ -71,6 +73,7 @@ export default function CostosApp() {
       return;
     }
     setCostos((c.data ?? []) as CostoPrenda[]);
+    setCategorias((cat.data ?? []) as CategoriaCosto[]);
     setVinculos(new Map((v.data ?? []).map((x) => [x.codigo, x.costo_id])));
     const s = snap.data?.[0];
     if (s) {
@@ -87,6 +90,10 @@ export default function CostosApp() {
 
   useEffect(() => {
     reload();
+    // las filas de categorías (componentes hijos) piden recarga con este evento
+    const h = () => reload();
+    window.addEventListener("costos-reload", h);
+    return () => window.removeEventListener("costos-reload", h);
   }, [reload]);
 
   async function guardarCampo(c: CostoPrenda, campo: CampoNum, valor: string) {
@@ -106,18 +113,6 @@ export default function CostosApp() {
     }
   }
 
-  async function guardarRegla(c: CostoPrenda, campo: "match_keywords" | "match_excluir", texto: string) {
-    const lista = texto.split(",").map((s) => s.trim()).filter(Boolean);
-    const { error } = await supabase
-      .from("costos_prendas")
-      .update({ [campo]: lista, updated_at: new Date().toISOString() })
-      .eq("id", c.id);
-    if (error) avisar(`Error: ${error.message}`);
-    else {
-      avisar("Regla guardada");
-      await reload();
-    }
-  }
 
   async function vincular(codigo: string, costoId: string) {
     const { error } = costoId
@@ -131,8 +126,8 @@ export default function CostosApp() {
   }
 
   const resumen = useMemo(
-    () => calcularGanancia(ventas, costos, vinculos),
-    [ventas, costos, vinculos]
+    () => calcularGanancia(ventas, costos, categorias, vinculos),
+    [ventas, costos, categorias, vinculos]
   );
 
   return (
@@ -240,44 +235,67 @@ export default function CostosApp() {
             </p>
           </section>
 
+          {resumen.porCategoria.length > 0 && (
+            <section>
+              <div className="section-head">
+                <h2>Desglose por categoría <span className="sub" style={{ fontWeight: 400 }}>· reporte {periodo}</span></h2>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Categoría</th>
+                      <th style={{ textAlign: "right" }}>Unidades</th>
+                      <th style={{ textAlign: "right" }}>Ingreso neto</th>
+                      <th style={{ textAlign: "right" }}>Ganancia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumen.porCategoria.map((g) => (
+                      <tr key={g.nombre} style={g.nombre === "Sin categoría" ? { opacity: 0.6 } : undefined}>
+                        <td><strong>{g.nombre}</strong></td>
+                        <td className="num">{g.unidades}</td>
+                        <td className="num">{money(g.neto)}</td>
+                        <td className="num" style={{ color: g.nombre === "Sin categoría" ? "var(--muted)" : g.ganancia >= 0 ? "var(--good)" : "var(--bad)" }}>
+                          {g.nombre === "Sin categoría" ? "—" : money(g.ganancia)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           <section>
             <div className="section-head">
-              <h2>Reglas de categorías <span className="sub" style={{ fontWeight: 400 }}>· se definen una vez y aplican a todos los reportes</span></h2>
+              <h2>Reglas de categorías <span className="sub" style={{ fontWeight: 400 }}>· automáticas en cada reporte; la primera que aplica gana (menor prioridad primero)</span></h2>
             </div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>Categoría</th><th>Debe contener (todas)</th><th>NO debe contener (ninguna)</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th style={{ width: 60 }}>Prio.</th>
+                    <th>Categoría</th>
+                    <th>Debe contener (todas; “|” = cualquiera)</th>
+                    <th>NO debe contener</th>
+                    <th>Costo aplicado</th>
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {costos.map((c) => (
-                    <tr key={c.id}>
-                      <td style={{ whiteSpace: "nowrap" }}><strong>{c.producto}</strong></td>
-                      <td>
-                        <input className="pinput" style={{ maxWidth: 320 }}
-                          defaultValue={(c.match_keywords ?? []).join(", ")}
-                          placeholder="sin reglas = solo corrección puntual"
-                          onBlur={(e) => {
-                            if (e.target.value.trim() !== (c.match_keywords ?? []).join(", ").trim())
-                              guardarRegla(c, "match_keywords", e.target.value);
-                          }} />
-                      </td>
-                      <td>
-                        <input className="pinput" style={{ maxWidth: 260 }}
-                          defaultValue={(c.match_excluir ?? []).join(", ")}
-                          placeholder="—"
-                          onBlur={(e) => {
-                            if (e.target.value.trim() !== (c.match_excluir ?? []).join(", ").trim())
-                              guardarRegla(c, "match_excluir", e.target.value);
-                          }} />
-                      </td>
-                    </tr>
+                  {categorias.map((cat) => (
+                    <FilaCategoria key={cat.id} cat={cat} costos={costos} />
                   ))}
                 </tbody>
               </table>
             </div>
             <p className="sub" style={{ fontSize: 12, marginTop: 10 }}>
-              Separa con comas. Una entrada admite alternativas con “|”: <code>BASICA|COLOR ENTERO</code> significa
-              “cualquiera de las dos”. Ejemplo: <b>hoddies</b> = contiene HODDIE y no contiene BASICA ni COLOR ENTERO.
+              Ejemplo: “Cuello chino / Buzo” con prioridad 10 le gana a “Camiseta estampada” (50) aunque la
+              descripción contenga CAMISETA. Lo que no cae en ninguna regla queda en “Sin categoría” y no
+              bloquea el cálculo del resto.
             </p>
+            <NuevaCategoria costos={costos} />
           </section>
 
           {resumen.lineasSinMatch.length > 0 && (
@@ -331,6 +349,94 @@ export default function CostosApp() {
       />
 
       {toast && <div className="prod-toast">✓ {toast}</div>}
+    </div>
+  );
+}
+
+function FilaCategoria({ cat, costos }: { cat: CategoriaCosto; costos: CostoPrenda[] }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function guardar(campo: string, valor: unknown) {
+    const { error } = await supabase.from("costos_categorias").update({ [campo]: valor }).eq("id", cat.id);
+    setMsg(error ? error.message : null);
+    if (!error) window.dispatchEvent(new Event("costos-reload"));
+  }
+  const lista = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
+
+  async function eliminar() {
+    const { error } = await supabase.from("costos_categorias").delete().eq("id", cat.id);
+    if (!error) window.dispatchEvent(new Event("costos-reload"));
+  }
+
+  return (
+    <tr>
+      <td>
+        <input className="pinput" type="number" style={{ width: 58, textAlign: "center", padding: "4px 4px" }}
+          defaultValue={cat.prioridad}
+          onBlur={(e) => {
+            const n = parseInt(e.target.value, 10);
+            if (n && n !== cat.prioridad) guardar("prioridad", n);
+          }} />
+      </td>
+      <td style={{ whiteSpace: "nowrap" }}>
+        <input className="pinput" style={{ minWidth: 140 }} defaultValue={cat.nombre}
+          onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== cat.nombre && guardar("nombre", e.target.value.trim())} />
+      </td>
+      <td>
+        <input className="pinput" style={{ minWidth: 220 }} defaultValue={(cat.incluir ?? []).join(", ")}
+          onBlur={(e) => e.target.value.trim() !== (cat.incluir ?? []).join(", ").trim() && guardar("incluir", lista(e.target.value))} />
+      </td>
+      <td>
+        <input className="pinput" style={{ minWidth: 150 }} defaultValue={(cat.excluir ?? []).join(", ")} placeholder="—"
+          onBlur={(e) => e.target.value.trim() !== (cat.excluir ?? []).join(", ").trim() && guardar("excluir", lista(e.target.value))} />
+      </td>
+      <td>
+        <select className="pinput" value={cat.costo_id ?? ""} onChange={(e) => guardar("costo_id", e.target.value || null)}>
+          <option value="">— sin costo —</option>
+          {costos.map((c) => <option key={c.id} value={c.id}>{c.producto} ({money(Number(c.costo_total))})</option>)}
+        </select>
+        {msg && <div style={{ color: "var(--bad)", fontSize: 11 }}>{msg}</div>}
+      </td>
+      <td>
+        <button className="btn danger" style={{ padding: "4px 9px" }} onClick={eliminar}>🗑</button>
+      </td>
+    </tr>
+  );
+}
+
+function NuevaCategoria({ costos }: { costos: CostoPrenda[] }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [nombre, setNombre] = useState("");
+  const [incluir, setIncluir] = useState("");
+  const [costoId, setCostoId] = useState("");
+
+  async function agregar() {
+    if (!nombre.trim() || !incluir.trim()) return;
+    const { error } = await supabase.from("costos_categorias").insert({
+      nombre: nombre.trim(),
+      prioridad: 100,
+      incluir: incluir.split(",").map((s) => s.trim()).filter(Boolean),
+      excluir: [],
+      costo_id: costoId || null,
+    });
+    if (!error) {
+      setNombre(""); setIncluir(""); setCostoId("");
+      window.dispatchEvent(new Event("costos-reload"));
+    }
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+      <input className="pinput" style={{ flex: 1, minWidth: 140 }} placeholder="Nueva categoría…"
+        value={nombre} onChange={(e) => setNombre(e.target.value)} />
+      <input className="pinput" style={{ flex: 2, minWidth: 180 }} placeholder="Debe contener (ej: GORRA|BUCKET)"
+        value={incluir} onChange={(e) => setIncluir(e.target.value)} />
+      <select className="pinput" style={{ flex: 1, minWidth: 150 }} value={costoId} onChange={(e) => setCostoId(e.target.value)}>
+        <option value="">— costo —</option>
+        {costos.map((c) => <option key={c.id} value={c.id}>{c.producto}</option>)}
+      </select>
+      <button className="btn primary" onClick={agregar}>+ Agregar</button>
     </div>
   );
 }

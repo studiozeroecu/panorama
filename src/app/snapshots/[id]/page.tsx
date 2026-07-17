@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import TopProducts, { type TopProductRow } from "@/components/TopProducts";
 import StockAlerts, { type StockAlertRow } from "@/components/StockAlerts";
 import { money, periodo, fecha } from "@/lib/format";
-import { calcularGanancia, type CostoPrenda } from "@/lib/costos/match";
+import { calcularGanancia, type CostoPrenda, type CategoriaCosto } from "@/lib/costos/match";
 
 export const dynamic = "force-dynamic";
 
@@ -46,14 +46,16 @@ export default async function SnapshotPage({
 
   // Fase 4: ganancia estimada del periodo (si la tabla de costos existe)
   let gananciaCard: { value: string; hint: string } | null = null;
-  const [{ data: costos }, { data: vincs }] = await Promise.all([
+  const [{ data: costos }, { data: categorias }, { data: vincs }] = await Promise.all([
     supabase.from("costos_prendas").select("*"),
+    supabase.from("costos_categorias").select("*"),
     supabase.from("costos_vinculos").select("codigo, costo_id"),
   ]);
   if (costos?.length) {
     const r = calcularGanancia(
       salesRows.map((s) => ({ codigo: s.codigo, descripcion: s.descripcion, cantidad: s.cantidad, neto: s.neto })),
       costos as CostoPrenda[],
+      (categorias ?? []) as CategoriaCosto[],
       new Map((vincs ?? []).map((v) => [v.codigo, v.costo_id]))
     );
     gananciaCard = {

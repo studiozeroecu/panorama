@@ -157,6 +157,25 @@ cada hoja (el Excel arrastra fechas del mes anterior) y "MES ENTERO" = fin de me
 Al pagar una cuenta **personal** NO se registra gasto en `movimientos` — solo las de
 empresa entran a la contabilidad del negocio.
 
+## Actualización v3 — DTF por bot, crons estrictos, bot socio, categorías con prioridad
+
+Ejecutar `supabase/actualizacion_v3.sql`. Cambios:
+
+- **Lotes DTF por Telegram**: "registrar estampado camiseta básica, modelo El Cajas, 20
+  oscuras y 20 claras, 4 por metro a $8" → el bot calcula metros (ceil de claros y
+  oscuros POR SEPARADO) y costo, y guarda en `dtf_lotes` solo tras confirmar con botón.
+- **Mensajes proactivos — regla estricta**: el bot solo habla solo en 2 casos — resumen
+  del lunes 7am Ecuador y urgencias (<3 días) máximo una vez al día si existen. Además,
+  dedupe de updates de Telegram (`telegram_updates`): los reintentos de entrega ya no
+  duplican respuestas.
+- **Bot socio**: recomendaciones concretas tras cada dato, cierre con pregunta/acción, y
+  la alerta de urgencias trae botones [✅ Marcar todos como pagados] [📋 Ver detalle]
+  [⏰ Posponer] (pagar registra los gastos de empresa en movimientos).
+- **Categorías de costo con prioridad** (`costos_categorias`): 6 reglas automáticas
+  sembradas (CUELLO CHINO gana a CAMISETA); primera que aplica gana; editables en
+  /costos con desglose de ganancia por categoría; "Sin categoría" agrupa el resto sin
+  bloquear nada.
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

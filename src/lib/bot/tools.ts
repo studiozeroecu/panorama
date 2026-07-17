@@ -117,6 +117,25 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
   {
+    name: "registrar_estampado_dtf",
+    description:
+      "Prepara un lote de estampado DTF para confirmación: calcula metros de film (claros y oscuros se redondean hacia arriba POR SEPARADO) y el costo. Úsala cuando el usuario dicte un lote: 'registrar estampado camiseta básica, modelo El Cajas, 20 negras oscuras y 20 blancas claras, 4 por metro a $8'. NO guarda directo: el usuario confirma con un botón que aparece después de tu respuesta.",
+    input_schema: {
+      type: "object",
+      properties: {
+        prenda: { type: "string", description: "Prenda del lote (ej. camiseta básica)" },
+        modelo: { type: "string", description: "Nombre del diseño/modelo (ej. El Cajas)" },
+        unidades_claras: { type: "number", description: "Unidades en prendas CLARAS (tinta para claros)" },
+        unidades_oscuras: { type: "number", description: "Unidades en prendas OSCURAS" },
+        por_metro: { type: "number", description: "Cuántos estampados entran por metro" },
+        precio_metro: { type: "number", description: "Precio por metro del proveedor en dólares" },
+        tecnica: { type: "string", enum: ["DTF", "Serigrafía", "Sublimación"], description: "Default DTF" },
+        fecha: { type: "string", description: "YYYY-MM-DD; omitir si es hoy" },
+      },
+      required: ["prenda", "unidades_claras", "unidades_oscuras", "por_metro", "precio_metro"],
+    },
+  },
+  {
     name: "flujo_semana",
     description:
       "Qué hay que pagar y cobrar en los próximos días: cuentas por pagar, facturas por cobrar y cheques, ordenados por vencimiento con totales. Úsala para '¿qué tengo que pagar esta semana?'.",
@@ -360,6 +379,47 @@ export async function executeTool(
         const { error } = await supabase.from("cheques").update({ estado }).eq("id", matches[0].id);
         if (error) return `Error: ${error.message}`;
         return `Cheque de ${money(Number(matches[0].monto))} a ${matches[0].beneficiario} marcado como "${estado}".`;
+      }
+
+      case "registrar_estampado_dtf": {
+        const { calcularLoteDtf } = await import("@/lib/dtf/calculo");
+        const claras = Math.max(0, Math.round(Number(input.unidades_claras) || 0));
+        const oscuras = Math.max(0, Math.round(Number(input.unidades_oscuras) || 0));
+        const porMetro = Math.round(Number(input.por_metro) || 0);
+        const precioMetro = Number(input.precio_metro) || 0;
+        if (claras + oscuras <= 0) return "Error: indica cuántas unidades claras y/u oscuras.";
+        if (porMetro <= 0) return "Error: indica cuántos estampados entran por metro.";
+        if (!(precioMetro > 0)) return "Error: indica el precio por metro.";
+        const calc = calcularLoteDtf({
+          unidades_claras: claras,
+          unidades_oscuras: oscuras,
+          por_metro: porMetro,
+          precio_metro: precioMetro,
+        });
+        const fecha = isDate(input.fecha) ? input.fecha : new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+        const payload = {
+          prenda: String(input.prenda ?? "").slice(0, 120),
+          modelo: String(input.modelo ?? "").slice(0, 120),
+          tecnica: ["DTF", "Serigrafía", "Sublimación"].includes(String(input.tecnica)) ? String(input.tecnica) : "DTF",
+          fecha,
+          unidades_claras: claras,
+          unidades_oscuras: oscuras,
+          por_metro: porMetro,
+          precio_metro: precioMetro,
+          ...calc,
+        };
+        const { error } = await supabase.from("bot_pending_actions").insert({
+          chat_id: "pendiente", // el webhook lo reasigna al chat correcto
+          kind: "dtf_lote",
+          payload,
+        });
+        if (error) return `Error interno: ${error.message}`;
+        return (
+          `Lote listo para confirmar (el usuario verá botones):\n` +
+          `${payload.prenda}${payload.modelo ? ` · ${payload.modelo}` : ""} (${payload.tecnica})\n` +
+          `${claras} claras → ${calc.metros_claros} m · ${oscuras} oscuras → ${calc.metros_oscuros} m\n` +
+          `Total: ${calc.metros} m × ${money(precioMetro)} = ${money(calc.valor_total)} (${money(calc.valor_unitario)}/unidad)`
+        );
       }
 
       case "flujo_semana": {

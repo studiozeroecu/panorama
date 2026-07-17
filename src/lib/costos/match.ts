@@ -68,6 +68,37 @@ export function matchCosto(
   return empate ? null : mejor;
 }
 
+export interface CategoriaCosto {
+  id: string;
+  nombre: string;
+  prioridad: number;
+  incluir: string[];
+  excluir: string[];
+  costo_id: string | null;
+}
+
+/**
+ * Rediseño (jul 2026): categorías con PRIORIDAD explícita — se evalúan en
+ * orden (menor prioridad primero) y la primera que aplica gana. Así
+ * "CUELLO CHINO" (prio 10) le gana a "CAMISETA" (prio 50) aunque la
+ * descripción contenga ambas. Reglas automáticas, sin intervención manual.
+ */
+export function matchCategoria(
+  descripcion: string,
+  categorias: CategoriaCosto[]
+): CategoriaCosto | null {
+  const desc = norm(descripcion);
+  const cumple = (k: string) => k.split("|").some((alt) => alt.trim() && desc.includes(norm(alt.trim())));
+  const ordenadas = [...categorias].sort((a, b) => a.prioridad - b.prioridad);
+  for (const cat of ordenadas) {
+    if (!cat.incluir?.length) continue;
+    if (!cat.incluir.every(cumple)) continue;
+    if ((cat.excluir ?? []).some(cumple)) continue;
+    return cat;
+  }
+  return null;
+}
+
 export interface LineaVenta {
   codigo: string;
   descripcion: string;
@@ -81,30 +112,63 @@ export interface GananciaPeriodo {
   netoTotal: number;
   coberturaPct: number; // % del ingreso neto que tiene costo asignado
   lineasSinMatch: { codigo: string; descripcion: string; neto: number }[];
+  porCategoria: { nombre: string; neto: number; ganancia: number; unidades: number }[];
 }
 
-/** Ganancia estimada del periodo = Σ (neto − costo_total × cantidad) sobre líneas con costo. */
+/**
+ * Ganancia estimada del periodo = Σ (neto − costo_total × cantidad), agrupada
+ * por categoría. Prioridad de resolución por línea:
+ *   1. vínculo manual por código (corrección puntual)
+ *   2. categorías automáticas por prioridad
+ * Lo que no matchea cae en "Sin categoría" y no bloquea el resto.
+ */
 export function calcularGanancia(
   lineas: LineaVenta[],
   costos: CostoPrenda[],
-  vinculos: Map<string, string> // codigo → costo_id (manual, prioridad)
+  categorias: CategoriaCosto[],
+  vinculos: Map<string, string> // codigo → costo_id (manual)
 ): GananciaPeriodo {
   const porId = new Map(costos.map((c) => [c.id, c]));
   let ganancia = 0;
   let netoConCosto = 0;
   let netoTotal = 0;
   const sinMatch: GananciaPeriodo["lineasSinMatch"] = [];
+  const grupos = new Map<string, { neto: number; ganancia: number; unidades: number }>();
+
+  const acumular = (nombre: string, neto: number, g: number, unidades: number) => {
+    const e = grupos.get(nombre) ?? { neto: 0, ganancia: 0, unidades: 0 };
+    e.neto += neto;
+    e.ganancia += g;
+    e.unidades += unidades;
+    grupos.set(nombre, e);
+  };
 
   for (const l of lineas) {
     const neto = Number(l.neto ?? 0);
     netoTotal += neto;
+
+    let costo: CostoPrenda | null = null;
+    let nombreCategoria = "";
     const vinculado = vinculos.get(l.codigo);
-    const costo = vinculado ? (porId.get(vinculado) ?? null) : matchCosto(l.descripcion, costos);
+    if (vinculado) {
+      costo = porId.get(vinculado) ?? null;
+      nombreCategoria = costo ? `(manual) ${costo.producto}` : "";
+    } else {
+      const cat = matchCategoria(l.descripcion, categorias);
+      if (cat?.costo_id) {
+        costo = porId.get(cat.costo_id) ?? null;
+        nombreCategoria = cat.nombre;
+      }
+    }
+
     if (costo) {
-      ganancia += neto - Number(costo.costo_total) * l.cantidad;
+      const g = neto - Number(costo.costo_total) * l.cantidad;
+      ganancia += g;
       netoConCosto += neto;
-    } else if (neto > 0) {
-      sinMatch.push({ codigo: l.codigo, descripcion: l.descripcion, neto });
+      acumular(nombreCategoria || costo.producto, neto, g, l.cantidad);
+    } else {
+      if (neto > 0) sinMatch.push({ codigo: l.codigo, descripcion: l.descripcion, neto });
+      acumular("Sin categoría", neto, 0, l.cantidad);
     }
   }
 
@@ -114,5 +178,8 @@ export function calcularGanancia(
     netoTotal,
     coberturaPct: netoTotal > 0 ? (netoConCosto / netoTotal) * 100 : 0,
     lineasSinMatch: sinMatch.sort((a, b) => b.neto - a.neto),
+    porCategoria: [...grupos.entries()]
+      .map(([nombre, v]) => ({ nombre, ...v }))
+      .sort((a, b) => b.neto - a.neto),
   };
 }

@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 interface TgUpdate {
+  update_id?: number;
   message?: {
     message_id: number;
     chat: { id: number };
@@ -54,6 +55,18 @@ export async function POST(req: NextRequest) {
 
   const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
   if (!chatId) return NextResponse.json({ ok: true });
+
+  // Dedupe: si Telegram reintenta la entrega (respuesta lenta), no procesar
+  // el mismo update dos veces — era la causa de mensajes repetidos.
+  if (update.update_id != null) {
+    try {
+      const svc = createServiceClient();
+      const { error: dupErr } = await svc.from("telegram_updates").insert({ update_id: update.update_id });
+      if (dupErr?.code === "23505") return NextResponse.json({ ok: true, dup: true });
+    } catch {
+      // tabla aún no migrada: seguir sin dedupe
+    }
+  }
 
   // 2) Identidad: dueño (env) o usuaria de logística (user_roles.telegram_chat_id)
   const allowed = process.env.TELEGRAM_ALLOWED_CHAT_ID;
@@ -339,6 +352,42 @@ async function handleTextMessage(chatId: number, text: string) {
   const supabase = createServiceClient();
   const reply = await handleText(supabase, text);
   await sendMessage(chatId, esc(reply));
+
+  // Si la conversación preparó un lote DTF, reclamarlo y pedir confirmación
+  // con botones (el tool no puede mandar botones por sí mismo).
+  const { data: dtfPend } = await supabase
+    .from("bot_pending_actions")
+    .select("id, payload")
+    .eq("kind", "dtf_lote")
+    .eq("chat_id", "pendiente")
+    .eq("resolved", false)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const lote = dtfPend?.[0];
+  if (lote) {
+    await supabase.from("bot_pending_actions").update({ chat_id: String(chatId) }).eq("id", lote.id);
+    const p = lote.payload as {
+      prenda: string; modelo: string; tecnica: string; fecha: string;
+      unidades_claras: number; unidades_oscuras: number; por_metro: number;
+      precio_metro: number; metros_claros: number; metros_oscuros: number;
+      metros: number; valor_total: number;
+    };
+    await sendMessage(
+      chatId,
+      [
+        `🖨 <b>Lote DTF por confirmar</b>`,
+        `${esc(p.prenda)}${p.modelo ? ` · ${esc(p.modelo)}` : ""} (${p.tecnica}) · ${p.fecha}`,
+        `☀ ${p.unidades_claras} claras → <b>${p.metros_claros} m</b> · ◉ ${p.unidades_oscuras} oscuras → <b>${p.metros_oscuros} m</b>`,
+        `Total: <b>${p.metros} m</b> × ${money(p.precio_metro)} = <b>${money(p.valor_total)}</b>`,
+      ].join("\n"),
+      [
+        [
+          { text: "✅ Confirmar y guardar", callback_data: `dtf:conf:${lote.id}` },
+          { text: "✖️ Cancelar", callback_data: `dtf:cancel:${lote.id}` },
+        ],
+      ]
+    );
+  }
 }
 
 // ---------------------------------------------------------------
@@ -517,7 +566,99 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     await editMessageText(chatId, messageId, "Esta acción ya fue resuelta o expiró.");
     return;
   }
-  await supabase.from("bot_pending_actions").update({ resolved: true }).eq("id", pendingId);
+  // "Ver detalle" no consume la acción: los botones siguen vivos
+  if (!(prefix === "urg" && action === "detalle")) {
+    await supabase.from("bot_pending_actions").update({ resolved: true }).eq("id", pendingId);
+  }
+
+  // --- lote DTF ---
+  if (prefix === "dtf" && pending.kind === "dtf_lote") {
+    const p = pending.payload as Record<string, unknown>;
+    if (action === "cancel") {
+      await editMessageText(chatId, messageId, "Lote descartado — no guardé nada.");
+      return;
+    }
+    const { error } = await supabase.from("dtf_lotes").insert({
+      fecha: p.fecha,
+      prenda: p.prenda,
+      modelo: p.modelo,
+      tecnica: p.tecnica,
+      unidades_claras: p.unidades_claras,
+      unidades_oscuras: p.unidades_oscuras,
+      total_unidades: p.total_unidades,
+      por_metro: p.por_metro,
+      precio_metro: p.precio_metro,
+      metros_claros: p.metros_claros,
+      metros_oscuros: p.metros_oscuros,
+      metros: p.metros,
+      valor_total: p.valor_total,
+      valor_unitario: p.valor_unitario,
+      origen: "telegram",
+    });
+    if (error) {
+      await editMessageText(chatId, messageId, `⚠️ No se pudo guardar: ${esc(error.message)}`);
+      return;
+    }
+    await editMessageText(
+      chatId,
+      messageId,
+      `✅ Lote DTF guardado: ${esc(String(p.prenda))}${p.modelo ? ` · ${esc(String(p.modelo))}` : ""} · <b>${p.metros} m</b> · <b>${money(Number(p.valor_total))}</b>`
+    );
+    return;
+  }
+
+  // --- urgencias de pago (botones del cron diario) ---
+  if (prefix === "urg" && pending.kind === "urgencias") {
+    const p = pending.payload as { cheque_ids: string[]; cxp_ids: string[] };
+    if (action === "posponer") {
+      await editMessageText(chatId, messageId, "⏰ Pospuesto. Si sigue pendiente, te lo recuerdo mañana a las 8am.");
+      return;
+    }
+    if (action === "detalle") {
+      const { executeTool } = await import("@/lib/bot/tools");
+      const detalle = await executeTool(supabase, "flujo_semana", { dias: 3 });
+      await sendMessage(chatId, esc(detalle));
+      return;
+    }
+    if (action === "pagar") {
+      const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+      let pagados = 0;
+      if (p.cheque_ids?.length) {
+        const { error } = await supabase.from("cheques").update({ estado: "cobrado" }).in("id", p.cheque_ids);
+        if (!error) pagados += p.cheque_ids.length;
+      }
+      if (p.cxp_ids?.length) {
+        const { data: cuentas } = await supabase
+          .from("cuentas_por_pagar")
+          .select("id, proveedor, concepto, monto, categoria, ambito")
+          .in("id", p.cxp_ids)
+          .eq("estado", "pendiente");
+        await supabase
+          .from("cuentas_por_pagar")
+          .update({ estado: "pagado", fecha_pago: hoy })
+          .in("id", p.cxp_ids);
+        for (const c of cuentas ?? []) {
+          if ((c as { ambito?: string }).ambito === "personal") continue; // personal no entra al negocio
+          await supabase.from("movimientos").insert({
+            tipo: "gasto",
+            monto: Number(c.monto),
+            concepto: `${c.proveedor}${c.concepto ? ` — ${c.concepto}` : ""} (urgencia pagada desde el bot)`,
+            categoria: c.categoria ?? "otros",
+            fecha: hoy,
+            origen: "telegram",
+          });
+        }
+        pagados += (cuentas ?? []).length;
+      }
+      await editMessageText(
+        chatId,
+        messageId,
+        `✅ ${pagados} pago${pagados !== 1 ? "s" : ""} marcado${pagados !== 1 ? "s" : ""} como resuelto${pagados !== 1 ? "s" : ""} (los gastos de empresa quedaron registrados). ¿Algo más?`
+      );
+      return;
+    }
+    return;
+  }
 
   // --- cheques ---
   if (prefix === "chq" && pending.kind === "cheque") {
