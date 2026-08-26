@@ -176,6 +176,15 @@ Ejecutar `supabase/actualizacion_v3.sql`. Cambios:
   /costos con desglose de ganancia por categoría; "Sin categoría" agrupa el resto sin
   bloquear nada.
 
+## Corrección — el bot escribía todos los días
+
+`supabase/actualizacion_alertas.sql`. La alerta de pagos avisaba de todo lo vencido sin
+recordar qué ya había dicho, así que una deuda sin resolver repetía el mismo mensaje cada
+mañana (y "Posponer" no silenciaba nada). Ahora cada cheque/cuenta se avisa **una vez** y
+queda en silencio 7 días (`alertado_hasta`); solo algo **nuevo** rompe el silencio, el
+botón 🔕 silencia 30 días, y marcar pagado lo saca de las alertas. Si la columna no existe,
+el cron no envía nada (mejor silencio que spam).
+
 ## Estructura
 
 - `src/lib/parser.ts` — parser del Excel (lógica portada del prototipo validado)

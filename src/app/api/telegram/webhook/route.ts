@@ -611,7 +611,19 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   if (prefix === "urg" && pending.kind === "urgencias") {
     const p = pending.payload as { cheque_ids: string[]; cxp_ids: string[] };
     if (action === "posponer") {
-      await editMessageText(chatId, messageId, "⏰ Pospuesto. Si sigue pendiente, te lo recuerdo mañana a las 8am.");
+      // silencio real: 30 días sin volver a avisar de estos ítems
+      const hasta = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      if (p.cheque_ids?.length) {
+        await supabase.from("cheques").update({ alertado_hasta: hasta }).in("id", p.cheque_ids);
+      }
+      if (p.cxp_ids?.length) {
+        await supabase.from("cuentas_por_pagar").update({ alertado_hasta: hasta }).in("id", p.cxp_ids);
+      }
+      await editMessageText(
+        chatId,
+        messageId,
+        `🔕 Silenciado hasta el ${hasta}. No te escribo de estos pagos hasta entonces (si aparece uno nuevo, sí te aviso). Los ves cuando quieras en /finanzas.`
+      );
       return;
     }
     if (action === "detalle") {
