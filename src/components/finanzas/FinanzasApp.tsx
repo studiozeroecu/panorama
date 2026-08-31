@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/produccion/fechas";
-import { Modal, Campo, Fila, Badge } from "@/components/produccion/ui";
+import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/fechas";
+import { Modal, Campo, Fila, Badge } from "@/components/ui";
 
 const money = (n: number | null | undefined) =>
   n == null || isNaN(Number(n))

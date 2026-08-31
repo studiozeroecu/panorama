@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Badge, Vacio } from "./ui";
+import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 const ESTADO_LABEL: Record<EstadoPedido, { txt: string; color: "ambar" | "azul" | "verde" }> = {
   pendiente: { txt: "Pendiente", color: "ambar" },

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { money } from "@/lib/produccion/types";
-import { mesActual, enMes } from "@/lib/produccion/fechas";
+import { mesActual, enMes } from "@/lib/fechas";
 
 /**
  * Resumen mensual coherente (bug corregido de la app vieja): ingresos y

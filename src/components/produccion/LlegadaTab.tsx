@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Badge, Vacio } from "./ui";
+import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha, sumarDiasLaborables, diasHasta } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha, sumarDiasLaborables, diasHasta } from "@/lib/fechas";
 
 export default function LlegadaTab() {
   const { data, supabase, reload, toast } = useProd();

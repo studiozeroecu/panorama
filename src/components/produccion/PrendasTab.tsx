@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Badge, Vacio } from "./ui";
+import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type Prenda } from "@/lib/produccion/types";
 
 const FORM_VACIO = {

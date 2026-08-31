@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Campo, Fila, Badge, Vacio, Tallas } from "./ui";
+import { Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, ordenarTallas, type Maquila, type ColorMaquila, type Diseno } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/fechas";
 import { sumarStock } from "@/lib/produccion/stock";
 import { LOCALES, type Guia } from "@/lib/locales";
 import { useEffect } from "react";

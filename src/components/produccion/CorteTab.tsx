@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "./ui";
+import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela, type ColorCorte } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
   const { data, supabase, reload, toast } = useProd();

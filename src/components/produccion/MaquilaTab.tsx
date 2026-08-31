@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Badge, Vacio, Tallas } from "./ui";
+import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function MaquilaTab() {
   const { data, supabase, reload, toast } = useProd();

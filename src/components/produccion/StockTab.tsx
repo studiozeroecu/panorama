@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Badge, Vacio } from "./ui";
+import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function StockTab() {
   const { data, supabase, reload, toast } = useProd();

@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Badge, Vacio, Tallas } from "./ui";
+import { Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type LoteEstampado } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/produccion/fechas";
+import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import { sumarStock } from "@/lib/produccion/stock";
 
 export default function EstampadosTab() {

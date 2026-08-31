@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fmtFecha, sumarDiasLaborables, enMes } from "@/lib/produccion/fechas";
+import { fmtFecha, sumarDiasLaborables, enMes } from "@/lib/fechas";
 
 describe("fechas de producción (fix zona horaria Ecuador)", () => {
   it("formatea YYYY-MM-DD sin corrimiento de día (el bug de la app vieja)", () => {

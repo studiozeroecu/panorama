@@ -1,5 +1,6 @@
 /**
- * Fechas para producción — todas ancladas a la zona horaria de Ecuador.
+ * Fechas del sistema (producción, finanzas, logística) — todas ancladas a la
+ * zona horaria de Ecuador.
  * Bug corregido de la app vieja: parsear "YYYY-MM-DD" con new Date() lo
  * interpreta como medianoche UTC y en Ecuador (UTC-5) mostraba el día anterior.
  * Aquí las fechas-solo-día se manejan como strings, nunca via Date local.

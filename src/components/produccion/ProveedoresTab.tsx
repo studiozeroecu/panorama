@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Vacio } from "./ui";
+import { Modal, Campo, Fila, Vacio } from "@/components/ui";
 import type { Proveedor, Catalogo } from "@/lib/produccion/types";
 
 const FORM_VACIO = { empresa: "", contacto_nombre: "", contacto: "", dias_entrega: "" };
