@@ -97,15 +97,15 @@ export default function ResumenTab() {
         </div>
 
         <div>
-          <div className="label" style={{ marginBottom: 10 }}>Ingresos de {mesLabel}</div>
+          <div className="label" style={{ marginBottom: 10 }}>Ventas de {mesLabel}</div>
           <div className="table-scroll">
             <table>
               <thead><tr><th>Fuente</th><th style={{ textAlign: "right" }}>Total</th></tr></thead>
               <tbody>
                 {filaCosto("Ventas online", `${unidadesVendidas} und. con precio real`, ingresoOnline)}
-                {filaCosto("Envíos a locales", `${unidadesLocales} und. a precio local`, ingresoLocales)}
+                {filaCosto("Envíos a locales (estimado)", `${unidadesLocales} und. a precio local`, ingresoLocales)}
                 <tr>
-                  <td style={{ fontWeight: 600 }}>INGRESO TOTAL</td>
+                  <td style={{ fontWeight: 600 }}>Total del mes</td>
                   <td className="num" style={{ fontWeight: 600 }}>{money(ingresoTotal)}</td>
                 </tr>
               </tbody>
@@ -114,7 +114,7 @@ export default function ResumenTab() {
 
           <div className="card" style={{ marginTop: 14, padding: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
-              <span className="sub">Ingresos del mes</span><span className="num">{money(ingresoTotal)}</span>
+              <span className="sub">Venta estimada (despachado)</span><span className="num">{money(ingresoTotal)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
               <span className="sub">Costos del mes</span>
@@ -127,8 +127,10 @@ export default function ResumenTab() {
               </span>
             </div>
             <p className="sub" style={{ fontSize: 11.5, marginTop: 10, marginBottom: 0 }}>
-              Ingresos y costos corresponden al mismo mes. Ojo: la tela comprada en un mes puede
-              producir ventas en meses siguientes — el resultado por mes es flujo, no margen por prenda.
+              El total del mes mezcla venta real (online) con venta estimada de lo despachado a
+              locales, y se compara contra los costos del mismo mes. Ojo: la tela comprada en un
+              mes puede producir ventas en meses siguientes — el resultado por mes es flujo, no
+              margen por prenda.
             </p>
           </div>
         </div>
