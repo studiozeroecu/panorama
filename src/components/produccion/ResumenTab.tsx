@@ -114,7 +114,7 @@ export default function ResumenTab() {
 
           <div className="card" style={{ marginTop: 14, padding: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
-              <span className="sub">Venta estimada (despachado)</span><span className="num">{money(ingresoTotal)}</span>
+              <span className="sub">Total del mes</span><span className="num">{money(ingresoTotal)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
               <span className="sub">Costos del mes</span>
