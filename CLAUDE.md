@@ -40,7 +40,17 @@ versionadas. Orden real de ejecución:
 `schema.sql` → `schema_fase2.sql` → `schema_fase3.sql` → `migracion_produccion.sql` →
 `schema_fase4.sql` → `migracion_costos.sql` → `schema_fase5.sql` → `migracion_pagos.sql` →
 `schema_fase6.sql` → `actualizacion_match_y_bot.sql` → `actualizacion_v3.sql` →
-`actualizacion_alertas.sql`
+`actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07**
+
+> ⚠️ **La base ya tiene la fase 7, pero el código TypeScript todavía NO.** Las tablas nuevas
+> existen y están pobladas, y el trigger mantiene `prod_pedido_colores` al día solo. Pero
+> `CorteTab`, `MaquilaTab` y `EnvioTab` siguen escribiendo únicamente en los `colores` jsonb, así
+> que **desde ahora las tablas normalizadas se van desincronizando**: un corte nuevo no crea sus
+> filas de color, y marcar enviado/entregado/procesado no actualiza `prod_maquila_colores`.
+> No rompe nada hoy (nada lee todavía las tablas nuevas), pero hay que **resincronizar antes de
+> desplegar el código nuevo**. Volver a correr la migración recupera los cortes y maquilas nuevos
+> (el backfill está guardado por fila padre), pero **no** los cambios de estado sobre maquilas que
+> ya tenían filas. Ver el registro de cambios al final.
 
 > El schema efectivo de una tabla es la suma de su `create table` **más** los `alter table` de los
 > archivos posteriores. Ejemplos: `cheques` gana `cuenta_por_pagar_id` en fase 5 y `alertado_hasta`
@@ -74,6 +84,69 @@ versionadas. Orden real de ejecución:
 | `prod_stock_online` | uuid | `disponibles` (>=0), `vendidas`, **unique** (`prenda_nombre`,`color`,`estampado`,`talla`) | `prenda_id → prod_prendas` set null |
 | `prod_ventas_online` | uuid | `fecha`, `cantidad`, `precio_unitario`, `total` | `stock_id → prod_stock_online` set null |
 | `prod_envios_locales` | uuid | `fecha`, `tallas jsonb`, `unidades`, `precio/costo_unitario`, `ingreso`, `margen`, `producto_codigo`, `local_destino` (añadida en fase 6) | `maquila_id → prod_maquilas` set null · `prenda_id → prod_prendas` set null |
+
+#### Colores normalizados — fase 7 ✅ aplicada (2026-09-07)
+
+`schema_fase7_colores.sql` saca los arrays `colores` jsonb de `prod_pedidos_tela`, `prod_cortes` y
+`prod_maquilas` a tablas propias. **Las columnas jsonb NO se borran**: quedan congeladas como
+respaldo, así que el código viejo sigue funcionando. **Mientras el TypeScript no se adapte, la
+fuente de verdad siguen siendo los jsonb** y las tablas nuevas solo se leen desde SQL.
+
+| Tabla | PK | Columnas clave | FKs (todas internas) |
+|---|---|---|---|
+| `prod_pedido_colores` | uuid | `color`, `metros`, `kilos`, `orden`; índice único `(pedido_id, lower(btrim(color)))` | `pedido_id → prod_pedidos_tela` **cascade** |
+| `prod_corte_colores` | uuid | `color`, `unidades`, `metros_usados`, `orden`; índice único `(corte_id, lower(btrim(color)))` | `corte_id → prod_cortes` **cascade** · `pedido_color_id → prod_pedido_colores` set null |
+| `prod_corte_color_tallas` | uuid | `talla`, `unidades`, **unique** (`corte_color_id`,`talla`); las tallas en cero no se guardan | `corte_color_id → prod_corte_colores` **cascade** |
+| `prod_maquila_colores` | uuid | `estado` (pendiente\|enviado\|entregado), `fecha_envio/entrega`, `procesado`, **unique** (`maquila_id`,`corte_color_id`) | `maquila_id → prod_maquilas` **cascade** · `corte_color_id → prod_corte_colores` **restrict** |
+
+`prod_maquila_colores` **no repite** `color`/`tallas`/`unidades`: los toma por join de
+`prod_corte_colores`. Es válido porque `CorteTab` los copia literales del corte y ningún otro código
+los vuelve a tocar — `MaquilaTab` solo escribe estado y fechas, `EnvioTab` solo `procesado`.
+
+El mismo archivo crea cinco funciones. Las dos RPC reemplazan las cadenas de escrituras sueltas que
+hoy hace el navegador — que al fallar a mitad y reintentarse duplicaban datos:
+
+| Función | Reemplaza | Por qué |
+|---|---|---|
+| `fn_registrar_corte(pedido, fecha, maquiladora, obs, costo_maquila, colores jsonb) → uuid` | `CorteTab.guardarCorte()` | Corte + maquila + colores + tallas en una transacción; bloquea el pedido mientras valida el saldo de tela |
+| `fn_procesar_lote_maquila(maquila_color_id, destino, …) → jsonb` | `EnvioTab.procesar()` | Los 3 destinos en una transacción; `for update` + guarda de `procesado` hacen imposible procesar dos veces el mismo lote |
+| `fn_sumar_stock_online(...)` | `src/lib/produccion/stock.ts` | Upsert atómico en vez de select→update (dos escrituras a la vez se pisaban) |
+| `fn_repartir_por_talla(tallas, total) → jsonb` | la heurística duplicada en `EnvioTab` y `EstampadosTab` | Única implementación de la regla, en orden XS→XXL |
+| `fn_hoy_ecuador() → date` | `current_date` | `current_date` usa la zona del servidor (UTC) y de 19:00 a medianoche registraría el día siguiente |
+
+Son `SECURITY INVOKER`: las políticas RLS siguen aplicando con el usuario que llama; el chequeo
+`fn_es_admin()` dentro de cada RPC solo da un mensaje entendible en vez de un error opaco de RLS.
+
+**Dual-write:** las dos RPC escriben las filas normalizadas **y** mantienen los `colores` jsonb al
+día. Por eso revertir el deploy es un rollback real — el código viejo lee el jsonb y no pierde nada
+de lo creado después de la migración. Al retirar los jsonb (fase posterior) hay que quitar antes ese
+dual-write de las dos funciones.
+
+Fuera del alcance de la fase 7 (queda para una fase 8): `prod_lotes_estampado` y
+`prod_envios_locales` siguen ligados a la maquila por `maquila_id` + un `color` de texto suelto, sin
+FK a la fila de color. Hasta que eso cambie, "¿a dónde fue el color X del corte Y?" no se puede
+responder en SQL. `total_unidades` también sigue almacenado en `prod_cortes` y `prod_maquilas` en
+vez de derivarse, a propósito, para no mezclar cambios.
+
+`prod_pedido_colores` se mantiene al día con un **trigger** (`trg_sync_pedido_colores`) sobre
+`prod_pedidos_tela`, porque PedidosTab inserta el pedido directo y no por RPC. Sin él, todo pedido
+creado después de la migración quedaría sin filas de color y sus cortes con `pedido_color_id` nulo.
+Cuando se retire el jsonb, el trigger se va y PedidosTab pasa a escribir las filas.
+
+Tablas de respaldo que crea la migración (admin-only, borrables cuando el código nuevo esté
+estable): `respaldo_fase7_pedidos`, `respaldo_fase7_cortes`, `respaldo_fase7_maquilas`.
+
+`supabase/smoke_test_fase7.sql` **no forma parte de la cadena**: se corre DESPUÉS de la migración y
+ejercita el trigger y las dos RPC con datos de mentira. Es **un solo bloque `DO`** que termina
+lanzando una excepción a propósito — ese "error" es el reporte, y al lanzarlo PostgreSQL revierte
+todo lo que la prueba creó.
+
+⚠️ **Ningún `.sql` de este proyecto debe llevar `begin;`/`commit;` explícitos.** El SQL Editor de
+Supabase reparte las sentencias de un script con transacción explícita entre varias conexiones del
+pool, y una tabla creada en una sentencia deja de existir para la siguiente
+(`relation ... does not exist`). Sin transacción explícita cada sentencia autocommitea y funciona.
+Cuando hace falta atomicidad de verdad, la forma es un bloque `DO` — que es **una sola sentencia**
+y por tanto una sola transacción en una sola conexión.
 
 ### Costos (`costos_*`) — FKs internas del área
 
@@ -236,4 +309,43 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
-*(sin entradas todavía — el estado actual es el descrito arriba, tras `actualizacion_alertas.sql`)*
+### 2026-09-07 — producción — `schema_fase7_colores.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase7.sql`: 15/15 comprobaciones OK. Backfill contra los datos
+reales: **37 colores de pedido · 6 de corte · 18 tallas · 6 de maquila.**
+
+- **Pendiente antes del deploy del TS:** resincronizar. El código actual escribe solo en los jsonb,
+  así que desde el 2026-09-07 los cortes y maquilas nuevos no crean sus filas normalizadas y los
+  cambios de estado de maquila (enviado/entregado/procesado) no llegan a `prod_maquila_colores`.
+  Re-correr la migración recupera las filas padre nuevas, **no** los cambios de estado.
+- **Tablas nuevas:** `prod_pedido_colores`, `prod_corte_colores`,
+  `prod_corte_color_tallas`, `prod_maquila_colores`, más los respaldos `respaldo_fase7_*`.
+  Sacan los arrays `colores` jsonb de `prod_pedidos_tela`, `prod_cortes` y `prod_maquilas` a filas
+  propias, para acabar con la lectura-modificación-escritura del array entero, la identidad de color
+  por posición y la falta de integridad entre pedido, corte y maquila.
+- `prod_pedidos_tela.colores`, `prod_cortes.colores`, `prod_maquilas.colores`: **NO se borran.**
+  Quedan congeladas como respaldo hasta que el código nuevo lleve unos días estable. Mientras tanto
+  siguen siendo la fuente de verdad y el código viejo funciona igual — por eso la migración puede
+  correrse antes del deploy sin ventana de riesgo. El rollback es revertir el deploy.
+- Las 7 tablas nuevas llevan RLS + política `admin_all_<tabla>`, incluidos los respaldos.
+- **Funciones nuevas:** `fn_registrar_corte`, `fn_procesar_lote_maquila` (las dos RPC atómicas que
+  reemplazan a `CorteTab.guardarCorte()` y `EnvioTab.procesar()`), más `fn_sumar_stock_online`,
+  `fn_repartir_por_talla` y `fn_hoy_ecuador`. Las dos RPC hacen dual-write: mantienen también los
+  `colores` jsonb, para que revertir el deploy siga siendo un rollback real.
+- **Trigger nuevo:** `trg_sync_pedido_colores` sobre `prod_pedidos_tela` — normaliza los colores de
+  cada pedido a partir del jsonb, porque PedidosTab inserta directo y no por RPC.
+- **Cambio de comportamiento a revisar:** al mandar un lote parcial a estampado,
+  `prod_lotes_estampado.tallas` pasa a guardar solo las tallas que van al taller (antes guardaba el
+  desglose completo del lote con un `total_unidades` parcial, así que `sum(tallas) ≠ total_unidades`).
+  Esto **ya resuelve la mitad del bug 1.2**: al quedar `sum(tallas) = total_unidades`, el reparto que
+  hace `EstampadosTab` al recibir el retorno se vuelve identidad y las unidades estampadas entran al
+  stock en la talla correcta, sin tocar ese archivo. Lo que queda de 1.2 para la fase 8 es que
+  `EnvioTab` y `EstampadosTab` sigan teniendo cada uno su propia copia de la heurística de reparto:
+  `fn_repartir_por_talla` ya es la implementación única, pero el TS todavía no la usa.
+- **Impacto en otras áreas: ninguno.** Ninguna tabla fuera de `prod_*` cambia, y no se toca la única
+  FK que cruza áreas. El bot sí lee estos datos (`stock_telas`, `ordenes_en_proceso` en
+  `src/lib/bot/tools.ts`), pero vive en el mismo Next app, así que web y bot se despliegan juntos por
+  construcción.
+- **Pendiente:** correr el SQL, adaptar `useProduccion.tsx`, `types.ts`, `CorteTab`, `MaquilaTab`,
+  `EnvioTab`, `PedidosTab`, `LlegadaTab`, `ProduccionApp` y `bot/tools.ts`. `ResumenTab` no toca
+  `colores`, no necesita cambios. Cuando se ejecute, quitar los ⚠️ de este documento.
