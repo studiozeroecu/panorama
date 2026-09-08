@@ -310,6 +310,17 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
+### 2026-09-08 — producción — `resync_fase7.sql` (no es un cambio de schema)
+
+- Rellena filas normalizadas de cortes/maquilas creados con el **código viejo**, que
+  escribía solo el `colores` jsonb. Detectado el 2026-09-08: un corte del 07 tenía 1 color en
+  jsonb y 0 filas normalizadas, porque la app en vivo (main) aún no tenía la fase 7.
+- **Cuándo correrlo:** pegado al deploy del código nuevo, y otra vez si alguien siguió usando
+  una versión vieja. Es idempotente. El paso 3 trata el jsonb como fuente de verdad para
+  `estado`/fechas/`procesado`, así que **no** correrlo semanas después del deploy.
+- Comprobación posterior: las tres consultas de integridad (cortes descuadrados, maquilas
+  descuadradas, estados desincronizados) deben dar 0.
+
 ### 2026-09-07 — producción — `schema_fase7b_trigger_maquila.sql` ✅ EJECUTADA
 
 - **Trigger nuevo:** `trg_sync_maquila_colores` sobre `prod_maquila_colores` (+ su función
