@@ -43,15 +43,14 @@ versionadas. Orden real de ejecución:
 `actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07** →
 `schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07**
 
-> ⚠️ **La base ya tiene la fase 7, pero el código TypeScript todavía NO.** Las tablas nuevas
-> existen y están pobladas, y el trigger mantiene `prod_pedido_colores` al día solo. Pero
-> `CorteTab`, `MaquilaTab` y `EnvioTab` siguen escribiendo únicamente en los `colores` jsonb, así
-> que **desde ahora las tablas normalizadas se van desincronizando**: un corte nuevo no crea sus
-> filas de color, y marcar enviado/entregado/procesado no actualiza `prod_maquila_colores`.
-> No rompe nada hoy (nada lee todavía las tablas nuevas), pero hay que **resincronizar antes de
-> desplegar el código nuevo**. Volver a correr la migración recupera los cortes y maquilas nuevos
-> (el backfill está guardado por fila padre), pero **no** los cambios de estado sobre maquilas que
-> ya tenían filas. Ver el registro de cambios al final.
+> ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
+> en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
+> Las tres invariantes (cortes descuadrados, maquilas descuadradas, estados desincronizados) dan 0.
+>
+> **La lección, por si vuelve a pasar:** entre aplicar una migración y desplegar el código que la
+> usa, la app en vivo sigue escribiendo a la manera vieja. Aquí esa ventana duró un día y dejó un
+> corte con jsonb y cero filas normalizadas. Si vuelves a separar migración y deploy, corre
+> `resync_fase7.sql` justo después de desplegar — o no separes.
 
 > El schema efectivo de una tabla es la suma de su `create table` **más** los `alter table` de los
 > archivos posteriores. Ejemplos: `cheques` gana `cuenta_por_pagar_id` en fase 5 y `alertado_hasta`
@@ -90,8 +89,9 @@ versionadas. Orden real de ejecución:
 
 `schema_fase7_colores.sql` saca los arrays `colores` jsonb de `prod_pedidos_tela`, `prod_cortes` y
 `prod_maquilas` a tablas propias. **Las columnas jsonb NO se borran**: quedan congeladas como
-respaldo, así que el código viejo sigue funcionando. **Mientras el TypeScript no se adapte, la
-fuente de verdad siguen siendo los jsonb** y las tablas nuevas solo se leen desde SQL.
+respaldo, así que el código viejo seguiría funcionando si hiciera falta revertir el deploy.
+**La fuente de verdad son ya las tablas normalizadas**: la app las lee y escribe, y los dos
+triggers mantienen el jsonb al día detrás.
 
 | Tabla | PK | Columnas clave | FKs (todas internas) |
 |---|---|---|---|
@@ -338,10 +338,8 @@ Formato:
 Verificada con `supabase/smoke_test_fase7.sql`: 15/15 comprobaciones OK. Backfill contra los datos
 reales: **37 colores de pedido · 6 de corte · 18 tallas · 6 de maquila.**
 
-- **Pendiente antes del deploy del TS:** resincronizar. El código actual escribe solo en los jsonb,
-  así que desde el 2026-09-07 los cortes y maquilas nuevos no crean sus filas normalizadas y los
-  cambios de estado de maquila (enviado/entregado/procesado) no llegan a `prod_maquila_colores`.
-  Re-correr la migración recupera las filas padre nuevas, **no** los cambios de estado.
+- **Resuelto el 2026-09-08** con `resync_fase7.sql`, tras desplegar el TS a `main`. Durante el día
+  que la base tuvo la fase 7 sin el código, la app en vivo creó un corte que quedó solo en el jsonb.
 - **Tablas nuevas:** `prod_pedido_colores`, `prod_corte_colores`,
   `prod_corte_color_tallas`, `prod_maquila_colores`, más los respaldos `respaldo_fase7_*`.
   Sacan los arrays `colores` jsonb de `prod_pedidos_tela`, `prod_cortes` y `prod_maquilas` a filas
