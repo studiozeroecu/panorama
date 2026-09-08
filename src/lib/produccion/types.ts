@@ -29,10 +29,16 @@ export interface Catalogo {
   nombre: string;
 }
 
+// Fase 7: los colores viven en tablas propias (prod_pedido_colores,
+// prod_corte_colores + prod_corte_color_tallas, prod_maquila_colores).
+// useProduccion los aplana a estas formas — `tallas` sigue siendo un
+// Record<talla, unidades> para que los componentes no cambien.
 export interface ColorPedido {
+  id: string;
   color: string;
   metros: number;
-  kilos?: number;
+  kilos: number | null;
+  orden: number;
 }
 
 export type EstadoPedido = "pendiente" | "en_camino" | "entregado";
@@ -56,10 +62,13 @@ export interface PedidoTela {
 }
 
 export interface ColorCorte {
+  id: string;
+  pedido_color_id: string | null;
   color: string;
   tallas: Record<string, number>;
   unidades: number;
   metros_usados: number | null;
+  orden: number;
 }
 
 export interface Corte {
@@ -76,6 +85,9 @@ export interface Corte {
 export type EstadoColorMaquila = "pendiente" | "enviado" | "entregado";
 
 export interface ColorMaquila {
+  id: string;                 // prod_maquila_colores.id — la fila que se actualiza
+  corte_color_id: string;
+  // color / tallas / unidades NO se guardan aquí: vienen por join del corte
   color: string;
   tallas: Record<string, number>;
   unidades: number;

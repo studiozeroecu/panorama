@@ -8,9 +8,10 @@ import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function MaquilaTab() {
   const { data, supabase, reload, toast } = useProd();
+  // Fase 7: el color se identifica por su fila (color.id), no por su posición en
+  // un array — que era frágil en cuanto el orden cambiaba.
   const [fechaModal, setFechaModal] = useState<{
-    maquila: Maquila;
-    colorIdx: number;
+    color: ColorMaquila;
     tipo: "enviado" | "entregado";
   } | null>(null);
   const [fecha, setFecha] = useState(hoyEcuador());
@@ -24,17 +25,22 @@ export default function MaquilaTab() {
     else await reload();
   }
 
+  /**
+   * Fase 7: actualiza SOLO la fila del color. Antes había que reescribir el array
+   * jsonb entero, así que dos cambios a la vez se pisaban. El trigger
+   * trg_sync_maquila_colores mantiene el jsonb de respaldo al día por su cuenta.
+   */
   async function confirmarFecha() {
     if (!fechaModal || !fecha) return;
-    const { maquila, colorIdx, tipo } = fechaModal;
-    const colores = maquila.colores.map((c, i) =>
-      i !== colorIdx
-        ? c
-        : tipo === "enviado"
-          ? { ...c, estado: "enviado" as const, fecha_envio: fecha }
-          : { ...c, estado: "entregado" as const, fecha_entrega: fecha }
-    );
-    const { error } = await supabase.from("prod_maquilas").update({ colores }).eq("id", maquila.id);
+    const { color, tipo } = fechaModal;
+    const cambios =
+      tipo === "enviado"
+        ? { estado: "enviado", fecha_envio: fecha }
+        : { estado: "entregado", fecha_entrega: fecha };
+    const { error } = await supabase
+      .from("prod_maquila_colores")
+      .update(cambios)
+      .eq("id", color.id);
     if (error) return toast(error.message, "error");
     toast(tipo === "enviado" ? "Marcado como enviado" : "Marcado como entregado — listo en Envío");
     setFechaModal(null);
@@ -99,8 +105,8 @@ export default function MaquilaTab() {
               </tr>
             </thead>
             <tbody>
-              {m.colores.map((c: ColorMaquila, ci) => (
-                <tr key={ci}>
+              {m.colores.map((c: ColorMaquila) => (
+                <tr key={c.id}>
                   <td>
                     <b style={{ fontSize: 13 }}>{c.color}</b>
                     <div style={{ marginTop: 3 }}><Tallas tallas={c.tallas} /></div>
@@ -118,13 +124,13 @@ export default function MaquilaTab() {
                   <td style={{ textAlign: "right" }}>
                     {c.estado === "pendiente" && (
                       <button className="btn" style={{ fontSize: 12 }}
-                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ maquila: m, colorIdx: ci, tipo: "enviado" }); }}>
+                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ color: c, tipo: "enviado" }); }}>
                         Marcar enviado
                       </button>
                     )}
                     {c.estado === "enviado" && (
                       <button className="btn primary" style={{ fontSize: 12 }}
-                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ maquila: m, colorIdx: ci, tipo: "entregado" }); }}>
+                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ color: c, tipo: "entregado" }); }}>
                         Marcar entregado
                       </button>
                     )}
@@ -183,8 +189,7 @@ export default function MaquilaTab() {
         }
       >
         <p className="sub" style={{ marginTop: 0 }}>
-          Color: <b>{fechaModal?.maquila.colores[fechaModal.colorIdx]?.color}</b> ·{" "}
-          {fechaModal?.maquila.colores[fechaModal.colorIdx]?.unidades} unidades
+          Color: <b>{fechaModal?.color.color}</b> · {fechaModal?.color.unidades} unidades
         </p>
         <Campo label={fechaModal?.tipo === "enviado" ? "Fecha de envío a maquila" : "Fecha de entrega de maquila"} requerido>
           <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />

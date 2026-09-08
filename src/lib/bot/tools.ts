@@ -18,6 +18,13 @@ export const CATEGORIAS = [
   "otros",
 ] as const;
 
+/** Color de maquila tal como llega del embed de la fase 7 (ver `ordenes_en_proceso`). */
+interface ColorMaquilaBot {
+  estado: string;
+  procesado?: boolean;
+  corte_color: { color: string; unidades: number; orden: number } | null;
+}
+
 export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "registrar_movimiento",
@@ -516,7 +523,10 @@ export async function executeTool(
         const [{ data: pedidos, error: e1 }, { data: cortes, error: e2 }] = await Promise.all([
           supabase
             .from("prod_pedidos_tela")
-            .select("id, nombre_tela, colores, total_metros, fecha_entrega_real")
+            // Fase 7: los colores vienen de prod_pedido_colores, no del jsonb.
+            .select(
+              "id, nombre_tela, total_metros, fecha_entrega_real, colores:prod_pedido_colores (color, orden)"
+            )
             .eq("estado", "entregado")
             .order("fecha_entrega_real", { ascending: false })
             .limit(30),
@@ -530,7 +540,9 @@ export async function executeTool(
         }
         const lines = pedidos.map((p) => {
           const saldo = Number(p.total_metros) - (consumido.get(p.id) ?? 0);
-          const colores = (p.colores as { color: string; metros: number }[])
+          const colores = ((p.colores ?? []) as unknown as { color: string; orden: number }[])
+            .slice()
+            .sort((a, b) => a.orden - b.orden)
             .map((c) => c.color)
             .join(", ");
           return `${p.nombre_tela}: saldo ${saldo.toFixed(1)} m de ${Number(p.total_metros).toFixed(1)} m (colores: ${colores})`;
@@ -545,7 +557,15 @@ export async function executeTool(
             .from("prod_pedidos_tela")
             .select("nombre_tela, estado, fecha_pedido, proveedor_id, total_metros")
             .in("estado", ["pendiente", "en_camino"]),
-          supabase.from("prod_maquilas").select("id, corte_id, colores, total_unidades, costo_unitario"),
+          // Fase 7: el estado por color vive en prod_maquila_colores y el nombre del
+          // color en el corte; ya no se castea el jsonb a mano.
+          supabase.from("prod_maquilas").select(
+            `id, corte_id, total_unidades, costo_unitario,
+             colores:prod_maquila_colores (
+               estado, procesado,
+               corte_color:prod_corte_colores (color, unidades, orden)
+             )`
+          ),
           supabase.from("prod_cortes").select("id, pedido_id, fecha"),
           supabase
             .from("prod_lotes_estampado")
@@ -561,25 +581,31 @@ export async function executeTool(
                 .join("\n")
           );
         }
+        const colsDe = (m: { colores?: unknown }) =>
+          ((m.colores ?? []) as unknown as ColorMaquilaBot[])
+            .slice()
+            .sort((a, b) => (a.corte_color?.orden ?? 0) - (b.corte_color?.orden ?? 0));
+
         const activas = (maquilasR.data ?? []).filter((m) =>
-          (m.colores as { estado: string }[]).some((c) => c.estado !== "entregado")
+          colsDe(m).some((c) => c.estado !== "entregado")
         );
         if (activas.length) {
           secciones.push(
             "En maquila:\n" +
               activas
                 .map((m) => {
-                  const cols = m.colores as { color: string; estado: string; unidades: number }[];
+                  const cols = colsDe(m);
                   const entregados = cols.filter((c) => c.estado === "entregado").length;
-                  const detalle = cols.map((c) => `${c.color}(${c.estado})`).join(", ");
+                  const detalle = cols
+                    .map((c) => `${c.corte_color?.color ?? "?"}(${c.estado})`)
+                    .join(", ");
                   return `- ${m.total_unidades} und., ${entregados}/${cols.length} colores entregados: ${detalle}`;
                 })
                 .join("\n")
           );
         }
         const porProcesar = (maquilasR.data ?? []).reduce(
-          (s, m) =>
-            s + (m.colores as { estado: string; procesado?: boolean }[]).filter((c) => c.estado === "entregado" && !c.procesado).length,
+          (s, m) => s + colsDe(m).filter((c) => c.estado === "entregado" && !c.procesado).length,
           0
         );
         if (porProcesar > 0) secciones.push(`Lotes entregados por maquila esperando destino en Envío: ${porProcesar}.`);

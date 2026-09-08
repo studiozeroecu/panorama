@@ -3,13 +3,14 @@
 import { useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
-import { ordenarTallas, type PedidoTela, type ColorCorte } from "@/lib/produccion/types";
+import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
   const { data, supabase, reload, toast } = useProd();
   const [pedidoSel, setPedidoSel] = useState<PedidoTela | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
   const [fecha, setFecha] = useState(hoyEcuador());
   const [maquiladoraId, setMaquiladoraId] = useState("");
   const [obs, setObs] = useState("");
@@ -48,72 +49,48 @@ export default function CorteTab() {
     return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
   };
 
+  /**
+   * Fase 7: una sola llamada a fn_registrar_corte, que escribe corte + maquila +
+   * colores + tallas en una transacción. Antes eran dos inserts sueltos: si el
+   * segundo fallaba, el corte quedaba huérfano y reintentar lo duplicaba.
+   * Las reglas de negocio (mínimo una unidad, saldo de tela, color sin nombre)
+   * viven ahora en la función; aquí no se repiten.
+   */
   async function guardarCorte() {
     if (!pedidoSel) return;
-    if (!fecha) return setErr("La fecha de corte es requerida.");
+    setErr(null);
     const tallas = tallasDe(pedidoSel);
-    const prenda = prendaDe(pedidoSel);
 
-    const colores: ColorCorte[] = (pedidoSel.colores ?? []).map((c) => {
-      const fila = matriz[c.color] ?? {};
-      const tallasObj: Record<string, number> = {};
-      for (const t of tallas) tallasObj[t] = parseInt(fila[t] ?? "0", 10) || 0;
-      const unidades = Object.values(tallasObj).reduce((s, v) => s + v, 0);
-      const mUsados = parseFloat(metrosUsados[c.color] ?? "");
-      return {
-        color: c.color,
-        tallas: tallasObj,
-        unidades,
-        metros_usados: isNaN(mUsados) ? null : mUsados,
-      };
-    }).filter((c) => c.unidades > 0 || (c.metros_usados ?? 0) > 0);
-
-    const totalUnidades = colores.reduce((s, c) => s + c.unidades, 0);
-    if (totalUnidades === 0) return setErr("Ingresa al menos una unidad cortada.");
-
-    const totalMetros = colores.reduce((s, c) => s + (c.metros_usados ?? 0), 0);
-    const conMetros = colores.some((c) => c.metros_usados != null);
-    const saldo = saldoDe(pedidoSel);
-    if (conMetros && totalMetros > saldo + 0.001) {
-      return setErr(
-        `Los metros usados (${totalMetros.toFixed(1)} m) superan el saldo de tela del pedido (${saldo.toFixed(1)} m).`
-      );
-    }
-
-    const { data: corte, error } = await supabase
-      .from("prod_cortes")
-      .insert({
-        pedido_id: pedidoSel.id,
-        fecha,
-        maquiladora_id: maquiladoraId || null,
-        colores,
-        total_unidades: totalUnidades,
-        metros_consumidos: conMetros ? +totalMetros.toFixed(2) : null,
-        observaciones: obs.trim(),
+    const colores = (pedidoSel.colores ?? [])
+      .map((c) => {
+        const fila = matriz[c.color] ?? {};
+        const tallasObj: Record<string, number> = {};
+        for (const t of tallas) {
+          const n = parseInt(fila[t] ?? "0", 10) || 0;
+          if (n > 0) tallasObj[t] = n;
+        }
+        const mUsados = parseFloat(metrosUsados[c.color] ?? "");
+        return {
+          color: c.color,
+          tallas: tallasObj,
+          metros_usados: isNaN(mUsados) ? null : mUsados,
+        };
       })
-      .select("id")
-      .single();
-    if (error || !corte) return setErr(error?.message ?? "Error al guardar");
+      .filter((c) => Object.keys(c.tallas).length > 0 || (c.metros_usados ?? 0) > 0);
 
-    // maquila automática (igual que la app original)
-    const { error: maqErr } = await supabase.from("prod_maquilas").insert({
-      corte_id: corte.id,
-      maquiladora_id: maquiladoraId || null,
-      costo_unitario: prenda?.costo_maquila ?? 0,
-      colores: colores.map((c) => ({
-        color: c.color,
-        tallas: c.tallas,
-        unidades: c.unidades,
-        estado: "pendiente",
-        fecha_envio: null,
-        fecha_entrega: null,
-        procesado: false,
-      })),
-      total_unidades: totalUnidades,
+    setOcupado(true);
+    const { error } = await supabase.rpc("fn_registrar_corte", {
+      p_pedido_id: pedidoSel.id,
+      p_fecha: fecha || null,
+      p_maquiladora_id: maquiladoraId || null,
+      p_observaciones: obs.trim(),
+      p_costo_maquila: prendaDe(pedidoSel)?.costo_maquila ?? 0,
+      p_colores: colores,
     });
-    if (maqErr) return setErr(`Corte guardado pero falló la maquila: ${maqErr.message}`);
+    setOcupado(false);
+    if (error) return setErr(error.message);
 
-    toast(`Corte registrado · ${totalUnidades} unidades`);
+    toast(`Corte registrado · ${totalModal} unidades`);
     setPedidoSel(null);
     await reload();
   }
@@ -197,7 +174,9 @@ export default function CorteTab() {
               Total: <b>{totalModal}</b> unidades
             </span>
             <button className="btn" onClick={() => setPedidoSel(null)}>Cancelar</button>
-            <button className="btn primary" onClick={guardarCorte}>Guardar corte</button>
+            <button className="btn primary" disabled={ocupado} onClick={guardarCorte}>
+              {ocupado ? "Guardando…" : "Guardar corte"}
+            </button>
           </>
         }
       >

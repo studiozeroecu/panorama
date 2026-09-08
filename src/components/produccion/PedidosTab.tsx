@@ -22,6 +22,7 @@ export default function PedidosTab() {
   const [abierto, setAbierto] = useState(false);
   const [filtro, setFiltro] = useState<"todos" | EstadoPedido>("todos");
   const [err, setErr] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
   const [borrar, setBorrar] = useState<PedidoTela | null>(null);
 
   const [form, setForm] = useState({
@@ -81,6 +82,9 @@ export default function PedidosTab() {
         : { color: c.color.trim(), metros: cant };
     });
 
+    // El pedido se sigue insertando con su `colores` jsonb: el trigger
+    // trg_sync_pedido_colores (fase 7) crea las filas de prod_pedido_colores solo.
+    setOcupado(true);
     const { error } = await supabase.from("prod_pedidos_tela").insert({
       nombre_tela: form.nombre_tela.trim(),
       fecha_pedido: form.fecha_pedido,
@@ -95,6 +99,7 @@ export default function PedidosTab() {
       total_pagar: +totalPagar.toFixed(2),
       estado: "pendiente",
     });
+    setOcupado(false);
     if (error) return setErr(error.message);
     toast("Pedido guardado");
     setAbierto(false);
@@ -199,7 +204,9 @@ export default function PedidosTab() {
         pie={
           <>
             <button className="btn" onClick={() => setAbierto(false)}>Cancelar</button>
-            <button className="btn primary" onClick={guardar}>Guardar pedido</button>
+            <button className="btn primary" disabled={ocupado} onClick={guardar}>
+              {ocupado ? "Guardando…" : "Guardar pedido"}
+            </button>
           </>
         }
       >

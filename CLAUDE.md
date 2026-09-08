@@ -40,7 +40,8 @@ versionadas. Orden real de ejecución:
 `schema.sql` → `schema_fase2.sql` → `schema_fase3.sql` → `migracion_produccion.sql` →
 `schema_fase4.sql` → `migracion_costos.sql` → `schema_fase5.sql` → `migracion_pagos.sql` →
 `schema_fase6.sql` → `actualizacion_match_y_bot.sql` → `actualizacion_v3.sql` →
-`actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07**
+`actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07** →
+`schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07**
 
 > ⚠️ **La base ya tiene la fase 7, pero el código TypeScript todavía NO.** Las tablas nuevas
 > existen y están pobladas, y el trigger mantiene `prod_pedido_colores` al día solo. Pero
@@ -308,6 +309,18 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-09-07 — producción — `schema_fase7b_trigger_maquila.sql` ✅ EJECUTADA
+
+- **Trigger nuevo:** `trg_sync_maquila_colores` sobre `prod_maquila_colores` (+ su función
+  `fn_sync_maquila_colores`). Espeja `estado`, `fecha_envio`, `fecha_entrega` y `procesado` al
+  `colores` jsonb de `prod_maquilas`.
+- Por qué: MaquilaTab pasa a actualizar una sola fila de `prod_maquila_colores` en vez de reescribir
+  el array entero. Sin el trigger el jsonb quedaría desfasado y se perdería la garantía de que
+  revertir el deploy es un rollback real.
+- `fn_procesar_lote_maquila` ya espejaba `procesado` por su cuenta; con el trigger esa parte queda
+  redundante pero converge al mismo valor. Se deja para no duplicar la función en dos archivos.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-07 — producción — `schema_fase7_colores.sql` ✅ EJECUTADA
 
