@@ -23,6 +23,7 @@ export default function PedidosTab() {
   const [filtro, setFiltro] = useState<"todos" | EstadoPedido>("todos");
   const [err, setErr] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [idemId, setIdemId] = useState("");
   const [borrar, setBorrar] = useState<PedidoTela | null>(null);
 
   const [form, setForm] = useState({
@@ -54,6 +55,10 @@ export default function PedidosTab() {
       : null;
 
   function abrir() {
+    // Fase 8b: el id de idempotencia nace AL ABRIR el formulario, no al guardar.
+    // Si naciera en el handler del clic, cada intento traería un id distinto y el
+    // `on conflict do nothing` del servidor no deduplicaría nada.
+    setIdemId(crypto.randomUUID());
     setErr(null);
     setForm({
       nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
@@ -84,24 +89,37 @@ export default function PedidosTab() {
 
     // El pedido se sigue insertando con su `colores` jsonb: el trigger
     // trg_sync_pedido_colores (fase 7) crea las filas de prod_pedido_colores solo.
+    // Fase 8b: upsert con `ignoreDuplicates`, que se traduce a
+    // `insert ... on conflict (idempotencia_id) do nothing`. Un reintento con el
+    // mismo id no inserta nada — y como no hay insert, el trigger de colores
+    // tampoco se dispara, así que no se duplican las filas de prod_pedido_colores.
+    // Un conflicto devuelve un array vacío: así se distingue de un alta real.
     setOcupado(true);
-    const { error } = await supabase.from("prod_pedidos_tela").insert({
-      nombre_tela: form.nombre_tela.trim(),
-      fecha_pedido: form.fecha_pedido,
-      unidad: form.unidad,
-      rendimiento: esKilos ? rend : null,
-      ancho_pedido: ancho,
-      proveedor_id: form.proveedor_id || null,
-      prenda_id: form.prenda_id || null,
-      colores: coloresJson,
-      total_metros: +totalMetros.toFixed(2),
-      valor_metro: valorMetro,
-      total_pagar: +totalPagar.toFixed(2),
-      estado: "pendiente",
-    });
+    const { data: insertadas, error } = await supabase
+      .from("prod_pedidos_tela")
+      .upsert(
+        {
+          nombre_tela: form.nombre_tela.trim(),
+          fecha_pedido: form.fecha_pedido,
+          unidad: form.unidad,
+          rendimiento: esKilos ? rend : null,
+          ancho_pedido: ancho,
+          proveedor_id: form.proveedor_id || null,
+          prenda_id: form.prenda_id || null,
+          colores: coloresJson,
+          total_metros: +totalMetros.toFixed(2),
+          valor_metro: valorMetro,
+          total_pagar: +totalPagar.toFixed(2),
+          estado: "pendiente",
+          idempotencia_id: idemId || null,
+        },
+        { onConflict: "idempotencia_id", ignoreDuplicates: true }
+      )
+      .select("id");
     setOcupado(false);
     if (error) return setErr(error.message);
-    toast("Pedido guardado");
+
+    toast((insertadas?.length ?? 0) === 0 ? "Este pedido ya estaba registrado." : "Pedido guardado");
     setAbierto(false);
     await reload();
   }

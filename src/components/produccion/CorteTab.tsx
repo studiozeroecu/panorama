@@ -11,6 +11,7 @@ export default function CorteTab() {
   const [pedidoSel, setPedidoSel] = useState<PedidoTela | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [idemId, setIdemId] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
   const [maquiladoraId, setMaquiladoraId] = useState("");
   const [obs, setObs] = useState("");
@@ -34,6 +35,10 @@ export default function CorteTab() {
   }
 
   function abrirCorte(p: PedidoTela) {
+    // Fase 8b: el id de idempotencia nace AL ABRIR el modal, no al pulsar Guardar.
+    // Si naciera en el handler del clic, cada intento traería un id distinto y la
+    // deduplicación del servidor no serviría de nada. Una apertura = un intento.
+    setIdemId(crypto.randomUUID());
     setPedidoSel(p);
     setErr(null);
     setFecha(hoyEcuador());
@@ -79,18 +84,25 @@ export default function CorteTab() {
       .filter((c) => Object.keys(c.tallas).length > 0 || (c.metros_usados ?? 0) > 0);
 
     setOcupado(true);
-    const { error } = await supabase.rpc("fn_registrar_corte", {
+    const { data: res, error } = await supabase.rpc("fn_registrar_corte", {
       p_pedido_id: pedidoSel.id,
       p_fecha: fecha || null,
       p_maquiladora_id: maquiladoraId || null,
       p_observaciones: obs.trim(),
       p_costo_maquila: prendaDe(pedidoSel)?.costo_maquila ?? 0,
       p_colores: colores,
+      p_idem_id: idemId || null,
     });
     setOcupado(false);
     if (error) return setErr(error.message);
 
-    toast(`Corte registrado · ${totalModal} unidades`);
+    const r = (res ?? {}) as { ya_registrado?: boolean; unidades?: number };
+    // Un reintento no es un fallo: el corte ya existe, que es lo que se quería.
+    toast(
+      r.ya_registrado
+        ? "Este corte ya estaba registrado."
+        : `Corte registrado · ${r.unidades ?? totalModal} unidades`
+    );
     setPedidoSel(null);
     await reload();
   }

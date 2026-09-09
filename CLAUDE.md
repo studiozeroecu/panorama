@@ -42,7 +42,8 @@ versionadas. Orden real de ejecución:
 `schema_fase6.sql` → `actualizacion_match_y_bot.sql` → `actualizacion_v3.sql` →
 `actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07** →
 `schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07** →
-`schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09**
+`schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09** →
+`schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09**
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -110,7 +111,7 @@ hoy hace el navegador — que al fallar a mitad y reintentarse duplicaban datos:
 
 | Función | Reemplaza | Por qué |
 |---|---|---|
-| `fn_registrar_corte(pedido, fecha, maquiladora, obs, costo_maquila, colores jsonb) → uuid` | `CorteTab.guardarCorte()` | Corte + maquila + colores + tallas en una transacción; bloquea el pedido mientras valida el saldo de tela |
+| `fn_registrar_corte(pedido, fecha, maquiladora, obs, costo_maquila, colores jsonb, idem_id uuid) → jsonb` | `CorteTab.guardarCorte()` | Corte + maquila + colores + tallas en una transacción; bloquea el pedido mientras valida el saldo de tela. Firma ampliada en la fase 8b (antes 6 parámetros y devolvía `uuid`) |
 | `fn_procesar_lote_maquila(maquila_color_id, destino, …) → jsonb` | `EnvioTab.procesar()` | Los 3 destinos en una transacción; `for update` + guarda de `procesado` hacen imposible procesar dos veces el mismo lote |
 | `fn_sumar_stock_online(...)` | `src/lib/produccion/stock.ts` | Upsert atómico en vez de select→update (dos escrituras a la vez se pisaban) |
 | `fn_repartir_por_talla(tallas, total) → jsonb` | la heurística duplicada en `EnvioTab` y `EstampadosTab` | Única implementación de la regla, en orden XS→XXL |
@@ -316,6 +317,33 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-09-09 — producción — `schema_fase8b_idempotencia.sql` ✅ EJECUTADA
+
+- **Columnas nuevas:** `prod_cortes.idempotencia_id` y `prod_pedidos_tela.idempotencia_id` (uuid,
+  **nullable**), cada una con índice único (`uq_cortes_idempotencia`, `uq_pedidos_idempotencia`).
+  Nullable a propósito: las filas viejas no tienen valor y un índice único admite muchos NULL, así
+  que el bot y cualquier insert manual siguen funcionando sin id (sin deduplicar, pero sin romperse).
+- **Por qué:** el guard contra doble clic era solo de cliente. Con dos pestañas, o si un cliente HTTP
+  reintenta un POST que sí llegó, se creaban dos cortes idénticos y la tela se descontaba dos veces.
+  `for update` serializa las llamadas pero no las deduplica. Aquí no sirve una guarda por estado
+  (como `procesado` o `retornado`) porque el registro todavía no existe: hace falta una clave que
+  identifique el **intento**, generada por el cliente al abrir el formulario.
+- **`fn_registrar_corte` cambió de firma:** 7 parámetros (nuevo `p_idem_id uuid default null`) y
+  devuelve `jsonb` en vez de `uuid`. Hubo que hacer **drop + create** — añadir un parámetro habría
+  creado una sobrecarga y una llamada con 6 argumentos habría seguido usando la versión sin
+  protección. Ambas sentencias van en un bloque `DO` para que no haya un instante sin función.
+- ⚠️ **El orden dentro de la función no es cosmético:** el chequeo del `idem_id` va **después** del
+  lock del pedido y **antes** de validar el saldo de tela. Si fuera después de validar, un reintento
+  recalcularía la tela que la primera llamada ya consumió y levantaría un *"supera el saldo"* falso
+  sobre un corte que sí se guardó. La comprobación 2 del smoke test existe para detectar esa
+  regresión y falla con un mensaje que lo dice explícitamente.
+- **PedidosTab** no usa RPC: hace `upsert` con `onConflict: "idempotencia_id"` +
+  `ignoreDuplicates: true`, que se traduce a `on conflict do nothing`. Al no haber insert, el trigger
+  `trg_sync_pedido_colores` tampoco dispara, así que los colores no se duplican. Mover sus
+  validaciones al servidor queda para una fase aparte.
+- Verificable con `supabase/smoke_test_fase8b.sql` (12 comprobaciones, termina en rollback).
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-09 — producción — `schema_fase8a_retorno_estampado.sql` ✅ EJECUTADA
 
