@@ -41,7 +41,8 @@ versionadas. Orden real de ejecución:
 `schema_fase4.sql` → `migracion_costos.sql` → `schema_fase5.sql` → `migracion_pagos.sql` →
 `schema_fase6.sql` → `actualizacion_match_y_bot.sql` → `actualizacion_v3.sql` →
 `actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07** →
-`schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07**
+`schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07** →
+`schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09**
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -117,6 +118,12 @@ hoy hace el navegador — que al fallar a mitad y reintentarse duplicaban datos:
 
 Son `SECURITY INVOKER`: las políticas RLS siguen aplicando con el usuario que llama; el chequeo
 `fn_es_admin()` dentro de cada RPC solo da un mensaje entendible en vez de un error opaco de RLS.
+
+`schema_fase8a_retorno_estampado.sql` añade una sexta:
+`fn_retornar_lote_estampado(lote_id, fecha) → jsonb`, que reemplaza a `EstampadosTab.retornar()`.
+Suma el stock y marca el lote en una transacción, con `for update` sobre el lote. A diferencia de las
+otras dos, **un reintento no lanza excepción**: devuelve `{"ya_retornado": true}` para que la interfaz
+lo muestre como aviso y no como error.
 
 **Dual-write:** las dos RPC escriben las filas normalizadas **y** mantienen los `colores` jsonb al
 día. Por eso revertir el deploy es un rollback real — el código viejo lee el jsonb y no pierde nada
@@ -309,6 +316,23 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-09-09 — producción — `schema_fase8a_retorno_estampado.sql` ✅ EJECUTADA
+
+- **Función nueva:** `fn_retornar_lote_estampado(p_lote_id uuid, p_fecha date) → jsonb`. Reemplaza a
+  `EstampadosTab.retornar()`, que hacía N sumas de stock desde el navegador y *después* marcaba el
+  lote, sin transacción: si fallaba a mitad, el lote seguía `en_taller` y reintentar **duplicaba el
+  stock**. Es el mismo defecto que la fase 7 cerró en Envío, detectado en la auditoría del 2026-09-08.
+- **Cierra la mitad pendiente del bug 1.2:** el reparto por talla sale de `fn_repartir_por_talla`, así
+  que desaparece la copia que `EstampadosTab` mantenía en orden de inserción del objeto.
+- **Decisiones:** exige `estado = 'en_taller'` estricto; si `sum(tallas) < total_unidades` levanta
+  error en vez de perder unidades en silencio; un reintento devuelve `{"ya_retornado": true}` como
+  resultado normal, no como excepción.
+- Verificable con `supabase/smoke_test_fase8a.sql` (9 comprobaciones, termina en rollback).
+- **Impacto en otras áreas: ninguno.** Solo toca `prod_lotes_estampado` y `prod_stock_online`.
+- **Pendiente:** cambiar `EstampadosTab.tsx` para que llame a la RPC y borrar
+  `src/lib/produccion/stock.ts`, que queda sin llamadores. Hasta entonces la app sigue usando el
+  camino viejo — la función existe pero nadie la llama, así que no hay estado roto.
 
 ### 2026-09-08 — producción — `resync_fase7.sql` (no es un cambio de schema)
 

@@ -5,7 +5,6 @@ import { useProd } from "./useProduccion";
 import { Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type LoteEstampado } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
-import { sumarStock } from "@/lib/produccion/stock";
 
 export default function EstampadosTab() {
   const { data } = useProd();
@@ -110,39 +109,29 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
   const [ocupado, setOcupado] = useState(false);
   const taller = data.talleres.find((t) => t.id === lote.taller_id);
 
+  /**
+   * Fase 8a: una sola llamada a fn_retornar_lote_estampado, que suma el stock y
+   * marca el lote en la misma transacción. Antes eran N sumas desde el navegador y
+   * después el update: si fallaba a mitad, el lote seguía en taller y reintentar
+   * duplicaba el stock. El reparto por talla vive ahora solo en fn_repartir_por_talla.
+   */
   async function retornar() {
     if (!fecha) return toast("Ingresa la fecha de retorno.", "error");
     setOcupado(true);
     try {
-      // Ingresa al stock online por talla, etiquetado con el/los diseños.
-      // Las unidades estampadas (total_unidades) se descuentan de las tallas
-      // de mayor cantidad primero (los diseños no van por talla).
-      const etiqueta = (lote.disenos ?? []).map((d) => d.nombre).join(", ");
-      let porAsignar = lote.total_unidades;
-      const entradas: { talla: string; unidades: number }[] = [];
-      for (const [talla, cant] of Object.entries(lote.tallas ?? {})) {
-        const usa = Math.min(cant, porAsignar);
-        if (usa > 0) entradas.push({ talla, unidades: usa });
-        porAsignar -= usa;
-        if (porAsignar <= 0) break;
-      }
-      for (const e of entradas) {
-        const err = await sumarStock(supabase, {
-          prenda_id: lote.prenda_id,
-          prenda_nombre: lote.prenda_nombre,
-          color: lote.color,
-          estampado: etiqueta,
-          talla: e.talla,
-          unidades: e.unidades,
-        });
-        if (err) throw new Error(err);
-      }
-      const { error } = await supabase
-        .from("prod_lotes_estampado")
-        .update({ estado: "retornado", fecha_retorno: fecha })
-        .eq("id", lote.id);
+      const { data: res, error } = await supabase.rpc("fn_retornar_lote_estampado", {
+        p_lote_id: lote.id,
+        p_fecha: fecha,
+      });
       if (error) throw new Error(error.message);
-      toast(`${lote.total_unidades} unidades estampadas ingresadas al stock`);
+
+      const r = (res ?? {}) as { ya_retornado?: boolean; unidades?: number };
+      // Un reintento no es un fallo: ya estaba hecho. Se avisa en tono neutro.
+      toast(
+        r.ya_retornado
+          ? "Este lote ya estaba retornado — no se sumó nada al stock."
+          : `${r.unidades ?? 0} unidades estampadas ingresadas al stock`
+      );
       await reload();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
