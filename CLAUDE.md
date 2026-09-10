@@ -329,14 +329,23 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
-### ⏳ PENDIENTE — producción — StockTab, "Ingreso online (30 días)" en UTC
+### 2026-09-10 — producción — StockTab, "Ingreso online (30 días)" en UTC ✅ RESUELTO
 
-- `StockTab` calcula el corte de la ventana de 30 días con
-  `new Date(Date.now() - 30*86400000).toISOString().slice(0,10)`, que es **UTC** y contradice la
-  regla de fechas del proyecto (`src/lib/fechas.ts`). Desplaza un día el borde de la ventana.
-- **No es un cambio de schema ni de backend**: es visualización de un reporte. Se dejó fuera de la
-  fase 8d a propósito, para no mezclarlo con el endurecimiento de la venta — si algo fallara
-  después, sería difícil distinguir cuál de los dos cambios lo causó. Merece su propio commit.
+*(No es un cambio de schema: solo TypeScript. Se anota aquí porque estaba pendiente en este registro.)*
+
+- `StockTab` calculaba el corte de la ventana con
+  `new Date(Date.now() - 30*86400000).toISOString().slice(0,10)`, que es **UTC**. Entre las 19:00 y
+  medianoche en Ecuador el corte caía un día tarde y la ventana dejaba fuera el día más antiguo de
+  ventas. Ahora usa `sumarDias(hoyEcuador(), -30)`.
+- **Utilidad nueva:** `sumarDias(iso, dias)` en `src/lib/fechas.ts` — días de calendario, negativo
+  para restar, anclada a mediodía UTC como el resto del archivo. No existía: `sumarDiasLaborables`
+  salta fines de semana y habría dado un rango distinto.
+- Cubierto por `tests/fechas.test.ts` con los bordes que rompen la aritmética ingenua (fin de mes,
+  cambio de año, la ventana de 30 días). **No es verificable en pantalla de forma fiable**: los dos
+  cálculos coinciden 19 horas de cada 24.
+- **Pendiente relacionado:** el mismo patrón UTC sigue en cinco sitios de servidor —
+  `cron/resumen` (×2), el webhook de Telegram y `bot/tools.ts` (×2). Ahora que `sumarDias` existe,
+  unificarlos es trivial, pero son del área del bot y quedaron fuera de este commit.
 
 ### 2026-09-10 — producción — `schema_fase8d_venta_atomica.sql` ✅ EJECUTADA
 

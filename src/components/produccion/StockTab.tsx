@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha } from "@/lib/fechas";
+import { hoyEcuador, fmtFecha, sumarDias } from "@/lib/fechas";
 
 export default function StockTab() {
   const { data, supabase, reload, toast } = useProd();
@@ -84,7 +84,7 @@ export default function StockTab() {
         <div className="card"><div className="label">Ingreso online (30 días)</div>
           <div className="value">{money(
             data.ventasOnline
-              .filter((v) => v.fecha >= new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10))
+              .filter((v) => v.fecha >= sumarDias(hoyEcuador(), -30))
               .reduce((s, v) => s + Number(v.total), 0)
           )}</div>
           <div className="hint">ventas con fecha y precio reales</div>
