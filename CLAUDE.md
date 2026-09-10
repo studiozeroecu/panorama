@@ -44,7 +44,8 @@ versionadas. Orden real de ejecución:
 `schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07** →
 `schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09** →
 `schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09** →
-`schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10**
+`schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10** →
+`schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10**
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -120,6 +121,11 @@ hoy hace el navegador — que al fallar a mitad y reintentarse duplicaban datos:
 
 Son `SECURITY INVOKER`: las políticas RLS siguen aplicando con el usuario que llama; el chequeo
 `fn_es_admin()` dentro de cada RPC solo da un mensaje entendible en vez de un error opaco de RLS.
+
+`schema_fase8d_venta_atomica.sql` añade una séptima: `fn_confirmar_venta_online(stock_id, cantidad,
+precio, fecha, idem_id) → jsonb`, que reemplaza a `StockTab.confirmarVenta()`. Bloquea la fila de
+stock, valida contra el valor real de la base y descuenta con **aritmética relativa**
+(`disponibles - N`), nunca con un valor absoluto calculado en el cliente.
 
 `schema_fase8a_retorno_estampado.sql` añade una sexta:
 `fn_retornar_lote_estampado(lote_id, fecha) → jsonb`, que reemplaza a `EstampadosTab.retornar()`.
@@ -322,6 +328,42 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### ⏳ PENDIENTE — producción — StockTab, "Ingreso online (30 días)" en UTC
+
+- `StockTab` calcula el corte de la ventana de 30 días con
+  `new Date(Date.now() - 30*86400000).toISOString().slice(0,10)`, que es **UTC** y contradice la
+  regla de fechas del proyecto (`src/lib/fechas.ts`). Desplaza un día el borde de la ventana.
+- **No es un cambio de schema ni de backend**: es visualización de un reporte. Se dejó fuera de la
+  fase 8d a propósito, para no mezclarlo con el endurecimiento de la venta — si algo fallara
+  después, sería difícil distinguir cuál de los dos cambios lo causó. Merece su propio commit.
+
+### 2026-09-10 — producción — `schema_fase8d_venta_atomica.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8d.sql`: 9/9 comprobaciones OK.
+
+- **Función nueva:** `fn_confirmar_venta_online(stock_id, cantidad, precio, fecha, idem_id) → jsonb`.
+  Reemplaza a `StockTab.confirmarVenta()`, que hacía insert de venta + update de stock por separado
+  y sin transacción.
+- **El fallo grave no era el stock negativo** (el `check (disponibles >= 0)` ya lo impedía) sino que
+  el update era **absoluto**: `disponibles: venta.disponibles - cant`, con `venta.disponibles`
+  tomado del estado de la pantalla. Stock real 3, pantalla mostrando 10, vender 2 → escribía 8, es
+  decir **inventaba 5 unidades**, y ningún check lo detectaba porque 8 es positivo. Ahora el
+  descuento es relativo (`disponibles - N`) y se calcula dentro de la base.
+- **Columna nueva:** `prod_ventas_online.idempotencia_id` (uuid, nullable) + índice único
+  `uq_ventas_online_idempotencia`. Mismo patrón que la fase 8b: una venta es un evento nuevo por
+  naturaleza, pero un reintento tras timeout sí duplicaría, y eso es lo que la clave evita.
+- ⚠️ **El orden dentro de la función importa:** el chequeo del `idem_id` va **después** del lock del
+  stock (para que dos llamadas simultáneas se serialicen) y **antes** de validar disponibilidad (si
+  fuera después, un reintento chocaría contra el stock que la primera llamada ya descontó y
+  levantaría un *"solo quedan N"* falso sobre una venta que sí se registró).
+- Los datos descriptivos de la venta (prenda, color, estampado, talla) salen de la fila de stock, no
+  del cliente: una pantalla desactualizada ya no puede registrar una venta con datos viejos.
+- **`prod_ventas_online.fecha`** pasa de `default current_date` (UTC) a `default fn_hoy_ecuador()`.
+  La RPC siempre manda la fecha explícita, pero el default seguía mal para inserts manuales.
+- `StockTab` gana además el guard `ocupado` que no tenía: era el único de los tres formularios sin
+  protección contra doble clic.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-10 — producción — `schema_fase8c_colores_repetidos.sql` ✅ EJECUTADA
 

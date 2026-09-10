@@ -13,6 +13,8 @@ export default function StockTab() {
   const [precio, setPrecio] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
   const [err, setErr] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [idemId, setIdemId] = useState("");
 
   const totalDisp = data.stock.reduce((s, v) => s + v.disponibles, 0);
   const totalVend = data.stock.reduce((s, v) => s + v.vendidas, 0);
@@ -26,6 +28,9 @@ export default function StockTab() {
   }
 
   function abrirVenta(s: StockOnline) {
+    // Fase 8d: el id de idempotencia nace AL ABRIR el modal, no al confirmar.
+    // Una apertura = una venta; vender dos veces lo mismo son dos aperturas.
+    setIdemId(crypto.randomUUID());
     setVenta(s);
     setCantidad("1");
     setFecha(hoyEcuador());
@@ -34,35 +39,35 @@ export default function StockTab() {
     setErr(null);
   }
 
+  /**
+   * Fase 8d: una sola llamada a fn_confirmar_venta_online. Antes eran un insert y
+   * un update sueltos, y el update escribía un valor ABSOLUTO calculado desde el
+   * estado de la pantalla: con el stock desactualizado inventaba unidades (stock
+   * real 3, pantalla 10, vender 2 escribía 8). Ahora el descuento es relativo y
+   * las validaciones viven en la base, contra el valor real y con la fila bloqueada.
+   */
   async function confirmarVenta() {
     if (!venta) return;
-    const cant = parseInt(cantidad, 10) || 0;
-    const p = parseFloat(precio);
-    if (cant <= 0) return setErr("Cantidad mayor a 0.");
-    if (cant > venta.disponibles) return setErr(`Solo hay ${venta.disponibles} disponibles en talla ${venta.talla}.`);
-    if (!(p >= 0)) return setErr("Ingresa el precio de venta.");
-    if (!fecha) return setErr("Ingresa la fecha.");
-
-    // evento de venta (mejora 3: con fecha y precio) + descuento de stock
-    const { error: e1 } = await supabase.from("prod_ventas_online").insert({
-      fecha,
-      stock_id: venta.id,
-      prenda_nombre: venta.prenda_nombre,
-      color: venta.color,
-      estampado: venta.estampado,
-      talla: venta.talla,
-      cantidad: cant,
-      precio_unitario: p,
-      total: +(cant * p).toFixed(2),
+    setErr(null);
+    setOcupado(true);
+    const { data: res, error } = await supabase.rpc("fn_confirmar_venta_online", {
+      p_stock_id: venta.id,
+      p_cantidad: parseInt(cantidad, 10) || 0,
+      p_precio: parseFloat(precio),
+      p_fecha: fecha || null,
+      p_idem_id: idemId || null,
     });
-    if (e1) return setErr(e1.message);
-    const { error: e2 } = await supabase
-      .from("prod_stock_online")
-      .update({ disponibles: venta.disponibles - cant, vendidas: venta.vendidas + cant })
-      .eq("id", venta.id);
-    if (e2) return setErr(e2.message);
+    setOcupado(false);
+    if (error) return setErr(error.message);
 
-    toast(`${cant} und. vendida${cant > 1 ? "s" : ""} · ${money(cant * p)}`);
+    const r = (res ?? {}) as { ya_registrada?: boolean; cantidad?: number; total?: number };
+    const n = r.cantidad ?? 0;
+    // Un reintento no es un fallo: la venta ya está registrada.
+    toast(
+      r.ya_registrada
+        ? "Esta venta ya estaba registrada."
+        : `${n} und. vendida${n > 1 ? "s" : ""} · ${money(r.total ?? 0)}`
+    );
     setVenta(null);
     await reload();
   }
@@ -163,7 +168,9 @@ export default function StockTab() {
         pie={
           <>
             <button className="btn" onClick={() => setVenta(null)}>Cancelar</button>
-            <button className="btn primary" onClick={confirmarVenta}>Registrar venta</button>
+            <button className="btn primary" disabled={ocupado} onClick={confirmarVenta}>
+              {ocupado ? "Registrando…" : "Registrar venta"}
+            </button>
           </>
         }
       >
