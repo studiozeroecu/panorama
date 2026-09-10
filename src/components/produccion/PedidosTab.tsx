@@ -80,6 +80,27 @@ export default function PedidosTab() {
     if (filas.some((c) => !c.color.trim() || !(parseFloat(c.cant) > 0)))
       return setErr("Completa nombre y cantidad en todos los colores.");
 
+    // La base considera el mismo color a "Negro" y "negro": el índice único de
+    // prod_pedido_colores normaliza con lower(btrim(color)). Sin este chequeo, el
+    // trigger revienta con un error nativo de Postgres ilegible ("ON CONFLICT DO
+    // UPDATE command cannot affect row a second time"). Mismo criterio que la base,
+    // para que cliente y servidor no discrepen.
+    const grupos = new Map<string, string[]>();
+    for (const c of filas) {
+      const clave = c.color.trim().toLowerCase();
+      grupos.set(clave, [...(grupos.get(clave) ?? []), c.color.trim()]);
+    }
+    const repetidos = [...grupos.values()].filter((nombres) => nombres.length > 1);
+    if (repetidos.length) {
+      const detalle = repetidos
+        .map((nombres) => nombres.map((n) => `«${n}»`).join(" y "))
+        .join(" · ");
+      return setErr(
+        `Colores repetidos: ${detalle}. Para el sistema son el mismo color — no ` +
+          `distingue mayúsculas ni espacios. Deja uno solo, o cámbiale el nombre a uno de ellos.`
+      );
+    }
+
     const coloresJson = filas.map((c) => {
       const cant = parseFloat(c.cant);
       return esKilos

@@ -43,7 +43,8 @@ versionadas. Orden real de ejecución:
 `actualizacion_alertas.sql` → `schema_fase7_colores.sql` ✅ **aplicada el 2026-09-07** →
 `schema_fase7b_trigger_maquila.sql` ✅ **aplicada el 2026-09-07** →
 `schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09** →
-`schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09**
+`schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09** →
+`schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10**
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -141,6 +142,10 @@ vez de derivarse, a propósito, para no mezclar cambios.
 `prod_pedidos_tela`, porque PedidosTab inserta el pedido directo y no por RPC. Sin él, todo pedido
 creado después de la migración quedaría sin filas de color y sus cortes con `pedido_color_id` nulo.
 Cuando se retire el jsonb, el trigger se va y PedidosTab pasa a escribir las filas.
+
+> ⚠️ **`fn_sync_pedido_colores` fue redefinida en `schema_fase8c_colores_repetidos.sql`.**
+> La definición que aparece en `schema_fase7_colores.sql` está **obsoleta** — le falta la
+> validación de colores repetidos. Si necesitas leer la función vigente, mira la de la fase 8c.
 
 Tablas de respaldo que crea la migración (admin-only, borrables cuando el código nuevo esté
 estable): `respaldo_fase7_pedidos`, `respaldo_fase7_cortes`, `respaldo_fase7_maquilas`.
@@ -317,6 +322,31 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-09-10 — producción — `schema_fase8c_colores_repetidos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8c.sql`: 5/5 comprobaciones OK.
+
+
+- ⚠️ **`fn_sync_pedido_colores` queda REDEFINIDA aquí. La versión de
+  `schema_fase7_colores.sql` está OBSOLETA** — le falta la validación de repetidos. Cualquiera que
+  lea la fase 7 buscando esta función estará leyendo código que ya no es el vigente. Basta
+  `create or replace`: misma firma, sin drop.
+- **Qué añade:** antes del `INSERT ... ON CONFLICT`, detecta nombres de color que colisionan al
+  normalizar (`lower(btrim(color))`, el mismo criterio del índice único de `prod_pedido_colores`) y
+  levanta una excepción propia en español.
+- **Por qué:** un `INSERT ... ON CONFLICT` no puede tocar la misma fila dos veces. Con "Negro" y
+  "negro" en el mismo pedido, Postgres levantaba *"ON CONFLICT DO UPDATE command cannot affect row a
+  second time"*, que PedidosTab mostraba tal cual — sin decir qué colores chocaban ni por qué.
+- El cliente valida lo mismo antes de enviar (`PedidosTab.guardar`); esta defensa cubre al bot, al
+  SQL manual y a migraciones futuras que no pasen por esa pantalla.
+- **Sin datos que limpiar:** no puede haber pedidos con colores duplicados normalizados. El backfill
+  de la fase 7 hacía un `insert ... select` sin `on conflict` contra un índice único, así que si
+  hubiera existido alguno la migración habría fallado — y no falló.
+- **Tildes no se normalizan:** "Café" y "Cafe" son colores distintos, en el cliente y en la base.
+  Coherente entre ambos; normalizarlas exigiría cambiar el índice único.
+- Verificable con `supabase/smoke_test_fase8c.sql` (5 comprobaciones, termina en rollback).
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-09 — producción — `schema_fase8b_idempotencia.sql` ✅ EJECUTADA
 
