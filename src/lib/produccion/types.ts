@@ -8,6 +8,8 @@ export interface Prenda {
   lleva_estampado: boolean;
   tallas: string[];
   notas: string;
+  /** Fase 8e: null = activa. Archivada no se ofrece al elegir, pero su historial sigue enlazado. */
+  archivada_en: string | null;
 }
 
 export interface Proveedor {
@@ -16,6 +18,7 @@ export interface Proveedor {
   contacto_nombre: string;
   contacto: string;
   dias_entrega: number;
+  archivada_en: string | null;
 }
 
 export interface CostoFijo {
@@ -27,6 +30,7 @@ export interface CostoFijo {
 export interface Catalogo {
   id: string;
   nombre: string;
+  archivada_en: string | null;
 }
 
 // Fase 7: los colores viven en tablas propias (prod_pedido_colores,

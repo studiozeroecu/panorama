@@ -90,7 +90,9 @@ function LotePendiente({ lote }: { lote: LoteEstampado }) {
           <div className="label" style={{ fontSize: 10.5 }}>Taller</div>
           <select className="pinput" value={tallerId} onChange={(e) => setTallerId(e.target.value)}>
             <option value="">— Sin asignar —</option>
-            {data.talleres.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            {/* Fase 8e: aquí se ELIGE, así que los archivados no se ofrecen. */}
+            {data.talleres.filter((t) => !t.archivada_en)
+              .map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
           </select>
         </div>
         <div style={{ minWidth: 150 }}>

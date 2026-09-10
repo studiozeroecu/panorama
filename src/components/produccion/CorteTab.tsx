@@ -244,7 +244,9 @@ export default function CorteTab() {
               <Campo label="Maquiladora">
                 <select className="pinput" value={maquiladoraId} onChange={(e) => setMaquiladoraId(e.target.value)}>
                   <option value="">— Después —</option>
-                  {data.maquiladoras.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+                  {/* Fase 8e: aquí se ELIGE, así que las archivadas no se ofrecen. */}
+                  {data.maquiladoras.filter((m) => !m.archivada_en)
+                    .map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
                 </select>
               </Campo>
             </Fila>

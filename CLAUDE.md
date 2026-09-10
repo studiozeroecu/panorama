@@ -45,7 +45,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8a_retorno_estampado.sql` ✅ **aplicada el 2026-09-09** →
 `schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09** →
 `schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10** →
-`schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10**
+`schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10** →
+`schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10**
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -328,6 +329,46 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### ⏳ PENDIENTE — producción — Costos fijos no se congelan por mes
+
+- `ResumenTab` calcula `cfPorUnidad` sumando los costos fijos **vigentes hoy** y lo multiplica por
+  las unidades cortadas de cualquier mes. Editar o borrar un costo fijo **reescribe el resultado de
+  todos los meses pasados**.
+- **No es el bug de desvinculación de la fase 8e:** ninguna FK apunta a `prod_costos_fijos`, así que
+  borrar uno no deja nada huérfano. El problema es que es un **derivado que debería fotografiarse**
+  al momento del corte, como ya hace `prod_maquilas.costo_unitario`. Por eso quedó fuera de la 8e:
+  mezclarlos habría confundido dos bugs de naturaleza distinta.
+- Investigación aparte. `CostosTab` conserva su mensaje muerto *"No se pudo eliminar."*, que también
+  es inalcanzable, pero es ruido cosmético comparado con lo anterior.
+
+### 2026-09-10 — producción — `schema_fase8e_archivar_catalogos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8e.sql`: 3/3 comprobaciones OK. Cierra el **bug 1.1**.
+
+- **Columnas nuevas:** `archivada_en timestamptz` (null = activa) en `prod_prendas`,
+  `prod_proveedores`, `prod_maquiladoras` y `prod_talleres`. Migración puramente aditiva.
+- **Por qué:** las cinco FK hacia esos catálogos son `on delete set null`, así que borrar **nunca
+  fallaba** pero desvinculaba el historial en silencio. Peor: contaminaba registros nuevos — un corte
+  registrado después entraba con `costo_maquila 0`, congelado para siempre en `prod_maquilas`; un
+  despacho a local con `ingreso 0`; y un pedido sin proveedor **deja de contarse como atrasado** en
+  el resumen del lunes, sin aviso. Los mensajes *"No se pudo eliminar…"* de `PrendasTab` y
+  `ProveedoresTab` eran **código muerto**: nunca se ejecutaban.
+- **El borrado desapareció de la interfaz.** Solo se archiva, siempre, y es reversible. Se descartó
+  el híbrido "borrar si no hay historial" para no introducir una condición de carrera
+  (comprobar-y-actuar) ni cuatro consultas de conteo duplicadas.
+- ⚠️ **La regla que hay que respetar al añadir cualquier desplegable nuevo:**
+  **cargar todas las filas, filtrar solo donde se ELIGE.** `useProduccion` sigue trayendo activas y
+  archivadas con `select("*")`. Si se filtraran ahí, todo `find()` que resuelve un id del historial
+  devolvería `undefined` y **se reintroduciría exactamente el bug que esto cierra**.
+  Los cinco puntos donde se elige, y por tanto se filtra: los dos desplegables de `PedidosTab`,
+  el de maquiladora en `CorteTab`, el de taller en `EstampadosTab`, y el de maquiladora en
+  `MaquilaTab` — este último **conserva la ya seleccionada aunque esté archivada**, porque está
+  enlazado a un valor guardado y en blanco un cambio accidental la borraría.
+- El índice único de `nombre` en maquiladoras y talleres **no distingue activos de archivados**: un
+  nombre archivado sigue ocupando el sitio. `CatalogoCard` lo explica en el mensaje de error en vez
+  de cambiar el índice.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-10 — producción — StockTab, "Ingreso online (30 días)" en UTC ✅ RESUELTO
 

@@ -77,7 +77,12 @@ export default function MaquilaTab() {
             <select className="pinput" value={m.maquiladora_id ?? ""}
               onChange={(e) => guardarCampo(m, { maquiladora_id: e.target.value || null })}>
               <option value="">— Sin asignar —</option>
-              {data.maquiladoras.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+              {/* Fase 8e: se ELIGE, pero este select está enlazado a un valor ya
+                  guardado — si la asignada está archivada hay que seguir mostrándola,
+                  o el desplegable saldría en blanco y un cambio accidental la borraría. */}
+              {data.maquiladoras
+                .filter((x) => !x.archivada_en || x.id === m.maquiladora_id)
+                .map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
           </div>
           <div style={{ flex: 1, minWidth: 140 }}>

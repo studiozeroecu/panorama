@@ -22,7 +22,9 @@ export default function PrendasTab() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(FORM_VACIO);
   const [err, setErr] = useState<string | null>(null);
-  const [borrar, setBorrar] = useState<Prenda | null>(null);
+
+  const activas = data.prendas.filter((p) => !p.archivada_en);
+  const archivadas = data.prendas.filter((p) => p.archivada_en);
 
   function abrir(p?: Prenda) {
     setErr(null);
@@ -75,16 +77,31 @@ export default function PrendasTab() {
     await reload();
   }
 
-  async function eliminar() {
-    if (!borrar) return;
-    const { error } = await supabase.from("prod_prendas").delete().eq("id", borrar.id);
-    if (error) {
-      toast("No se pudo eliminar: tiene registros vinculados.", "error");
-    } else {
-      toast(`"${borrar.nombre}" eliminada`);
-      await reload();
-    }
-    setBorrar(null);
+  /**
+   * Fase 8e: archivar en vez de borrar. Todas las FK hacia prod_prendas son
+   * `on delete set null`, así que borrar nunca fallaba pero desvinculaba el
+   * historial en silencio: un corte registrado después entraba con costo_maquila 0,
+   * congelado para siempre en prod_maquilas. Archivar la saca de los desplegables
+   * sin tocar ningún vínculo, y es reversible.
+   */
+  async function archivar(p: Prenda) {
+    const { error } = await supabase
+      .from("prod_prendas")
+      .update({ archivada_en: new Date().toISOString() })
+      .eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.nombre}» archivada. Ya no aparecerá al crear pedidos; su historial se conserva intacto.`);
+    await reload();
+  }
+
+  async function desarchivar(p: Prenda) {
+    const { error } = await supabase
+      .from("prod_prendas")
+      .update({ archivada_en: null })
+      .eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.nombre}» vuelve a estar disponible.`);
+    await reload();
   }
 
   return (
@@ -112,10 +129,11 @@ export default function PrendasTab() {
               </tr>
             </thead>
             <tbody>
-              {data.prendas.map((p) => (
-                <tr key={p.id}>
+              {[...activas, ...archivadas].map((p) => (
+                <tr key={p.id} style={p.archivada_en ? { opacity: 0.55 } : undefined}>
                   <td>
                     <strong>{p.nombre}</strong>
+                    {p.archivada_en && <Badge>Archivada</Badge>}
                     {p.notas && <div className="sub" style={{ fontSize: 11.5 }}>{p.notas}</div>}
                   </td>
                   <td className="num">{p.consumo_metros} m</td>
@@ -126,7 +144,13 @@ export default function PrendasTab() {
                   <td>{(p.tallas ?? []).map((t) => <Badge key={t}>{t}</Badge>)}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button className="btn" style={{ padding: "4px 9px", marginRight: 6 }} onClick={() => abrir(p)}>✏</button>
-                    <button className="btn danger" style={{ padding: "4px 9px" }} onClick={() => setBorrar(p)}>🗑</button>
+                    {p.archivada_en ? (
+                      <button className="btn" style={{ padding: "4px 9px", fontSize: 12 }}
+                        onClick={() => desarchivar(p)}>↩ Desarchivar</button>
+                    ) : (
+                      <button className="btn" style={{ padding: "4px 9px", fontSize: 12 }}
+                        onClick={() => archivar(p)}>📦 Archivar</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -206,19 +230,6 @@ export default function PrendasTab() {
         </Campo>
       </Modal>
 
-      <Modal
-        titulo="Confirmar eliminación"
-        abierto={!!borrar}
-        onCerrar={() => setBorrar(null)}
-        pie={
-          <>
-            <button className="btn" onClick={() => setBorrar(null)}>Cancelar</button>
-            <button className="btn danger" onClick={eliminar}>Eliminar</button>
-          </>
-        }
-      >
-        <p className="sub">¿Eliminar “{borrar?.nombre}”? Esta acción no se puede deshacer.</p>
-      </Modal>
     </section>
   );
 }

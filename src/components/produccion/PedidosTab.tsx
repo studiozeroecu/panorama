@@ -46,6 +46,11 @@ export default function PedidosTab() {
     return esKilos ? (rend > 0 ? suma * rend : 0) : suma;
   }, [colores, esKilos, rend]);
 
+  // Fase 8e: los archivados se filtran SOLO aquí, donde se ELIGE. Todo `find()`
+  // que resuelve un id ya guardado sigue viendo el catálogo completo.
+  const proveedoresActivos = data.proveedores.filter((p) => !p.archivada_en);
+  const prendasActivas = data.prendas.filter((p) => !p.archivada_en);
+
   const valorMetro = parseFloat(form.valor_metro) || 0;
   const totalPagar = totalMetros * valorMetro;
   const prendaSel = data.prendas.find((p) => p.id === form.prenda_id);
@@ -296,9 +301,9 @@ export default function PedidosTab() {
             <select className="pinput" value={form.proveedor_id}
               onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })}>
               <option value="">— Selecciona —</option>
-              {data.proveedores.map((p) => <option key={p.id} value={p.id}>{p.empresa}</option>)}
+              {proveedoresActivos.map((p) => <option key={p.id} value={p.id}>{p.empresa}</option>)}
             </select>
-            {!data.proveedores.length && (
+            {!proveedoresActivos.length && (
               <span style={{ color: "var(--warn)", fontSize: 12 }}>No hay proveedores; agrega uno primero.</span>
             )}
           </Campo>
@@ -306,7 +311,7 @@ export default function PedidosTab() {
             <select className="pinput" value={form.prenda_id}
               onChange={(e) => setForm({ ...form, prenda_id: e.target.value })}>
               <option value="">— Sin especificar —</option>
-              {data.prendas.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              {prendasActivas.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
           </Campo>
         </Fila>

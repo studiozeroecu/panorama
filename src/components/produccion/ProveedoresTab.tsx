@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
-import { Modal, Campo, Fila, Vacio } from "@/components/ui";
+import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import type { Proveedor, Catalogo } from "@/lib/produccion/types";
 
 const FORM_VACIO = { empresa: "", contacto_nombre: "", contacto: "", dias_entrega: "" };
@@ -13,7 +13,9 @@ export default function ProveedoresTab() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(FORM_VACIO);
   const [err, setErr] = useState<string | null>(null);
-  const [borrar, setBorrar] = useState<Proveedor | null>(null);
+
+  const activos = data.proveedores.filter((p) => !p.archivada_en);
+  const archivados = data.proveedores.filter((p) => p.archivada_en);
 
   function abrir(p?: Proveedor) {
     setErr(null);
@@ -51,15 +53,30 @@ export default function ProveedoresTab() {
     await reload();
   }
 
-  async function eliminar() {
-    if (!borrar) return;
-    const { error } = await supabase.from("prod_proveedores").delete().eq("id", borrar.id);
-    if (error) toast("No se pudo eliminar.", "error");
-    else {
-      toast(`"${borrar.empresa}" eliminado`);
-      await reload();
-    }
-    setBorrar(null);
+  /**
+   * Fase 8e: archivar en vez de borrar. `prod_pedidos_tela.proveedor_id` es
+   * `on delete set null`, así que borrar nunca fallaba pero el pedido perdía su
+   * proveedor — y con él la estimación de entrega y la vigilancia de atrasos del
+   * resumen del lunes, sin ningún aviso.
+   */
+  async function archivar(p: Proveedor) {
+    const { error } = await supabase
+      .from("prod_proveedores")
+      .update({ archivada_en: new Date().toISOString() })
+      .eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.empresa}» archivado. Ya no aparecerá al crear pedidos; su historial se conserva intacto.`);
+    await reload();
+  }
+
+  async function desarchivar(p: Proveedor) {
+    const { error } = await supabase
+      .from("prod_proveedores")
+      .update({ archivada_en: null })
+      .eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.empresa}» vuelve a estar disponible.`);
+    await reload();
   }
 
   return (
@@ -84,15 +101,24 @@ export default function ProveedoresTab() {
               </tr>
             </thead>
             <tbody>
-              {data.proveedores.map((p) => (
-                <tr key={p.id}>
-                  <td><strong>{p.empresa}</strong></td>
+              {[...activos, ...archivados].map((p) => (
+                <tr key={p.id} style={p.archivada_en ? { opacity: 0.55 } : undefined}>
+                  <td>
+                    <strong>{p.empresa}</strong>
+                    {p.archivada_en && <Badge>Archivado</Badge>}
+                  </td>
                   <td>{p.contacto_nombre || "—"}</td>
                   <td className="code">{p.contacto || "—"}</td>
                   <td className="num">{p.dias_entrega} laborables</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button className="btn" style={{ padding: "4px 9px", marginRight: 6 }} onClick={() => abrir(p)}>✏</button>
-                    <button className="btn danger" style={{ padding: "4px 9px" }} onClick={() => setBorrar(p)}>🗑</button>
+                    {p.archivada_en ? (
+                      <button className="btn" style={{ padding: "4px 9px", fontSize: 12 }}
+                        onClick={() => desarchivar(p)}>↩ Desarchivar</button>
+                    ) : (
+                      <button className="btn" style={{ padding: "4px 9px", fontSize: 12 }}
+                        onClick={() => archivar(p)}>📦 Archivar</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -139,19 +165,6 @@ export default function ProveedoresTab() {
         </Fila>
       </Modal>
 
-      <Modal
-        titulo="Confirmar eliminación"
-        abierto={!!borrar}
-        onCerrar={() => setBorrar(null)}
-        pie={
-          <>
-            <button className="btn" onClick={() => setBorrar(null)}>Cancelar</button>
-            <button className="btn danger" onClick={eliminar}>Eliminar</button>
-          </>
-        }
-      >
-        <p className="sub">¿Eliminar “{borrar?.empresa}”? Los pedidos existentes conservarán su historial.</p>
-      </Modal>
     </section>
   );
 }
@@ -175,7 +188,14 @@ function CatalogoCard({
     if (!nombre) return;
     const { error } = await supabase.from(tabla).insert({ nombre });
     if (error) {
-      toast(error.message.includes("duplicate") ? "Ya existe con ese nombre." : error.message, "error");
+      // El índice único de `nombre` no distingue activos de archivados: un nombre
+      // archivado sigue ocupando el sitio aunque no se vea en la lista activa.
+      toast(
+        error.message.includes("duplicate")
+          ? "Ya existe con ese nombre — puede estar archivado. Búscalo en la lista y desarchívalo."
+          : error.message,
+        "error"
+      );
       return;
     }
     setNuevo("");
@@ -183,10 +203,14 @@ function CatalogoCard({
     await reload();
   }
 
-  async function quitar(item: Catalogo) {
-    const { error } = await supabase.from(tabla).delete().eq("id", item.id);
-    if (error) toast("No se pudo eliminar.", "error");
-    else await reload();
+  async function alternarArchivo(item: Catalogo) {
+    const { error } = await supabase
+      .from(tabla)
+      .update({ archivada_en: item.archivada_en ? null : new Date().toISOString() })
+      .eq("id", item.id);
+    if (error) return toast(error.message, "error");
+    toast(item.archivada_en ? `«${item.nombre}» reactivado` : `«${item.nombre}» archivado`);
+    await reload();
   }
 
   return (
@@ -195,10 +219,12 @@ function CatalogoCard({
       <div className="hint" style={{ marginBottom: 12 }}>{hint}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
         {!items.length && <span className="sub" style={{ fontSize: 13 }}>Sin registros.</span>}
-        {items.map((i) => (
-          <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+        {[...items.filter((i) => !i.archivada_en), ...items.filter((i) => i.archivada_en)].map((i) => (
+          <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, opacity: i.archivada_en ? 0.55 : 1 }}>
             <span>{i.nombre}</span>
-            <button className="btn" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => quitar(i)}>✕</button>
+            <button className="btn" style={{ padding: "2px 8px", fontSize: 11 }}
+              title={i.archivada_en ? "Desarchivar" : "Archivar"}
+              onClick={() => alternarArchivo(i)}>{i.archivada_en ? "↩" : "📦"}</button>
           </div>
         ))}
       </div>
