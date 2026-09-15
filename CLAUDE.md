@@ -330,6 +330,17 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
+### ⏳ EN DISEÑO — producción — Ficha visual de estampado
+
+- **No es un cambio de schema todavía**: es una funcionalidad en fase de investigación. Toda la
+  averiguación hecha está en **[`docs/plan_ficha_estampado.md`](docs/plan_ficha_estampado.md)** —
+  léelo antes de retomarlo para no repetir el trabajo.
+- En resumen: armar en EstampadosTab una imagen que combine una silueta de prenda con diseños en
+  posiciones predefinidas, y mandarla a un bot de Telegram aparte (solo envío, sin IA).
+- **Puede tocar schema**: depende de una decisión sin resolver (¿las fichas son efímeras o parte del
+  registro del lote?). Si son parte del registro, hay que rediseñar `prod_lotes_estampado.disenos`,
+  que hoy es `[{ nombre, unidades }]` — sin posición y sin relación con el desglose de tallas.
+
 ### ⏳ PENDIENTE — producción — Costos fijos no se congelan por mes
 
 - `ResumenTab` calcula `cfPorUnidad` sumando los costos fijos **vigentes hoy** y lo multiplica por
