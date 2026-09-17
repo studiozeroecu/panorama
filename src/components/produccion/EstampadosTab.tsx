@@ -5,6 +5,7 @@ import { useProd } from "./useProduccion";
 import { Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type LoteEstampado } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
+import FichaEstampadoModal from "./FichaEstampadoModal";
 
 export default function EstampadosTab() {
   const { data } = useProd();
@@ -61,6 +62,7 @@ function LotePendiente({ lote }: { lote: LoteEstampado }) {
   const { data, supabase, reload, toast } = useProd();
   const [tallerId, setTallerId] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
+  const [ficha, setFicha] = useState(false);
 
   async function enviar() {
     if (!fecha) return toast("Ingresa la fecha de envío.", "error");
@@ -99,8 +101,10 @@ function LotePendiente({ lote }: { lote: LoteEstampado }) {
           <div className="label" style={{ fontSize: 10.5 }}>Fecha de envío</div>
           <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
         </div>
+        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setFicha(true)}>Ficha visual</button>
         <button className="btn primary" style={{ fontSize: 12.5 }} onClick={enviar}>Enviar al taller →</button>
       </div>
+      <FichaEstampadoModal lote={lote} abierto={ficha} onCerrar={() => setFicha(false)} />
     </div>
   );
 }
@@ -109,6 +113,7 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
   const { data, supabase, reload, toast } = useProd();
   const [fecha, setFecha] = useState(hoyEcuador());
   const [ocupado, setOcupado] = useState(false);
+  const [ficha, setFicha] = useState(false);
   const taller = data.talleres.find((t) => t.id === lote.taller_id);
 
   /**
@@ -160,10 +165,12 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
           <div className="label" style={{ fontSize: 10.5 }}>Fecha de retorno</div>
           <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
         </div>
+        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setFicha(true)}>Ficha visual</button>
         <button className="btn primary" style={{ fontSize: 12.5 }} disabled={ocupado} onClick={retornar}>
           {ocupado ? "Procesando…" : "Retorno recibido ✓"}
         </button>
       </div>
+      <FichaEstampadoModal lote={lote} abierto={ficha} onCerrar={() => setFicha(false)} />
     </div>
   );
 }

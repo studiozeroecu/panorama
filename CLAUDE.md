@@ -15,7 +15,9 @@ código o schema.** Si cambias tablas o columnas, anótalo en *Registro de cambi
 
 Variables de entorno (`.env.local` y Vercel): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_CHAT_ID`, `CRON_SECRET`.
+`TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_CHAT_ID`, `CRON_SECRET`,
+`TELEGRAM_FICHAS_BOT_TOKEN`, `TELEGRAM_FICHAS_CHAT_ID` (bot **aparte** para las fichas de
+estampado — solo envío, sin IA ni webhook; nunca reutilizar las del bot principal).
 
 ## Áreas y sus rutas
 
@@ -330,16 +332,40 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
-### ⏳ EN DISEÑO — producción — Ficha visual de estampado
+### 2026-09-17 — producción — Ficha visual de estampado ✅ (NO toca schema)
 
-- **No es un cambio de schema todavía**: es una funcionalidad en fase de investigación. Toda la
-  averiguación hecha está en **[`docs/plan_ficha_estampado.md`](docs/plan_ficha_estampado.md)** —
-  léelo antes de retomarlo para no repetir el trabajo.
-- En resumen: armar en EstampadosTab una imagen que combine una silueta de prenda con diseños en
-  posiciones predefinidas, y mandarla a un bot de Telegram aparte (solo envío, sin IA).
-- **Puede tocar schema**: depende de una decisión sin resolver (¿las fichas son efímeras o parte del
-  registro del lote?). Si son parte del registro, hay que rediseñar `prod_lotes_estampado.disenos`,
-  que hoy es `[{ nombre, unidades }]` — sin posición y sin relación con el desglose de tallas.
+*(No es un cambio de schema: ni una tabla, ni una columna, ni una migración. Se anota aquí porque
+el registro es donde se busca qué cambió en producción.)*
+
+- **Qué es:** en EstampadosTab, un botón *"Ficha visual"* abre un modal que compone con Canvas una
+  imagen de la prenda (frente y espalda) con los diseños en posiciones predefinidas, y la manda a
+  un bot de Telegram **aparte** — solo envío, sin IA, sin webhook y sin `bot_pending_actions`.
+- **Las fichas son EFÍMERAS por decisión explícita.** No se guardan en Storage ni en la base: las
+  imágenes viven en memoria del navegador mientras el modal está abierto. El archivo de verdad
+  queda en el chat del bot, **y se busca ahí por la fecha** — por eso la fecha va grande en la
+  cabecera de la imagen y en la primera línea del mensaje. Se descartó numerar los lotes: habría
+  exigido una columna nueva, porque un número derivado del orden se desplaza en silencio si alguien
+  borra un lote a mano y deja apuntando mal a todas las fichas ya enviadas.
+- **Por tanto `prod_lotes_estampado.disenos` NO cambia** y sigue siendo `[{ nombre, unidades }]`.
+  La ficha **no** resuelve que no se sepa qué tallas llevan qué diseño (el obstáculo de la sección 5
+  de [`docs/plan_ficha_estampado.md`](docs/plan_ficha_estampado.md)): imprime el desglose de tallas
+  del lote y las unidades por diseño como dos datos sueltos, igual que hoy. Tampoco lo empeora.
+- **Archivos nuevos:** seis siluetas SVG en `public/siluetas/` (la carpeta `public/` no existía),
+  `src/lib/produccion/posiciones.ts` (catálogo), `src/lib/produccion/ficha.ts` (compositor),
+  `components/produccion/FichaEstampadoModal.tsx`, `api/estampados/ficha/route.ts` y
+  `tests/posiciones.test.ts`. `sendPhoto` se añade a `src/lib/telegram.ts`. Sin dependencias nuevas.
+- ⚠️ **`sendPhoto` recibe el token por parámetro**, a diferencia del resto de `telegram.ts`, que usa
+  `BASE()` con `TELEGRAM_BOT_TOKEN` incrustado. Reutilizar `BASE()` mandaría la ficha al chat del
+  bot principal **sin dar ningún error**. Y va en `multipart/form-data` **sin fijar `Content-Type`**:
+  ponerlo a mano rompe el boundary.
+- **El catálogo de posiciones vive en código, no en una tabla**, a propósito: las coordenadas solo
+  tienen sentido contra un dibujo concreto, y en la base se desincronizarían en silencio del SVG.
+  Son 17 posiciones en camiseta y 18 en sudadera y buso — la camiseta es de manga corta y **no**
+  tiene antebrazo. Las mangas guardan **un solo recuadro** y el otro sale por espejo; lo que se
+  refleja es el recuadro, **nunca el dibujo** (un logo volteado saldría al revés en una manga).
+- Izquierda y derecha son siempre **las de quien usa la prenda**: el pecho izquierdo se dibuja a la
+  derecha del lienzo.
+- **Impacto en otras áreas: ninguno.**
 
 ### ⏳ PENDIENTE — producción — Costos fijos no se congelan por mes
 

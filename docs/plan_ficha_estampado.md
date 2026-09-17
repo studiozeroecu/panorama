@@ -1,11 +1,23 @@
-# Ficha visual de estampado — estado de la investigación
+# Ficha visual de estampado — investigación previa
 
-> **Estado: SOLO INVESTIGACIÓN.** A fecha de 2026-09-15 no se ha escrito ni una línea de código,
-> ni se ha tocado el schema. Este documento existe para que una sesión nueva no repita el trabajo
-> de averiguación ya hecho.
+> **Estado: IMPLEMENTADA el 2026-09-17.** Este documento se conserva como el registro de la
+> averiguación previa y de las decisiones que se tomaron. Lo que quedó construido está resumido en
+> la entrada del **registro de cambios de schema de CLAUDE.md** (2026-09-17); el código es la
+> fuente de verdad.
 >
-> El proyecto no tenía carpeta `docs/` — se crea aquí. El resto de convenciones (SQL en
-> `supabase/`, scripts en `scripts/`, CLAUDE.md en la raíz) no cambian.
+> **Las dos decisiones que estaban abiertas quedaron así:**
+>
+> 1. **Las fichas son EFÍMERAS** (sección 6). No se guardan en Storage ni en la base. Por tanto
+>    **no se tocó el schema** y el obstáculo de la sección 5 sigue intacto: la ficha no resuelve
+>    qué tallas llevan qué diseño, solo deja de empeorarlo.
+> 2. **Las mangas sí distinguen lado** (sección 2), al contrario de lo que se supuso al principio:
+>    hay diseños que van en un lado, en los dos, o distintos en cada uno. No se duplicó el
+>    catálogo — se guarda un recuadro y el otro se calcula por espejo.
+>
+> **Lo que cambió respecto a lo previsto aquí:** hicieron falta **seis** siluetas y no tres (el
+> catálogo incluye espalda, así que la ficha muestra frente y espalda); la camiseta **no** lleva
+> `manga_antebrazo` porque es de manga corta; y se descartó numerar los lotes para buscarlos en el
+> chat — se buscan por fecha, que no exige columna nueva.
 
 ---
 
@@ -33,8 +45,9 @@ Ese bot es **solo de envío, sin IA**: un canal de un solo sentido. No necesita 
 
 Orden de magnitud: **~20 combinaciones por prenda**, unas **60 en total** para las tres prendas.
 
-> **Detalle sin cerrar:** no quedó explícito si las mangas distinguen **izquierda y derecha** (lo que
-> daría 4 combinaciones de manga en vez de 2). Conviene confirmarlo antes de fijar el catálogo.
+> **CERRADO:** las mangas **sí** distinguen lado, pero no como se temía aquí. En vez de duplicar
+> las entradas del catálogo, cada posición de manga guarda un recuadro y la pantalla pide el lado
+> (izquierda · derecha · las dos). Ver `recuadrosDe()` en `src/lib/produccion/posiciones.ts`.
 
 ---
 
@@ -245,7 +258,7 @@ XXL hasta cubrir el total.
 
 ---
 
-## 6. Decisión pendiente — no resuelta
+## 6. Decisión pendiente — RESUELTA: efímeras
 
 **¿Las fichas generadas son efímeras o parte del registro del lote?**
 
@@ -256,13 +269,13 @@ XXL hasta cubrir el total.
 | Storage | No consume | Consume cuota (ver sección 4) |
 | Reimprimir una ficha | Hay que rearmarla a mano | Se recupera |
 
-**Esta decisión manda sobre todo lo demás.** Si son efímeras, la funcionalidad es puramente de
-cliente + una llamada a Telegram, sin migración. Si son parte del registro, entra el rediseño de
-`prod_lotes_estampado.disenos` descrito en la sección 5, con todo lo que arrastra.
+**Resuelto el 2026-09-16: efímeras.** La funcionalidad quedó puramente de cliente + una llamada
+a Telegram, sin migración. El rediseño de `prod_lotes_estampado.disenos` de la sección 5 **no se
+hizo** y sigue pendiente para quien lo retome.
 
 ---
 
-## 7. Lo que NO se ha hecho
+## 7. Lo que NO se había hecho cuando se escribió esto
 
 - No se ha escrito código de ninguna clase.
 - No se ha tocado el schema ni se ha creado ninguna migración.
@@ -270,3 +283,6 @@ cliente + una llamada a Telegram, sin migración. Si son parte del registro, ent
 - No se ha creado el bot de Telegram ni sus variables de entorno.
 - No se ha verificado la cuota de Storage consumida (sección 4).
 - No se ha decidido nada de la sección 6.
+
+> Todo lo de esta sección está hecho desde el 2026-09-17, salvo **la cuota de Storage**, que
+> nunca se verificó — y ya no hace falta, porque al ser efímeras las fichas no consumen nada.
