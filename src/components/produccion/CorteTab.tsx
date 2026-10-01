@@ -127,6 +127,18 @@ export default function CorteTab() {
           const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
           const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
           const prenda = prendaDe(p);
+          /**
+           * Estimación informativa, con la misma fórmula y el mismo texto que el
+           * recuadro de PedidosTab. Se calcula sobre total_metros y NO sobre el
+           * saldo: la tela de un pedido se dedica entera a su propósito, así que
+           * antes de cortar lo que interesa es cuánto rinde el pedido completo.
+           * Sin prenda o con consumo 0 no se muestra nada — el mismo silencio que
+           * ya usa PedidosTab, que calla cuando no sabe en vez de avisar.
+           */
+          const unidadesEstimadas =
+            prenda && prenda.consumo_metros > 0 && Number(p.total_metros) > 0
+              ? Math.floor(Number(p.total_metros) / prenda.consumo_metros)
+              : null;
           return (
             <div className="prod-card" key={p.id}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -144,6 +156,12 @@ export default function CorteTab() {
                       <Badge color="azul">{cortesDelPedido.length} corte{cortesDelPedido.length !== 1 ? "s" : ""}</Badge>
                     )}
                   </div>
+                  {prenda && unidadesEstimadas != null && (
+                    <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
+                      Consumo por unidad: {prenda.consumo_metros} m · con{" "}
+                      {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
+                    </div>
+                  )}
                 </div>
                 <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => abrirCorte(p)}>
                   {cortesDelPedido.length ? "+ Nuevo corte" : "Registrar corte"}
