@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela } from "@/lib/produccion/types";
+import { estimarUnidades } from "@/lib/produccion/estimacion";
 import { hoyEcuador, fmtFecha, sumarDiasLaborables, diasHasta } from "@/lib/fechas";
 
 export default function LlegadaTab() {
@@ -56,6 +57,9 @@ export default function LlegadaTab() {
         pendientes.map((p) => {
           const prov = data.proveedores.find((x) => x.id === p.proveedor_id);
           const prenda = data.prendas.find((x) => x.id === p.prenda_id);
+          // Qué va a rendir el pedido, visible mientras la tela todavía viene en
+          // camino. Ojo: `estimada`, aquí abajo, es la FECHA de entrega — no esto.
+          const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
           let estimada = "—";
           let countdown: React.ReactNode = null;
           if (prov && p.fecha_pedido) {
@@ -80,6 +84,12 @@ export default function LlegadaTab() {
                     {prov?.empresa ?? "Sin proveedor"}
                     {prenda ? ` · Para: ${prenda.nombre}` : ""} · {Number(p.total_metros).toFixed(1)} m
                   </div>
+                  {prenda && unidadesEstimadas != null && (
+                    <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
+                      Consumo por unidad: {prenda.consumo_metros} m · con{" "}
+                      {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
+                    </div>
+                  )}
                 </div>
                 <Badge color={p.estado === "en_camino" ? "azul" : "ambar"}>
                   {p.estado === "en_camino" ? "En camino" : "Pendiente"}
