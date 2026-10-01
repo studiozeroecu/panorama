@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/types";
+import { estimarUnidades } from "@/lib/produccion/estimacion";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 const ESTADO_LABEL: Record<EstadoPedido, { txt: string; color: "ambar" | "azul" | "verde" }> = {
@@ -92,10 +93,7 @@ export default function PedidosTab() {
   const valorMetro = parseFloat(form.valor_metro) || 0;
   const totalPagar = metrosEfectivos * valorMetro;
   const prendaSel = data.prendas.find((p) => p.id === form.prenda_id);
-  const unidadesEstimadas =
-    prendaSel && prendaSel.consumo_metros > 0 && metrosEfectivos > 0
-      ? Math.floor(metrosEfectivos / prendaSel.consumo_metros)
-      : null;
+  const unidadesEstimadas = estimarUnidades(prendaSel, metrosEfectivos);
 
   /** Sin pedido abre en alta; con pedido, en edición con los datos precargados. */
   function abrir(p?: PedidoTela) {

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
+import { estimarUnidades } from "@/lib/produccion/estimacion";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
@@ -127,18 +128,11 @@ export default function CorteTab() {
           const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
           const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
           const prenda = prendaDe(p);
-          /**
-           * Estimación informativa, con la misma fórmula y el mismo texto que el
-           * recuadro de PedidosTab. Se calcula sobre total_metros y NO sobre el
-           * saldo: la tela de un pedido se dedica entera a su propósito, así que
-           * antes de cortar lo que interesa es cuánto rinde el pedido completo.
-           * Sin prenda o con consumo 0 no se muestra nada — el mismo silencio que
-           * ya usa PedidosTab, que calla cuando no sabe en vez de avisar.
-           */
-          const unidadesEstimadas =
-            prenda && prenda.consumo_metros > 0 && Number(p.total_metros) > 0
-              ? Math.floor(Number(p.total_metros) / prenda.consumo_metros)
-              : null;
+          // Sobre total_metros y NO sobre el saldo: la tela de un pedido se dedica
+          // entera a su propósito, así que antes de cortar interesa cuánto rinde el
+          // pedido completo. Por eso este número y el badge de saldo no coinciden
+          // en cuanto hay un corte previo.
+          const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
           return (
             <div className="prod-card" key={p.id}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
