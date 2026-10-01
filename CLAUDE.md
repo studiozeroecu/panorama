@@ -48,7 +48,9 @@ versionadas. Orden real de ejecución:
 `schema_fase8b_idempotencia.sql` ✅ **aplicada el 2026-09-09** →
 `schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10** →
-`schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10**
+`schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10** →
+`schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01**
+*(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
 > en `main`, y `resync_fase7.sql` recuperó lo que la app vieja había escrito solo en el jsonb.
@@ -331,6 +333,62 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-10-01 — producción — `schema_fase8g_editar_pedido.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8g.sql`: 6/6 comprobaciones OK.
+
+- **Función y trigger nuevos:** `fn_proteger_pedido_con_cortes()` +
+  `trg_proteger_pedido_con_cortes` (`before update of colores, total_metros` sobre
+  `prod_pedidos_tela`). Aditivo puro: ni tabla ni columna, así que **no hace falta política RLS**.
+- **Por qué:** `PedidosTab` gana un modo edición, y editar un pedido con cortes rompía dos cosas
+  en silencio. **`colores`:** `trg_sync_pedido_colores` (fase 7, redefinido en la 8c) BORRA las
+  filas de `prod_pedido_colores` que ya no estén en el jsonb, y como
+  `prod_corte_colores.pedido_color_id` es `on delete set null`, quitar o **renombrar** un color
+  dejaba los cortes apuntando a null — se perdía la trazabilidad que construyó la fase 7.
+  **`total_metros`:** no tiene ningún check, y el saldo de tela solo se valida al CREAR un corte
+  dentro de `fn_registrar_corte`; bajarlo por debajo de lo consumido dejaba el saldo negativo.
+- **Trigger y no RPC** porque editar un pedido es **un solo update**: no hay cadena de escrituras
+  que hacer atómica, que es lo que justificó las RPC de las fases 7, 8a y 8d. Y el trigger cierra
+  una carrera que el cliente no puede cerrar: el update toma el lock de la fila y
+  `fn_registrar_corte` hace `select … for update` sobre esa MISMA fila, así que las dos
+  operaciones se serializan solas. El cliente valida sobre `data.cortes`, que es una foto.
+- ⚠️ **`unidad` y `rendimiento` NO están en la lista de columnas del trigger, a propósito.** En la
+  pantalla los tres se bloquean juntos porque ahí `total_metros` **se calcula**
+  (suma de colores × rendimiento si es kilos), y bloquear solo los colores dejaría bajar el total
+  por el rendimiento. Pero en la base `total_metros` es una columna **almacenada**: vigilarla cubre
+  el daño real por cualquier camino. Si alguien añade columnas a esa lista, `LlegadaTab` dejaría de
+  poder confirmar entregas de pedidos con cortes — la comprobación 5 del smoke test existe para eso.
+- ⚠️ **`estado` no viaja NUNCA en el update de edición.** El alta lo fija en `"pendiente"`; reusar el
+  mismo objeto habría devuelto a pendiente un pedido ya entregado, borrando el trabajo de
+  `LlegadaTab`. Lo mismo `idempotencia_id`, que identifica un intento de ALTA.
+- **Con el pedido bloqueado, el cliente OMITE las cuatro columnas congeladas** en vez de reenviarlas
+  iguales: el jsonb rearmado no tiene por qué coincidir con el guardado (en metros se escribe
+  `{color, metros}` **sin** la clave `kilos`, y los datos migrados pueden traer más decimales).
+  Al no ir la columna, el trigger ni dispara para ella.
+- **No se duplicó la validación de saldo en el cliente**: con los tres campos bloqueados sería
+  código inalcanzable, el tercer *"mensaje muerto"* del proyecto. La capa de cliente aquí es
+  **bloquear los inputs**; el servidor es la autoridad.
+- Las validaciones de tela (rendimiento, colores) se saltan cuando está bloqueado: un pedido migrado
+  en kilos y **sin rendimiento** habría quedado imposible de editar, justo el caso que motivó la fase.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-01 — producción — CorteTab, estimación de unidades por pedido
+
+*(No es un cambio de schema: solo TypeScript.)*
+
+- La tarjeta de cada pedido esperando corte muestra *"Consumo por unidad: X m · con Y m saldrían
+  ≈ Z unidades"*, con la misma fórmula y el mismo texto que el recuadro de `PedidosTab`.
+- Se calcula sobre **`total_metros`**, no sobre el saldo: la tela de un pedido se dedica entera a su
+  propósito. Por eso ese número y el badge *"Saldo de tela"* de al lado **no coinciden** en cuanto
+  hay un corte previo; es deliberado.
+- Sin prenda asignada (`prenda_id` es opcional) o con `consumo_metros` en 0 no se muestra nada, sin
+  aviso — el mismo silencio que ya usaba `PedidosTab`.
+- ⚠️ **`prod_prendas.consumo_metros` pasa de tener UN lector a tener DOS** (`PedidosTab` y
+  `CorteTab`). Importa para una fase futura: es un parámetro vivo que el historial **no fotografía**,
+  el mismo defecto que el pendiente *"Costos fijos no se congelan por mes"*. Si algún día se congela
+  al momento del corte —como ya hace `prod_maquilas.costo_unitario`— hay que mirar los dos sitios.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-09-17 — producción — Ficha visual de estampado ✅ (NO toca schema)
 

@@ -25,6 +25,7 @@ export default function PedidosTab() {
   const [ocupado, setOcupado] = useState(false);
   const [idemId, setIdemId] = useState("");
   const [borrar, setBorrar] = useState<PedidoTela | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     nombre_tela: "",
@@ -46,30 +47,96 @@ export default function PedidosTab() {
     return esKilos ? (rend > 0 ? suma * rend : 0) : suma;
   }, [colores, esKilos, rend]);
 
+  /**
+   * Fase 8g: cortes ya registrados por pedido. `data.cortes` ya está cargado, así
+   * que esto no añade ninguna consulta — pero es una FOTO del momento en que se
+   * abrió /produccion. La autoridad real es trg_proteger_pedido_con_cortes, que
+   * corre dentro del propio update y ve el estado de verdad.
+   */
+  const cortesPorPedido = useMemo(() => {
+    const m = new Map<string, { n: number; metros: number }>();
+    for (const c of data.cortes) {
+      const prev = m.get(c.pedido_id) ?? { n: 0, metros: 0 };
+      m.set(c.pedido_id, {
+        n: prev.n + 1,
+        metros: prev.metros + Number(c.metros_consumidos ?? 0),
+      });
+    }
+    return m;
+  }, [data.cortes]);
+
+  const pedidoEdit = editId ? data.pedidos.find((p) => p.id === editId) : undefined;
+  const cortesEdit = editId ? cortesPorPedido.get(editId) : undefined;
+
+  /**
+   * Con cortes registrados se congelan los TRES campos que alimentan total_metros:
+   * colores, unidad y rendimiento. Bloquear solo los colores no bastaría — bajar el
+   * rendimiento hace caer el total sin tocar ni un color, y el saldo de tela
+   * quedaría negativo.
+   */
+  const bloqueado = !!cortesEdit?.n;
+
   // Fase 8e: los archivados se filtran SOLO aquí, donde se ELIGE. Todo `find()`
   // que resuelve un id ya guardado sigue viendo el catálogo completo.
   const proveedoresActivos = data.proveedores.filter((p) => !p.archivada_en);
   const prendasActivas = data.prendas.filter((p) => !p.archivada_en);
 
+  /**
+   * Con los campos de tela bloqueados el total sale del valor GUARDADO, no del que
+   * rearma el formulario: reconstruir kilos→metros puede dejar una diferencia de
+   * céntimos por redondeo, y `valor_metro` sí es editable, así que total_pagar se
+   * recalcula y se guarda.
+   */
+  const metrosEfectivos = bloqueado && pedidoEdit ? Number(pedidoEdit.total_metros) : totalMetros;
+
   const valorMetro = parseFloat(form.valor_metro) || 0;
-  const totalPagar = totalMetros * valorMetro;
+  const totalPagar = metrosEfectivos * valorMetro;
   const prendaSel = data.prendas.find((p) => p.id === form.prenda_id);
   const unidadesEstimadas =
-    prendaSel && prendaSel.consumo_metros > 0 && totalMetros > 0
-      ? Math.floor(totalMetros / prendaSel.consumo_metros)
+    prendaSel && prendaSel.consumo_metros > 0 && metrosEfectivos > 0
+      ? Math.floor(metrosEfectivos / prendaSel.consumo_metros)
       : null;
 
-  function abrir() {
-    // Fase 8b: el id de idempotencia nace AL ABRIR el formulario, no al guardar.
-    // Si naciera en el handler del clic, cada intento traería un id distinto y el
-    // `on conflict do nothing` del servidor no deduplicaría nada.
-    setIdemId(crypto.randomUUID());
+  /** Sin pedido abre en alta; con pedido, en edición con los datos precargados. */
+  function abrir(p?: PedidoTela) {
     setErr(null);
-    setForm({
-      nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
-      rendimiento: "", ancho_pedido: "", proveedor_id: "", prenda_id: "", valor_metro: "",
-    });
-    setColores([{ color: "", cant: "" }]);
+    if (p) {
+      setEditId(p.id);
+      // La idempotencia identifica un intento de ALTA. En una edición no aplica, y
+      // mandarla en el update solo podría chocar con su propio índice único.
+      setIdemId("");
+      setForm({
+        nombre_tela: p.nombre_tela,
+        fecha_pedido: p.fecha_pedido,
+        unidad: p.unidad,
+        rendimiento: p.rendimiento == null ? "" : String(p.rendimiento),
+        ancho_pedido: p.ancho_pedido == null ? "" : String(p.ancho_pedido),
+        proveedor_id: p.proveedor_id ?? "",
+        prenda_id: p.prenda_id ?? "",
+        valor_metro: String(p.valor_metro),
+      });
+      // El formulario pide la cantidad en la UNIDAD DE COMPRA; la base guarda
+      // siempre metros, y kilos solo cuando aplica. Hay que deshacer la conversión,
+      // no leer `metros` a secas, o un pedido en kilos se precargaría con los
+      // metros ya multiplicados y al guardar se multiplicarían otra vez.
+      setColores(
+        (p.colores ?? []).map((c) => ({
+          color: c.color,
+          cant: String(p.unidad === "kilos" ? c.kilos ?? 0 : c.metros),
+        }))
+      );
+    } else {
+      setEditId(null);
+      // Fase 8b: el id de idempotencia nace AL ABRIR el formulario, no al guardar.
+      // Si naciera en el handler del clic, cada intento traería un id distinto y el
+      // `on conflict do nothing` del servidor no deduplicaría nada.
+      setIdemId(crypto.randomUUID());
+      setForm({
+        nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
+        rendimiento: "", ancho_pedido: "", proveedor_id: "", prenda_id: "", valor_metro: "",
+      });
+      setColores([{ color: "", cant: "" }]);
+    }
     setAbierto(true);
   }
 
@@ -79,11 +146,20 @@ export default function PedidosTab() {
     const ancho = parseFloat(form.ancho_pedido);
     if (!(ancho > 0)) return setErr("Ingresa un ancho válido (cm).");
     if (!(valorMetro > 0)) return setErr("Ingresa el valor por metro.");
-    if (esKilos && !(rend > 0)) return setErr("Ingresa el rendimiento (metros por kilo).");
+
+    // Con los campos de tela bloqueados no viajan al servidor, así que exigirles
+    // nada sería pedirle al usuario que arregle algo que ni siquiera se va a
+    // guardar. Importa de verdad: un pedido migrado en kilos y sin rendimiento
+    // quedaría imposible de editar, justo el caso de corregir un proveedor.
+    if (!bloqueado) {
+      if (esKilos && !(rend > 0)) return setErr("Ingresa el rendimiento (metros por kilo).");
+    }
     const filas = colores.filter((c) => c.color.trim() || parseFloat(c.cant) > 0);
-    if (!filas.length) return setErr("Agrega al menos un color.");
-    if (filas.some((c) => !c.color.trim() || !(parseFloat(c.cant) > 0)))
-      return setErr("Completa nombre y cantidad en todos los colores.");
+    if (!bloqueado) {
+      if (!filas.length) return setErr("Agrega al menos un color.");
+      if (filas.some((c) => !c.color.trim() || !(parseFloat(c.cant) > 0)))
+        return setErr("Completa nombre y cantidad en todos los colores.");
+    }
 
     // La base considera el mismo color a "Negro" y "negro": el índice único de
     // prod_pedido_colores normaliza con lower(btrim(color)). Sin este chequeo, el
@@ -91,7 +167,7 @@ export default function PedidosTab() {
     // UPDATE command cannot affect row a second time"). Mismo criterio que la base,
     // para que cliente y servidor no discrepen.
     const grupos = new Map<string, string[]>();
-    for (const c of filas) {
+    for (const c of bloqueado ? [] : filas) {
       const clave = c.color.trim().toLowerCase();
       grupos.set(clave, [...(grupos.get(clave) ?? []), c.color.trim()]);
     }
@@ -121,31 +197,59 @@ export default function PedidosTab() {
     // tampoco se dispara, así que no se duplican las filas de prod_pedido_colores.
     // Un conflicto devuelve un array vacío: así se distingue de un alta real.
     setOcupado(true);
-    const { data: insertadas, error } = await supabase
-      .from("prod_pedidos_tela")
-      .upsert(
-        {
-          nombre_tela: form.nombre_tela.trim(),
-          fecha_pedido: form.fecha_pedido,
-          unidad: form.unidad,
-          rendimiento: esKilos ? rend : null,
-          ancho_pedido: ancho,
-          proveedor_id: form.proveedor_id || null,
-          prenda_id: form.prenda_id || null,
-          colores: coloresJson,
-          total_metros: +totalMetros.toFixed(2),
-          valor_metro: valorMetro,
-          total_pagar: +totalPagar.toFixed(2),
-          estado: "pendiente",
-          idempotencia_id: idemId || null,
-        },
-        { onConflict: "idempotencia_id", ignoreDuplicates: true }
-      )
-      .select("id");
-    setOcupado(false);
-    if (error) return setErr(error.message);
 
-    toast((insertadas?.length ?? 0) === 0 ? "Este pedido ya estaba registrado." : "Pedido guardado");
+    // Campos LIBRES: se corrigen siempre, tenga o no cortes el pedido. Ninguno lo
+    // copia nada downstream, y la fecha de entrega estimada no se guarda — se
+    // recalcula desde proveedor.dias_entrega cada vez que se muestra, así que
+    // corregir el proveedor la arregla sola.
+    const libres = {
+      nombre_tela: form.nombre_tela.trim(),
+      fecha_pedido: form.fecha_pedido,
+      ancho_pedido: ancho,
+      proveedor_id: form.proveedor_id || null,
+      prenda_id: form.prenda_id || null,
+      valor_metro: valorMetro,
+      total_pagar: +totalPagar.toFixed(2),
+    };
+    // Campos de TELA: los que mueven el saldo y la trazabilidad de colores.
+    const tela = {
+      unidad: form.unidad,
+      rendimiento: esKilos ? rend : null,
+      colores: coloresJson,
+      total_metros: +totalMetros.toFixed(2),
+    };
+
+    if (editId) {
+      // Bloqueado ⇒ los campos de tela NO viajan, en vez de reenviarse iguales.
+      // Reenviarlos obligaría a que el jsonb rearmado coincidiera exactamente con
+      // el guardado, y no tiene por qué: en metros el cliente escribe
+      // {color, metros} sin la clave `kilos`, y los datos migrados pueden traer
+      // más decimales. Al no ir la columna, el trigger ni siquiera dispara para
+      // ella y no hay comparación que pueda salir mal.
+      //
+      // `estado` no viaja NUNCA en una edición: el alta lo fija en "pendiente", y
+      // reusarlo aquí devolvería a pendiente un pedido ya entregado, borrando el
+      // trabajo de LlegadaTab sin decir nada.
+      const { error } = await supabase
+        .from("prod_pedidos_tela")
+        .update(bloqueado ? libres : { ...libres, ...tela })
+        .eq("id", editId);
+      setOcupado(false);
+      if (error) return setErr(error.message);
+      toast("Pedido actualizado");
+    } else {
+      const { data: insertadas, error } = await supabase
+        .from("prod_pedidos_tela")
+        .upsert(
+          { ...libres, ...tela, estado: "pendiente", idempotencia_id: idemId || null },
+          { onConflict: "idempotencia_id", ignoreDuplicates: true }
+        )
+        .select("id");
+      setOcupado(false);
+      if (error) return setErr(error.message);
+      toast((insertadas?.length ?? 0) === 0 ? "Este pedido ya estaba registrado." : "Pedido guardado");
+    }
+
     setAbierto(false);
     await reload();
   }
@@ -181,7 +285,7 @@ export default function PedidosTab() {
             <option value="en_camino">En camino</option>
             <option value="entregado">Entregados</option>
           </select>
-          <button className="btn primary" onClick={abrir}>+ Nuevo pedido</button>
+          <button className="btn primary" onClick={() => abrir()}>+ Nuevo pedido</button>
         </div>
       </div>
 
@@ -224,6 +328,10 @@ export default function PedidosTab() {
                     </td>
                     <td><Badge color={est.color}>{est.txt}</Badge></td>
                     <td style={{ whiteSpace: "nowrap" }}>
+                      {/* Visible en los tres estados: el proveedor mal puesto se
+                          descubre casi siempre DESPUÉS de que la tela llegó. */}
+                      <button className="btn" style={{ padding: "4px 9px", marginRight: 6, fontSize: 12 }}
+                        onClick={() => abrir(p)}>✏️ Editar</button>
                       {p.estado === "pendiente" && (
                         <button className="btn" style={{ padding: "4px 9px", marginRight: 6, fontSize: 12 }}
                           onClick={() => marcarEnCamino(p)}>📦 En camino</button>
@@ -241,7 +349,7 @@ export default function PedidosTab() {
       )}
 
       <Modal
-        titulo="Nuevo pedido de tela"
+        titulo={editId ? "Editar pedido de tela" : "Nuevo pedido de tela"}
         abierto={abierto}
         onCerrar={() => setAbierto(false)}
         ancho={700}
@@ -249,12 +357,24 @@ export default function PedidosTab() {
           <>
             <button className="btn" onClick={() => setAbierto(false)}>Cancelar</button>
             <button className="btn primary" disabled={ocupado} onClick={guardar}>
-              {ocupado ? "Guardando…" : "Guardar pedido"}
+              {ocupado ? "Guardando…" : editId ? "Guardar cambios" : "Guardar pedido"}
             </button>
           </>
         }
       >
         {err && <div className="error-banner">{err}</div>}
+        {bloqueado && cortesEdit && (
+          <div className="warning-banner">
+            <b>
+              Este pedido ya tiene {cortesEdit.n} corte{cortesEdit.n !== 1 ? "s" : ""}{" "}
+              registrado{cortesEdit.n !== 1 ? "s" : ""}.
+            </b>{" "}
+            Los colores, la unidad y el rendimiento quedan bloqueados: cambiarlos
+            desvincularía los colores del corte de los del pedido, y el sistema perdería
+            el rastro de qué tela se usó en qué corte. Todo lo demás —proveedor, nombre,
+            fecha, prenda, ancho y valor por metro— sí se puede corregir.
+          </div>
+        )}
         <Fila>
           <Campo label="Nombre de la tela" requerido>
             <input className="pinput" placeholder="Ej: Jersey algodón 30/1" value={form.nombre_tela}
@@ -270,7 +390,7 @@ export default function PedidosTab() {
             <div style={{ display: "flex", gap: 18, padding: "9px 0" }}>
               {(["metros", "kilos"] as const).map((u) => (
                 <label key={u} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" }}>
-                  <input type="radio" checked={form.unidad === u}
+                  <input type="radio" checked={form.unidad === u} disabled={bloqueado}
                     onChange={() => setForm({ ...form, unidad: u })}
                     style={{ accentColor: "var(--accent)" }} />
                   {u === "metros" ? "Metros" : "Kilos"}
@@ -287,11 +407,12 @@ export default function PedidosTab() {
           <Fila>
             <Campo label="Rendimiento (metros por kilo)" requerido>
               <input className="pinput" type="number" step="0.01" min="0.01" placeholder="Ej: 3.50" value={form.rendimiento}
+                disabled={bloqueado}
                 onChange={(e) => setForm({ ...form, rendimiento: e.target.value })} />
             </Campo>
             <Campo label="Total en metros (calculado)">
               <div className="pinput" style={{ color: "var(--muted)" }}>
-                {totalMetros > 0 ? `${totalMetros.toFixed(2)} m` : "— m"}
+                {metrosEfectivos > 0 ? `${metrosEfectivos.toFixed(2)} m` : "— m"}
               </div>
             </Campo>
           </Fila>
@@ -318,11 +439,26 @@ export default function PedidosTab() {
         {prendaSel && (
           <div style={{ background: "var(--accent-soft)", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, marginBottom: 12, color: "var(--accent)" }}>
             Consumo por unidad: {prendaSel.consumo_metros} m
-            {unidadesEstimadas != null && <> · con {totalMetros.toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b></>}
+            {unidadesEstimadas != null && <> · con {metrosEfectivos.toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b></>}
           </div>
         )}
 
         <Campo label={`Colores del pedido (cantidad en ${esKilos ? "kilos" : "metros"})`} requerido>
+          {bloqueado ? (
+            // En gris y no escondidos: hay que poder VER los colores del pedido
+            // aunque no se puedan tocar.
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "4px 0" }}>
+              {colores.length ? (
+                colores.map((c, i) => (
+                  <Badge key={i}>
+                    {c.color}: {c.cant} {esKilos ? "kg" : "m"}
+                  </Badge>
+                ))
+              ) : (
+                <span className="sub">Sin colores registrados</span>
+              )}
+            </div>
+          ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {colores.map((c, i) => (
               <div key={i} style={{ display: "flex", gap: 8 }}>
@@ -338,6 +474,7 @@ export default function PedidosTab() {
             <button className="btn" style={{ alignSelf: "flex-start", fontSize: 12 }}
               onClick={() => setColores([...colores, { color: "", cant: "" }])}>+ Agregar color</button>
           </div>
+          )}
         </Campo>
 
         <Fila>
@@ -350,7 +487,7 @@ export default function PedidosTab() {
         <div className="card" style={{ padding: 14, fontSize: 13 }}>
           <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
             <span className="sub">Total metros</span>
-            <span className="num">{totalMetros > 0 ? `${totalMetros.toFixed(2)} m` : "—"}</span>
+            <span className="num">{metrosEfectivos > 0 ? `${metrosEfectivos.toFixed(2)} m` : "—"}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
             <span className="sub">Total a pagar</span>
