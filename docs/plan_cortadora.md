@@ -96,7 +96,13 @@ pantalla de que el ancho parece estar en metros, y **la línea de mesa no sale i
 
 ---
 
-## Pieza 3 · Usuario propio para la cortadora ⏳ SOLO DOCUMENTADA
+## Pieza 3 · Usuario propio para la cortadora ✅ ANDAMIAJE CONSTRUIDO (solo lectura)
+
+> El rol, su función, sus políticas de LECTURA, el middleware y una pantalla de solo lectura están
+> hechos en `schema_fase8i_rol_cortadora.sql`. Falta todo el lado de ESCRITURA, que depende de las
+> piezas 4, 7 y 8 — sin esas tablas no hay dónde guardar capas, retazos, horas, insumos ni destino.
+
+Lo que sigue era el análisis previo, y se cumplió tal cual:
 
 **Obstáculo concreto, no teórico.** `user_roles` tiene un check cerrado:
 

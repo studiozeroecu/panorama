@@ -1,6 +1,26 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * Zona a la que queda confinado cada rol. Un rol que NO esté aquí —hoy `admin`—
+ * no tiene restricción y entra a todo.
+ *
+ * Antes esto era un booleano (`esLogistica ? … : …`), y con un tercer rol eso se
+ * vuelve peligroso: todo lo que no fuera logística se trataba como admin, así que
+ * la cortadora habría visto `/produccion` entera sin que nada fallara. Siendo un
+ * mapa explícito, añadir un rol es añadir una línea, y **olvidarse de añadirla
+ * deja al rol sin restricción** — por eso el check de `user_roles` en la base y
+ * este mapa tienen que moverse juntos.
+ *
+ * Un usuario SIN fila en `user_roles` sigue cayendo aquí como `undefined`, es
+ * decir sin zona: exactamente el comportamiento de antes, que el bootstrap de la
+ * fase 6 asumía para las cuentas anteriores a los roles.
+ */
+const ZONA_DEL_ROL: Record<string, string | undefined> = {
+  logistica: "/logistica",
+  cortadora: "/cortadora",
+};
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -34,23 +54,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
   if (user) {
-    // Fase 6: enrutamiento por rol. El rol "logistica" solo ve /logistica;
-    // si la tabla de roles aún no existe (fases previas), se comporta como antes.
     const { data: rolRow } = await supabase
       .from("user_roles")
       .select("rol")
       .eq("user_id", user.id)
       .maybeSingle();
-    const esLogistica = rolRow?.rol === "logistica";
+
+    const zona = ZONA_DEL_ROL[rolRow?.rol ?? ""];
 
     if (isLogin) {
       const url = request.nextUrl.clone();
-      url.pathname = esLogistica ? "/logistica" : "/";
+      url.pathname = zona ?? "/";
       return NextResponse.redirect(url);
     }
-    if (esLogistica && !request.nextUrl.pathname.startsWith("/logistica")) {
+    if (zona && !request.nextUrl.pathname.startsWith(zona)) {
       const url = request.nextUrl.clone();
-      url.pathname = "/logistica";
+      url.pathname = zona;
       return NextResponse.redirect(url);
     }
   }

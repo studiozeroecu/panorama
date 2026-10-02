@@ -50,7 +50,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01** →
-`schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02**
+`schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02** →
+`schema_fase8i_rol_cortadora.sql` ⏳ **ESCRITA, PENDIENTE DE EJECUTAR**
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -334,6 +335,39 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### ⏳ PENDIENTE DE EJECUTAR — producción — `schema_fase8i_rol_cortadora.sql`
+
+Rol `cortadora`, **andamiaje de solo lectura**. El TypeScript ya está desplegado; el SQL lo corre
+Mateo. Hasta entonces el rol no existe y `/cortadora` no tiene a quién servir.
+
+- **`user_roles.rol`**: el check pasa a `('admin', 'logistica', 'cortadora')`. El check viejo se
+  busca en `pg_constraint` en vez de borrarlo por nombre — si el nombre no coincidiera quedarían
+  DOS checks y 'cortadora' seguiría rechazada, en silencio.
+- **Función nueva:** `fn_es_cortadora()`, molde idéntico a `fn_es_logistica()`.
+- **Nueve políticas `cortadora_lee_*`**, permisivas: se SUMAN a las `admin_all_*`, que no se tocan.
+  `prod_prendas` y `prod_maquiladoras` completas; `prod_pedidos_tela` acotada a
+  **`estado = 'entregado'`**, y todo lo que cuelga de un pedido hereda ese filtro por `exists`.
+- **`fn_registrar_corte`**: la guarda pasa a `fn_es_admin() or fn_es_cortadora()`. Es lo único que
+  cambia — el cuerpo se extrae literal de `schema_fase8b_idempotencia.sql` con un script que aborta
+  si el diff quita más de 2 líneas. **Aún no puede registrar cortes**: faltan las políticas de
+  `insert`, que van con la fase de escritura.
+- ⚠️ **RLS ES DE FILA, NO DE COLUMNA.** De las filas que puede leer ve TODAS las columnas, incluidos
+  `prod_pedidos_tela.valor_metro` / `total_pagar` y los precios de `prod_prendas`. La pantalla no los
+  muestra, pero la API sí. Arreglarlo exige **vistas `security_invoker`**, no políticas.
+- ⚠️ **El check de la base y `ZONA_DEL_ROL` de `src/middleware.ts` se mueven JUNTOS.** Añadir un rol
+  en SQL y olvidarlo en el mapa lo deja entrando a TODA la app sin restricción, sin ningún error.
+- **El middleware deja de ser binario.** Antes era `esLogistica ? ... : ...`, así que todo lo que no
+  fuera logística se trataba como admin. Ahora es un mapa explícito; `admin` no está en él y por eso
+  entra a todo y sigue aterrizando en `/`. Un usuario SIN fila en `user_roles` se comporta como antes.
+- **Pantalla nueva:** `/cortadora` + `components/cortadora/CortadoraApp.tsx`, patrón de dos archivos
+  como logística (cliente propio, `reload()` propio, **sin `useProduccion`** — carga trece consultas
+  que ella no puede leer y volverían vacías, pareciendo un fallo). Mobile primero. **Solo lectura.**
+- **Lo que NO hace y por qué:** registrar capas, retazos, horas e insumos, y ver el destino, necesitan
+  tablas y columnas que **no existen** (`prod_cortes` no tiene capas ni horas, no hay tabla de
+  insumos, y el destino nunca se guarda — hoy es un parámetro de `fn_procesar_lote_maquila`).
+  Son las piezas 4, 7 y 8 de `docs/plan_cortadora.md`.
+- **Impacto en otras áreas: ninguno.** Las políticas son aditivas y nada existente cambia.
 
 ### 2026-10-02 — producción — `schema_fase8h_consumo_m2.sql` ✅ EJECUTADA
 
