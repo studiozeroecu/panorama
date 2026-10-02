@@ -49,7 +49,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8c_colores_repetidos.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8d_venta_atomica.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10** →
-`schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01**
+`schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01** →
+`schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02**
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -333,6 +334,36 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-10-02 — producción — `schema_fase8h_consumo_m2.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8h.sql`: 7/7 comprobaciones OK.
+
+- **Columna nueva:** `prod_prendas.consumo_m2 numeric(8,3)` **nullable y sin default**, más el check
+  `prod_prendas_consumo_m2_positivo` (`consumo_m2 is null or consumo_m2 > 0`). Puramente aditiva.
+- ⚠️ **`consumo_m2` y `consumo_metros` son fuentes INDEPENDIENTES, no se deriva una de otra.**
+  `consumo_metros` son metros **lineales** y solo valen para el ancho con el que se midieron;
+  `consumo_m2` son metros **cuadrados**, medidos aparte con la experiencia real de corte. Derivarlo
+  no aportaría nada porque el ancho se cancela:
+  `(usables × ancho/100) ÷ (consumo_metros × ancho/100) = usables ÷ consumo_metros`.
+- **Por qué el check:** hace que `null` sea la ÚNICA forma de decir "sin medir". Es un **divisor**, y
+  un 0 guardado se leería como dato real — el mismo patrón del `?? 0` del costo de maquila (fase 8e).
+- **`numeric(8,3)` y no `(8,2)` como `consumo_metros`**: al ser divisor, redondear a dos decimales
+  arrastra el error a todas las unidades estimadas.
+- **Sin RLS nueva, y está verificado:** `admin_all_prod_prendas` es `for all … using (fn_es_admin())`
+  — de FILA, sin lista de columnas — y el proyecto no declara ni un `grant`, así que valen los de
+  Supabase, que son de tabla. Las dos capas cubren solas una columna nueva. (La regla
+  "tabla nueva ⇒ RLS + política" es para TABLAS; aquí no se crea ninguna.)
+- **PedidosTab** pasa a estimar por área cuando puede: cuenta capas completas sobre la mesa más larga
+  de las dos de localStorage, descuenta los `(n−1)` dobleces de 15 cm, y divide el área tendida entre
+  `consumo_m2`. **Cae a la fórmula lineal** si falta `consumo_m2`, si no hay mesa configurada, si el
+  ancho es menor de 10 cm (parecería estar en metros) o si la tela no da ni para una capa completa.
+- ⚠️ **Las prendas arrancan todas sin `consumo_m2`**, así que hasta medir alguna la estimación sigue
+  siendo la lineal de siempre. El recuadro lo dice en pantalla para que no parezca que no funciona.
+- ⚠️ **PostgREST devuelve los `numeric` como texto y `prendas` se castea sin convertir**
+  (`as Prenda[]` sobre un `select("*")`). `estimar()` hace `Number()` explícito; el código viejo
+  funcionaba por coerción de JavaScript, no porque el tipo fuera cierto.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-02 — producción — Área estimada de corte (pieza 2 del plan de cortadora)
 

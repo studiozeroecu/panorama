@@ -228,6 +228,18 @@ el cuello de botella de la mitad de las demás.
 
 ---
 
+## Añadido fuera del plan · `consumo_m2` (fase 8h, 2026-10-02)
+
+No es ninguna de las ocho piezas, pero nació de ellas: la estimación de unidades de `PedidosTab`
+ahora usa `calcularTendido()` de la pieza 2 para contar capas completas y descontar los dobleces, y
+divide el área tendida entre `prod_prendas.consumo_m2` — una columna nueva, nullable, con un dato
+medido aparte del `consumo_metros`.
+
+Cae a la fórmula lineal de siempre cuando falta el m², cuando no hay mesa configurada, cuando el
+ancho parece estar en metros, o cuando la tela no da ni para una capa completa.
+
+La mesa "grande" es la **mayor de las dos** de localStorage, sin preguntar cuál es.
+
 ## Lo que NO se ha hecho
 
 - No se ha tocado el schema ni se ha creado ninguna migración para las piezas 2–8.

@@ -1,7 +1,13 @@
 export interface Prenda {
   id: string;
   nombre: string;
+  /** Metros LINEALES por unidad. Solo vale para el ancho con el que se midió. */
   consumo_metros: number;
+  /**
+   * Fase 8h: metros CUADRADOS por unidad. Dato medido aparte, independiente de
+   * `consumo_metros` — no se deriva uno del otro. null = sin medir todavía.
+   */
+  consumo_m2: number | null;
   costo_maquila: number;
   precio_venta_local: number;
   precio_venta_online: number;

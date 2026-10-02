@@ -110,7 +110,7 @@ const CLAVE_MESAS = "panorama.mesas_corte";
  * entra en una multiplicación: un 1.05 daría 0.05 m² y esa cifra absurda podría
  * pasar por buena.
  */
-const ANCHO_MINIMO_CM = 10;
+export const ANCHO_MINIMO_CM = 10;
 
 export interface AreaEstimada {
   /** m² de tela que caben en una tendida de la mesa. */

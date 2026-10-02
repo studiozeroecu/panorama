@@ -23,7 +23,7 @@ function prenda(tallas: string[]): Prenda {
   return {
     id: "pr1", nombre: "ZZ prenda", consumo_metros: 1, costo_maquila: 1,
     precio_venta_local: 1, precio_venta_online: 1, lleva_estampado: false,
-    tallas, notas: "", archivada_en: null,
+    tallas, notas: "", archivada_en: null, consumo_m2: null,
   };
 }
 

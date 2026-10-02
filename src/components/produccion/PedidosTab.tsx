@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/types";
-import { estimarUnidades } from "@/lib/produccion/estimacion";
+import { estimar } from "@/lib/produccion/estimacion";
+import { leerMesas } from "@/lib/produccion/corrida";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 const ESTADO_LABEL: Record<EstadoPedido, { txt: string; color: "ambar" | "azul" | "verde" }> = {
@@ -93,7 +94,22 @@ export default function PedidosTab() {
   const valorMetro = parseFloat(form.valor_metro) || 0;
   const totalPagar = metrosEfectivos * valorMetro;
   const prendaSel = data.prendas.find((p) => p.id === form.prenda_id);
-  const unidadesEstimadas = estimarUnidades(prendaSel, metrosEfectivos);
+
+  /**
+   * Fase 8h: la mesa más larga de las dos configuradas. No se pregunta cuál es
+   * la grande — se toma la mayor y ya. Si las dos están vacías vale 0 y la
+   * estimación cae sola a la fórmula lineal.
+   *
+   * En estado y no en useMemo porque leerMesas() toca localStorage, que no
+   * existe durante el render del servidor.
+   */
+  const [largoMesaGrande, setLargoMesaGrande] = useState(0);
+  useEffect(() => {
+    setLargoMesaGrande(Math.max(0, ...leerMesas().map((m) => parseFloat(m.largo) || 0)));
+  }, []);
+
+  const estimacion = estimar(prendaSel, metrosEfectivos, parseFloat(form.ancho_pedido) || 0, largoMesaGrande);
+  const unidadesEstimadas = estimacion.unidades;
 
   /** Sin pedido abre en alta; con pedido, en edición con los datos precargados. */
   function abrir(p?: PedidoTela) {
@@ -436,8 +452,37 @@ export default function PedidosTab() {
         </Fila>
         {prendaSel && (
           <div style={{ background: "var(--accent-soft)", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, marginBottom: 12, color: "var(--accent)" }}>
-            Consumo por unidad: {prendaSel.consumo_metros} m
-            {unidadesEstimadas != null && <> · con {metrosEfectivos.toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b></>}
+            {estimacion.metodo === "area" && estimacion.tendido ? (
+              <>
+                <div>
+                  Consumo por unidad: <b>{prendaSel.consumo_m2} m²</b> · mesa de{" "}
+                  {largoMesaGrande} m → <b>{estimacion.tendido.capas} capas</b> (
+                  {estimacion.tendido.metrosUsables.toFixed(1)} m tendidos,{" "}
+                  {estimacion.tendido.desperdicioDobleces.toFixed(2)} m en dobleces)
+                </div>
+                <div style={{ marginTop: 3 }}>
+                  ≈ <b>{estimacion.areaUsableM2?.toFixed(1)} m²</b> aprovechables → saldrían ≈{" "}
+                  <b>{unidadesEstimadas} unidades</b>
+                  {estimacion.tendido.sobra > 0.05 && (
+                    <span style={{ color: "var(--muted)" }}>
+                      {" · sobran "}
+                      {estimacion.tendido.sobra.toFixed(1)} m a retazos
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                Consumo por unidad: {prendaSel.consumo_metros} m
+                {unidadesEstimadas != null && <> · con {metrosEfectivos.toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b></>}
+                {prendaSel.consumo_m2 == null && (
+                  <div style={{ marginTop: 3, color: "var(--muted)", fontSize: 11.5 }}>
+                    Estimación lineal. Anota el consumo en m² de esta prenda para contar capas
+                    y dobleces.
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 

@@ -8,6 +8,7 @@ import { money, TALLA_ORDER, type Prenda } from "@/lib/produccion/types";
 const FORM_VACIO = {
   nombre: "",
   consumo_metros: "",
+  consumo_m2: "",
   costo_maquila: "",
   precio_venta_local: "",
   precio_venta_online: "",
@@ -33,6 +34,7 @@ export default function PrendasTab() {
       setForm({
         nombre: p.nombre,
         consumo_metros: String(p.consumo_metros),
+        consumo_m2: p.consumo_m2 == null ? "" : String(p.consumo_m2),
         costo_maquila: String(p.costo_maquila),
         precio_venta_local: String(p.precio_venta_local),
         precio_venta_online: String(p.precio_venta_online),
@@ -57,10 +59,16 @@ export default function PrendasTab() {
     if (!(costo > 0)) return setErr("El costo de maquila debe ser mayor a 0.");
     if (!(pl > 0) || !(po > 0)) return setErr("Los precios deben ser mayores a 0.");
     if (!form.tallas.length) return setErr("Selecciona al menos una talla.");
+    // Opcional, pero si se escribe algo tiene que ser > 0: el check de la base
+    // solo admite null o positivo, para que un 0 no se confunda con "sin medir".
+    const m2 = form.consumo_m2.trim() === "" ? null : parseFloat(form.consumo_m2);
+    if (m2 !== null && !(m2 > 0))
+      return setErr("El consumo en m² debe ser mayor a 0, o déjalo vacío si no lo has medido.");
 
     const fila = {
       nombre: form.nombre.trim(),
       consumo_metros: consumo,
+      consumo_m2: m2,
       costo_maquila: costo,
       precio_venta_local: pl,
       precio_venta_online: po,
@@ -179,6 +187,15 @@ export default function PrendasTab() {
           <Campo label="Consumo de tela (m/unidad)" requerido>
             <input className="pinput" type="number" step="0.01" min="0" value={form.consumo_metros}
               onChange={(e) => setForm({ ...form, consumo_metros: e.target.value })} />
+          </Campo>
+          <Campo label="Consumo en área (m²/unidad)">
+            <input className="pinput" type="number" step="0.001" min="0" placeholder="Opcional"
+              value={form.consumo_m2}
+              onChange={(e) => setForm({ ...form, consumo_m2: e.target.value })} />
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+              Se mide aparte, no se calcula del consumo en metros. Mejora la estimación de
+              unidades al crear un pedido de tela.
+            </span>
           </Campo>
           <Campo label="Costo maquila ($/unidad)" requerido>
             <input className="pinput" type="number" step="0.01" min="0" value={form.costo_maquila}
