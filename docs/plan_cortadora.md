@@ -1,6 +1,6 @@
 # Cortadora — visión completa
 
-> **Estado a 2026-10-02:** la **pieza 1 está construida**. Las piezas 2–8 son **solo
+> **Estado a 2026-10-02:** las **piezas 1 y 2 están construidas**. Las piezas 3–8 son **solo
 > documentación**: nadie ha escrito código ni tocado schema para ellas.
 >
 > Este documento existe para que una sesión futura no tenga que reconstruir el razonamiento. Lo
@@ -62,19 +62,37 @@ limpieza de datos pendiente**, no un arreglo de código.
 
 ---
 
-## Pieza 2 · Calculadora de área estimada ⏳ SOLO DOCUMENTADA
+## Pieza 2 · Calculadora de área estimada ✅ CONSTRUIDA
 
-Dos mesas de corte con **largo editable**, y para cada una `área = largo × ancho real`. Sirve para
-estimar cuánto cabe antes de tender.
+Dos mesas con **largo editable en metros**, y por cada tela se elige una mesa (o ninguna: es
+opcional). Muestra `área por tendida = largo × ancho real` en m², y además **cuántas tendidas daría
+la tela entera** — que es lo que de verdad responde «¿una capa o varias?».
 
-**Lleva un aviso de que no es exacto, y el aviso importa**: el área bruta de la mesa no descuenta
-el desperdicio entre moldes, que es justo lo que decide cuánto rinde de verdad una tela.
+Siempre con el aviso de que es aproximado, y el aviso importa: el área bruta de la mesa no descuenta
+el desperdicio entre moldes, que es lo que decide cuánto rinde una tela de verdad.
 
-**Qué tocaría:** solo la pantalla, dentro del mismo modal de la pieza 1. Es opcional: si no se
-rellena, no sale en el documento. **No necesita schema** mientras los largos no se guarden.
+### Dónde viven los largos, y por qué
 
-**Decisión abierta:** si los largos de mesa son siempre los mismos dos valores, quizá convenga
-guardarlos como configuración en vez de teclearlos cada vez — y eso **sí** sería schema.
+**En `localStorage`, no en la base.** La decisión se investigó antes de construir:
+
+- **No existe ninguna tabla de configuración** en el proyecto. De las 32 tablas, ninguna es
+  key-value ni ajustes. Lo más parecido es `prod_costos_fijos`, pero eso es una entidad de negocio.
+- Crear una tabla —migración, política RLS, smoke test y una pantalla para editarla— por **dos
+  números que se miden una vez y no cambian nunca** no se sostiene. Y CLAUDE.md avisa de que una
+  tabla sin RLS se manifiesta como *"no hay datos"*, no como error.
+- ⚠️ **El proyecto nunca había usado `localStorage`.** Se estrena aquí a propósito y solo para esto:
+  una preferencia local de una sola persona. Si aparece en otro sitio, que sea con la misma vara.
+
+**Lo que esto acepta:** los largos viven en **ese navegador**. Otro equipo no los ve, y la cortadora
+tampoco cuando tenga su usuario (pieza 3). Mudarlos a una tabla el día que haga falta es barato —
+`leerMesas()` / `guardarMesas()` son los dos únicos puntos a cambiar.
+
+### ⚠️ El ancho sospechoso
+
+Aquí el ancho **entra en una multiplicación**, a diferencia de la pieza 1 que solo lo muestra. Con
+los datos migrados mezclando cm y metros, un `1.05` daría `0.05 m²` — una cifra absurda que podría
+pasar por buena en una decisión de corte. Por debajo de **10 cm** no se calcula nada: se avisa en
+pantalla de que el ancho parece estar en metros, y **la línea de mesa no sale impresa** en la hoja.
 
 ---
 
@@ -196,7 +214,7 @@ es vinculante, Envío se simplifica mucho. Si no, hay dos fuentes de verdad para
 
 ```
 Pieza 1 ✅ (nada)
-Pieza 2  → solo pantalla; schema solo si se guardan los largos
+Pieza 2 ✅ (localStorage, sin schema)
 Pieza 3  → user_roles + middleware + RLS de todas las prod_*   ← la cara
 Pieza 4  → 3 + tabla de encargo de corte
 Pieza 5  → 4 + tarifa congelada (NO viva)

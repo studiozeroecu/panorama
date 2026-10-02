@@ -1,13 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal, Vacio } from "@/components/ui";
 import { useProd } from "./useProduccion";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
-import type { AnchoDocumento } from "@/lib/produccion/corrida";
+import type { AnchoDocumento, AreaEstimada, MesaCorte } from "@/lib/produccion/corrida";
 import {
+  MESAS_INICIALES,
   anchoDocumento,
+  calcularArea,
+  guardarMesas,
+  leerMesas,
   tallasConUnidades,
   tallasDeCorrida,
   totalCorrida,
@@ -33,6 +37,8 @@ export interface BloqueCorrida {
   ancho: AnchoDocumento;
   filas: { talla: string; unidades: number }[];
   porCapa: number;
+  /** Pieza 2: solo si se eligió una mesa para esta tela. Es opcional. */
+  mesa?: { nombre: string; largo: number; area: AreaEstimada };
 }
 
 export default function CorridaCorteModal({
@@ -48,6 +54,21 @@ export default function CorridaCorteModal({
   const [corridas, setCorridas] = useState<Record<string, Record<string, string>>>({});
   const [fecha, setFecha] = useState(hoyEcuador());
   const [nota, setNota] = useState("");
+  // Pieza 2. Arrancan vacías y se rellenan al montar: leerMesas() toca
+  // localStorage, que no existe en el render del servidor.
+  const [mesas, setMesas] = useState<MesaCorte[]>(MESAS_INICIALES);
+  // mesaDe[pedidoId] = índice de mesa, o "" si no se eligió ninguna.
+  const [mesaDe, setMesaDe] = useState<Record<string, string>>({});
+
+  useEffect(() => setMesas(leerMesas()), []);
+
+  function ponerLargo(i: number, largo: string) {
+    setMesas((prev) => {
+      const siguiente = prev.map((m, j) => (j === i ? { ...m, largo } : m));
+      guardarMesas(siguiente);
+      return siguiente;
+    });
+  }
 
   const entregados = useMemo(
     () => data.pedidos.filter((p) => p.estado === "entregado"),
@@ -65,18 +86,29 @@ export default function CorridaCorteModal({
           const prenda = prendaDe(pedido);
           const tallas = tallasDeCorrida(prenda);
           const corrida = corridas[pedido.id] ?? {};
+          const ancho = anchoDocumento(pedido);
+          const iMesa = mesaDe[pedido.id];
+          const mesa = iMesa !== undefined && iMesa !== "" ? mesas[Number(iMesa)] : undefined;
+          const largo = parseFloat(mesa?.largo ?? "");
           return {
             pedido,
             prenda,
             tallas,
-            ancho: anchoDocumento(pedido),
+            ancho,
             filas: tallasConUnidades(tallas, corrida),
             porCapa: totalCorrida(corrida),
+            mesa: mesa && largo > 0
+              ? {
+                  nombre: mesa.nombre,
+                  largo,
+                  area: calcularArea(largo, ancho.cm, Number(pedido.total_metros)),
+                }
+              : undefined,
           };
         }),
     // prendaDe depende de data.prendas, que ya está en las dependencias.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel, entregados, corridas, data.prendas]
+    [sel, entregados, corridas, data.prendas, mesas, mesaDe]
   );
 
   const listo = bloques.length > 0 && bloques.every((b) => b.filas.length > 0);
@@ -116,6 +148,30 @@ export default function CorridaCorteModal({
           />
         ) : (
           <>
+            <div
+              style={{
+                border: "1px solid var(--border)", borderRadius: 9,
+                padding: "9px 12px", marginBottom: 14,
+                display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap",
+              }}
+            >
+              <div style={{ fontSize: 12, color: "var(--muted)", alignSelf: "center" }}>
+                Largo de las mesas de corte
+              </div>
+              {mesas.map((m, i) => (
+                <div key={m.nombre} style={{ width: 118 }}>
+                  <div className="label" style={{ fontSize: 10 }}>{m.nombre} (m)</div>
+                  <input
+                    className="pinput" type="number" min={0} step={0.1} placeholder="Ej: 4.5"
+                    value={m.largo} onChange={(e) => ponerLargo(i, e.target.value)}
+                  />
+                </div>
+              ))}
+              <div style={{ fontSize: 11.5, color: "var(--muted)", flex: 1, minWidth: 190 }}>
+                Se recuerdan en este navegador. Mídelas una vez.
+              </div>
+            </div>
+
             <div className="label" style={{ fontSize: 10.5, marginBottom: 6 }}>
               Telas para este documento
             </div>
@@ -174,6 +230,51 @@ export default function CorridaCorteModal({
                     = <b>{b.porCapa}</b> por capa
                   </div>
                 </div>
+
+                {/* Pieza 2 · área estimada. Opcional: sin mesa elegida no pasa nada. */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+                  <select
+                    className="pinput"
+                    style={{ width: 150 }}
+                    value={mesaDe[b.pedido.id] ?? ""}
+                    onChange={(e) =>
+                      setMesaDe((prev) => ({ ...prev, [b.pedido.id]: e.target.value }))
+                    }
+                  >
+                    <option value="">— Sin calcular área —</option>
+                    {mesas.map((m, i) => (
+                      <option key={m.nombre} value={String(i)} disabled={!(parseFloat(m.largo) > 0)}>
+                        {m.nombre}
+                        {parseFloat(m.largo) > 0 ? ` · ${m.largo} m` : " · sin largo"}
+                      </option>
+                    ))}
+                  </select>
+
+                  {b.mesa && (
+                    <div style={{ fontSize: 12.5 }}>
+                      {b.mesa.area.anchoSospechoso ? (
+                        <span style={{ color: "var(--warn)" }}>
+                          El ancho de esta tela ({b.ancho.cm}) parece estar en metros y no en
+                          centímetros — revísalo antes de fiarte del área.
+                        </span>
+                      ) : b.mesa.area.m2 == null ? (
+                        <span className="sub">Falta el ancho de la tela para calcular el área.</span>
+                      ) : (
+                        <span style={{ color: "var(--accent)" }}>
+                          ≈ <b>{b.mesa.area.m2.toFixed(2)} m²</b> por tendida
+                          {b.mesa.area.tendidas != null && (
+                            <> · la tela daría ≈ <b>{b.mesa.area.tendidas.toFixed(1)}</b> tendidas</>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {b.mesa?.area.m2 != null && (
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
+                    Aproximado: el patronaje real ajusta las piezas y puede rendir distinto.
+                  </div>
+                )}
               </div>
             ))}
 
@@ -248,6 +349,17 @@ export function HojaCorrida({
                 </>
               )}
             </p>
+            {b.mesa && b.mesa.area.m2 != null && (
+              <p className="dato">
+                Mesa: <b>{b.mesa.nombre} ({b.mesa.largo} m)</b>
+                {" · área por tendida "}
+                <b>≈ {b.mesa.area.m2.toFixed(2)} m²</b>
+                {b.mesa.area.tendidas != null && (
+                  <> · ≈ <b>{b.mesa.area.tendidas.toFixed(1)}</b> tendidas de tela</>
+                )}
+                <span className="aviso"> — aproximado, el patronaje puede rendir distinto</span>
+              </p>
+            )}
             <p className="dato">
               Colores:{" "}
               <b>

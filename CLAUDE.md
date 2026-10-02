@@ -334,6 +334,23 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
+### 2026-10-02 — producción — Área estimada de corte (pieza 2 del plan de cortadora)
+
+*(No es un cambio de schema: solo TypeScript.)*
+
+- En el modal de corrida, dos mesas con largo editable y, por tela, el área por tendida
+  (`largo × ancho real`) más cuántas tendidas daría la tela entera. Opcional y siempre con aviso de
+  que es aproximado.
+- ⚠️ **Primer uso de `localStorage` en el proyecto.** No existe ninguna tabla de configuración —de
+  las 32 tablas ninguna es key-value— y crear una (migración + RLS + smoke test + pantalla) por dos
+  números que se miden una vez no se sostiene. Los largos viven en **ese navegador**: otro equipo no
+  los ve, ni la cortadora cuando tenga usuario (pieza 3). Mudarlos a una tabla solo exige cambiar
+  `leerMesas()` / `guardarMesas()` en `src/lib/produccion/corrida.ts`.
+- ⚠️ **Guarda contra el ancho en unidades mezcladas:** por debajo de 10 cm no se calcula nada. Aquí
+  el ancho entra en una multiplicación (en la pieza 1 solo se muestra), y un `1.05` migrado daría
+  `0.05 m²` — una cifra absurda que podría pasar por buena en una decisión de corte.
+- **Impacto en otras áreas: ninguno.**
+
 ### 2026-10-02 — producción — Corrida de corte (pieza 1 del plan de cortadora)
 
 *(No es un cambio de schema: solo TypeScript y CSS.)*

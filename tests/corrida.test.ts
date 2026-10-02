@@ -4,6 +4,9 @@ import {
   tallasDeCorrida,
   totalCorrida,
   tallasConUnidades,
+  calcularArea,
+  calcularTendido,
+  DESPERDICIO_DOBLEZ_M,
 } from "@/lib/produccion/corrida";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
 
@@ -98,5 +101,99 @@ describe("tallasConUnidades", () => {
 
   it("sin ninguna talla con unidades devuelve una lista vacía", () => {
     expect(tallasConUnidades(["XS", "S"], { XS: "0", S: "" })).toEqual([]);
+  });
+});
+
+describe("calcularArea", () => {
+  it("área = largo de mesa × ancho real, en m²", () => {
+    // mesa de 4 m con tela de 150 cm → 4 × 1.50
+    expect(calcularArea(4, 150, 0).m2).toBeCloseTo(6, 10);
+  });
+
+  it("dice cuántas tendidas de esa mesa daría la tela entera", () => {
+    // 87.4 m de tela sobre una mesa de 4 m
+    expect(calcularArea(4, 150, 87.4).tendidas).toBeCloseTo(21.85, 10);
+  });
+
+  it("sin largo de mesa no calcula nada", () => {
+    expect(calcularArea(0, 150, 50)).toEqual({ m2: null, tendidas: null, anchoSospechoso: false });
+    expect(calcularArea(NaN, 150, 50).m2).toBeNull();
+  });
+
+  it("sin ancho tampoco", () => {
+    expect(calcularArea(4, null, 50)).toEqual({ m2: null, tendidas: null, anchoSospechoso: false });
+  });
+
+  /**
+   * El caso que de verdad importa: los datos migrados mezclan cm con metros.
+   * Un ancho de 1.05 daría 0.042 m², una cifra absurda que podría pasar por buena
+   * en una decisión de corte. Se marca y NO se calcula.
+   */
+  it("un ancho que parece estar en metros se marca y no se calcula", () => {
+    expect(calcularArea(4, 1.05, 50)).toEqual({ m2: null, tendidas: null, anchoSospechoso: true });
+    expect(calcularArea(4, 1.45, 50).anchoSospechoso).toBe(true);
+  });
+
+  it("10 cm es el límite: a partir de ahí se calcula", () => {
+    expect(calcularArea(4, 9.9, 50).anchoSospechoso).toBe(true);
+    expect(calcularArea(4, 10, 50).anchoSospechoso).toBe(false);
+  });
+
+  it("sin metros de tela da el área pero no las tendidas", () => {
+    const r = calcularArea(4, 150, 0);
+    expect(r.m2).toBeCloseTo(6, 10);
+    expect(r.tendidas).toBeNull();
+  });
+});
+
+describe("calcularTendido", () => {
+  /**
+   * EL caso que justifica todo: sin contar los dobleces saldrían 10 capas
+   * (90 / 9 = 10 exacto) y la décima se quedaría a medias sobre la mesa.
+   */
+  it("90 m sobre una mesa de 9 m dan 9 capas, no 10", () => {
+    const t = calcularTendido(90, 9);
+    expect(t.capas).toBe(9);
+    expect(Math.floor(90 / 9)).toBe(10); // lo que daría sin desperdicio
+  });
+
+  it("el desperdicio son (n-1) dobleces, no n", () => {
+    const t = calcularTendido(90, 9);
+    expect(t.desperdicioDobleces).toBeCloseTo(8 * DESPERDICIO_DOBLEZ_M, 10);
+  });
+
+  it("los metros usables NO incluyen el desperdicio de los dobleces", () => {
+    const t = calcularTendido(90, 9);
+    expect(t.metrosUsables).toBe(81);
+  });
+
+  it("la sobra es lo que no entró en ninguna capa ni en un doblez", () => {
+    const t = calcularTendido(90, 9);
+    expect(t.metrosUsables + t.desperdicioDobleces + t.sobra).toBeCloseTo(90, 10);
+    expect(t.sobra).toBeCloseTo(90 - 81 - 1.2, 10);
+  });
+
+  it("una sola capa no tiene ningún doblez", () => {
+    const t = calcularTendido(10, 9);
+    expect(t.capas).toBe(1);
+    expect(t.desperdicioDobleces).toBe(0);
+    expect(t.metrosUsables).toBe(9);
+  });
+
+  it("si no alcanza ni una capa completa son 0 capas y todo es sobra", () => {
+    const t = calcularTendido(5, 9);
+    expect(t).toEqual({ capas: 0, metrosUsables: 0, desperdicioDobleces: 0, sobra: 5 });
+  });
+
+  it("el caso exacto no se cae a la capa anterior por redondeo", () => {
+    // 2 capas de 9 m + 1 doblez = 18.15 m justos
+    expect(calcularTendido(18.15, 9).capas).toBe(2);
+    // un milímetro menos y ya no caben
+    expect(calcularTendido(18.14, 9).capas).toBe(1);
+  });
+
+  it("sin tela o sin mesa no hay tendido", () => {
+    expect(calcularTendido(0, 9).capas).toBe(0);
+    expect(calcularTendido(90, 0)).toEqual({ capas: 0, metrosUsables: 0, desperdicioDobleces: 0, sobra: 90 });
   });
 });
