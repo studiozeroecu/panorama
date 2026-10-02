@@ -64,6 +64,7 @@ interface FilaPedido {
   total_pagar: number | string;
   estado: EstadoPedido;
   fecha_entrega_real: string | null;
+  corrida_base: Record<string, number> | null;
   colores:
     | { id: string; color: string; metros: number | string; kilos: number | string | null; orden: number }[]
     | null;
@@ -77,6 +78,8 @@ interface FilaCorte {
   total_unidades: number | string;
   metros_consumidos: number | string | null;
   observaciones: string;
+  corrida_base: Record<string, number> | null;
+  capas: number | null;
   colores:
     | {
         id: string;
@@ -184,7 +187,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .select(
           `id, nombre_tela, fecha_pedido, unidad, rendimiento, ancho_pedido, ancho_real,
            proveedor_id, prenda_id, total_metros, valor_metro, total_pagar, estado,
-           fecha_entrega_real,
+           fecha_entrega_real, corrida_base,
            colores:prod_pedido_colores (id, color, metros, kilos, orden)`
         )
         .order("fecha_pedido", { ascending: false }),
@@ -192,7 +195,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .from("prod_cortes")
         .select(
           `id, pedido_id, fecha, maquiladora_id, total_unidades, metros_consumidos,
-           observaciones,
+           observaciones, corrida_base, capas,
            colores:prod_corte_colores (
              id, pedido_color_id, color, unidades, metros_usados, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
@@ -251,6 +254,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       total_pagar: Number(p.total_pagar),
       estado: p.estado,
       fecha_entrega_real: p.fecha_entrega_real,
+      corrida_base: p.corrida_base ?? null,
       colores: [...(p.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({
@@ -270,6 +274,8 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       total_unidades: Number(k.total_unidades),
       metros_consumidos: k.metros_consumidos == null ? null : Number(k.metros_consumidos),
       observaciones: k.observaciones,
+      corrida_base: k.corrida_base ?? null,
+      capas: k.capas ?? null,
       colores: [...(k.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({

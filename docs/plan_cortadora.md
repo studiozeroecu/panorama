@@ -126,7 +126,7 @@ datos"*. Un rol nuevo con políticas incompletas se ve como una pantalla vacía,
 
 ---
 
-## Pieza 4 · La pantalla de la cortadora ⏳ SOLO DOCUMENTADA
+## Pieza 4 · La pantalla de la cortadora ✅ CONSTRUIDA (fase 8j)
 
 Cortes pendientes y listos, cada uno con su corrida, y donde ella registra:
 
@@ -183,7 +183,7 @@ de catálogos. Un aviso de "costo 0" debería ser parte de esta pieza.
 
 ---
 
-## Pieza 7 · Ella crea maquilas, pide insumos, confirma llegada ⏳ SOLO DOCUMENTADA
+## Pieza 7 · Insumos ✅ CONSTRUIDA (fase 8j) · maquilas y llegada ⏳ PENDIENTES
 
 **Crear maquilas.** Hoy la maquila **no se crea a mano**: `fn_registrar_corte` la crea sola, una por
 corte, dentro de la misma transacción. Que la cortadora cree maquilas por separado rompe esa

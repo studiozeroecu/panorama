@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge, Vacio, Tallas } from "@/components/ui";
 import { fmtFecha } from "@/lib/fechas";
 import { ordenarTallas } from "@/lib/produccion/types";
+import RegistrarCorte from "./RegistrarCorte";
+import ExtrasCorte from "./ExtrasCorte";
+import Jornadas from "./Jornadas";
 
 /**
  * Pantalla de la cortadora — fase 8i, modo SOLO LECTURA.
@@ -32,6 +36,7 @@ interface Pedido {
   id: string;
   nombre_tela: string;
   prenda_id: string | null;
+  corrida_base: Record<string, number> | null;
   ancho_real: number | string | null;
   ancho_pedido: number | string | null;
   total_metros: number | string;
@@ -57,12 +62,14 @@ interface Corte {
   fecha: string;
   total_unidades: number;
   metros_consumidos: number | string | null;
+  capas: number | null;
   colores: ColorCorte[] | null;
 }
 
 interface Prenda {
   id: string;
   nombre: string;
+  tallas: string[] | null;
 }
 
 export default function CortadoraApp() {
@@ -72,6 +79,8 @@ export default function CortadoraApp() {
   const [prendas, setPrendas] = useState<Prenda[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [registrando, setRegistrando] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const [pedR, corR, prendaR] = await Promise.all([
@@ -79,21 +88,22 @@ export default function CortadoraApp() {
         .from("prod_pedidos_tela")
         .select(
           `id, nombre_tela, prenda_id, ancho_real, ancho_pedido, total_metros,
-           fecha_entrega_real, colores:prod_pedido_colores (color, metros, orden)`
+           fecha_entrega_real, corrida_base,
+           colores:prod_pedido_colores (color, metros, orden)`
         )
         .eq("estado", "entregado")
         .order("fecha_entrega_real", { ascending: false }),
       supabase
         .from("prod_cortes")
         .select(
-          `id, pedido_id, fecha, total_unidades, metros_consumidos,
+          `id, pedido_id, fecha, total_unidades, metros_consumidos, capas,
            colores:prod_corte_colores (
              color, unidades, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
            )`
         )
         .order("fecha", { ascending: false }),
-      supabase.from("prod_prendas").select("id, nombre"),
+      supabase.from("prod_prendas").select("id, nombre, tallas"),
     ]);
 
     if (pedR.error) {
@@ -131,6 +141,17 @@ export default function CortadoraApp() {
   }, [cortes]);
 
   const prendaDe = (p: Pedido) => prendas.find((x) => x.id === p.prenda_id)?.nombre;
+  const tallasDe = (p: Pedido) => {
+    const pr = prendas.find((x) => x.id === p.prenda_id);
+    return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
+  };
+
+  async function trasRegistrar(mensaje: string) {
+    setRegistrando(null);
+    setAviso(mensaje);
+    setTimeout(() => setAviso(null), 4000);
+    await reload();
+  }
   const saldoDe = (p: Pedido) => Number(p.total_metros) - (consumido.get(p.id) ?? 0);
   const cortesDe = (p: Pedido) => cortes.filter((c) => c.pedido_id === p.id);
 
@@ -157,6 +178,7 @@ export default function CortadoraApp() {
       </header>
 
       {error && <div className="error-banner">{error}</div>}
+      {aviso && <div className="prod-toast">✓ {aviso}</div>}
 
       {!pedidos.length && !error && (
         <Vacio
@@ -176,6 +198,12 @@ export default function CortadoraApp() {
               saldo={saldoDe(p)}
               cortes={cortesDe(p)}
               pendiente
+              supabase={supabase}
+              tallas={tallasDe(p)}
+              registrando={registrando === p.id}
+              onRegistrar={() => setRegistrando(p.id)}
+              onCancelar={() => setRegistrando(null)}
+              onListo={trasRegistrar}
             />
           ))}
         </>
@@ -191,10 +219,17 @@ export default function CortadoraApp() {
               prenda={prendaDe(p)}
               saldo={saldoDe(p)}
               cortes={cortesDe(p)}
+              supabase={supabase}
+              tallas={tallasDe(p)}
+              registrando={registrando === p.id}
+              onRegistrar={() => setRegistrando(p.id)}
+              onCancelar={() => setRegistrando(null)}
+              onListo={trasRegistrar}
             />
           ))}
         </>
       )}
+      <Jornadas supabase={supabase} cortes={cortes} onListo={trasRegistrar} />
     </main>
   );
 }
@@ -205,12 +240,24 @@ function TarjetaTela({
   saldo,
   cortes,
   pendiente,
+  supabase,
+  tallas,
+  registrando,
+  onRegistrar,
+  onCancelar,
+  onListo,
 }: {
   pedido: Pedido;
   prenda: string | undefined;
   saldo: number;
   cortes: Corte[];
   pendiente?: boolean;
+  supabase: SupabaseClient;
+  tallas: string[];
+  registrando: boolean;
+  onRegistrar: () => void;
+  onCancelar: () => void;
+  onListo: (mensaje: string) => void;
 }) {
   // El ancho real es el que manda al tender; si no se confirmó, se enseña el del
   // pedido pero DICIENDO que lo es — mismo criterio que el documento de corrida.
@@ -255,6 +302,15 @@ function TarjetaTela({
         {Number(pedido.total_metros).toFixed(1)} m comprados
       </p>
 
+      {pedido.corrida_base && Object.keys(pedido.corrida_base).length > 0 && (
+        <p style={{ margin: "8px 0 0", fontSize: 14 }}>
+          Corrida por capa:{" "}
+          {Object.entries(pedido.corrida_base)
+            .map(([t, n]) => `${t}:${n}`)
+            .join("  ")}
+        </p>
+      )}
+
       {!!pedido.colores?.length && (
         <div style={{ marginTop: 8 }}>
           {[...pedido.colores]
@@ -265,6 +321,29 @@ function TarjetaTela({
               </Badge>
             ))}
         </div>
+      )}
+
+      {pendiente && !registrando && (
+        <button
+          className="btn primary"
+          style={{ width: "100%", padding: "12px", fontSize: 15, marginTop: 12 }}
+          onClick={onRegistrar}
+        >
+          Registrar corte
+        </button>
+      )}
+
+      {registrando && (
+        <RegistrarCorte
+          supabase={supabase}
+          pedidoId={pedido.id}
+          nombreTela={pedido.nombre_tela}
+          colores={pedido.colores ?? []}
+          corridaBase={pedido.corrida_base}
+          tallas={tallas}
+          onListo={onListo}
+          onCancelar={onCancelar}
+        />
       )}
 
       {cortes.length > 0 && (
@@ -291,6 +370,17 @@ function TarjetaTela({
                     <Tallas tallas={tallasDeColor(col)} />
                   </div>
                 ))}
+              {c.capas != null && (
+                <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+                  {c.capas} capa{c.capas !== 1 ? "s" : ""}
+                </div>
+              )}
+              <ExtrasCorte
+                supabase={supabase}
+                corteId={c.id}
+                tallas={tallas}
+                onListo={onListo}
+              />
             </div>
           ))}
         </div>

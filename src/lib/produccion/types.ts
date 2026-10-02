@@ -69,6 +69,8 @@ export interface PedidoTela {
   total_pagar: number;
   estado: EstadoPedido;
   fecha_entrega_real: string | null;
+  /** Fase 8j · PLAN: unidades por talla de UNA capa. Lo define el admin, lo lee la cortadora. */
+  corrida_base: Record<string, number> | null;
 }
 
 export interface ColorCorte {
@@ -90,6 +92,9 @@ export interface Corte {
   total_unidades: number;
   metros_consumidos: number | null;
   observaciones: string;
+  /** Fase 8j · FOTO de la corrida con la que se cortó. No se vuelve a tocar. */
+  corrida_base: Record<string, number> | null;
+  capas: number | null;
 }
 
 export type EstadoColorMaquila = "pendiente" | "enviado" | "entregado";

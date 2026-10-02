@@ -51,7 +51,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8e_archivar_catalogos.sql` ✅ **aplicada el 2026-09-10** →
 `schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01** →
 `schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02** →
-`schema_fase8i_rol_cortadora.sql` ⏳ **ESCRITA, PENDIENTE DE EJECUTAR**
+`schema_fase8i_rol_cortadora.sql` ✅ **aplicada el 2026-10-02** →
+`schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02**
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -336,10 +337,50 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
-### ⏳ PENDIENTE DE EJECUTAR — producción — `schema_fase8i_rol_cortadora.sql`
+### 2026-10-02 — producción — `schema_fase8j_cortadora_escritura.sql` ✅ EJECUTADA
 
-Rol `cortadora`, **andamiaje de solo lectura**. El TypeScript ya está desplegado; el SQL lo corre
-Mateo. Hasta entonces el rol no existe y `/cortadora` no tiene a quién servir.
+Verificada con `supabase/smoke_test_fase8j.sql`: 11/11. Cierra las piezas 4 y 7 de
+`docs/plan_cortadora.md`. El **destino** (pieza 8) y el **costo por hora** (pieza 5) quedan fuera a
+propósito.
+
+- **Columnas nuevas:** `prod_pedidos_tela.corrida_base jsonb`, `prod_cortes.corrida_base jsonb` y
+  `prod_cortes.capas integer` (+ check `capas is null or capas > 0`). Las tres nullable.
+- ⚠️ **La corrida vive en DOS sitios, y no es duplicación.** Un pedido admite VARIOS cortes, así que
+  si la corrida viviera solo en el pedido, editarla para un segundo corte cambiaría el significado
+  del primero **retroactivamente** y el descuadre de aquel día sería irreconstruible. Por eso:
+  `prod_pedidos_tela.corrida_base` es el **PLAN** (mutable, lo edita el admin) y
+  `prod_cortes.corrida_base` + `capas` son la **FOTO** (se copian al registrar y no se tocan).
+  Mismo patrón que `prod_maquilas.costo_unitario`.
+- **jsonb y no tabla normalizada**, al revés que la fase 7 con los colores: lo que hacía daño allí
+  no está aquí. Los colores tenían IDENTIDAD y otras filas los REFERENCIABAN; la corrida es un mapa
+  plano talla→unidades que se reescribe entero y que nada referencia.
+- **Tablas nuevas:** `prod_corte_retazos`, `prod_jornadas`, `prod_jornada_cortes`,
+  `prod_corte_insumos`. Las cuatro con RLS + `admin_all_*` + select/insert/update de cortadora.
+  **Sin delete**: corregir es editar.
+- ⚠️ **`prod_jornada_cortes` es tabla intermedia y no una FK directa**, y no por el caso frecuente
+  sino por el raro: un corte grande puede ocupar DOS días. Con `jornada.corte_id` ese corte habría
+  que partirlo en jornadas que fingen ser de cortes distintos. Las horas viven en la JORNADA, no en
+  el cruce — repartirlas entre cortes sería inventar un dato que nadie midió.
+- **Retazos SIN unique `(corte_id, talla)`**: cada fila es un EVENTO de registro, no un acumulado.
+  No suman al total del corte — son tela que PODRÍA dar una unidad.
+- ⚠️ **`fn_registrar_corte` cambia de firma otra vez: 9 parámetros** (`p_capas`, `p_corrida_base`,
+  al final y con default). **DROP + CREATE obligatorio**, no `create or replace`: añadir parámetros
+  crearía una SOBRECARGA y una llamada de 7 argumentos iría a la versión vieja, perdiendo capas y
+  corrida EN SILENCIO. Es la trampa de la fase 8b. La comprobación 5 del smoke existe para eso.
+- **El cálculo del descuadre es puro cliente** (`src/lib/produccion/descuadre.ts`): no hay nada que
+  proteger de concurrencia, y lo que se guarda son las cantidades ya ajustadas. La severidad mira el
+  TOTAL y no cada talla — un trasvase entre tallas es otro reparto, no una pérdida — y usa
+  tolerancia relativa (5%) **y** absoluta (2 unidades), porque con cifras pequeñas el porcentaje
+  engaña: 1 de 6 ya es un 17%.
+- **Retazos, insumos y jornadas van en llamadas APARTE**, no dentro de la RPC: son eventos que se
+  añaden y corrigen después, no necesitan atomicidad con el corte, y meterlos complicaría una
+  función ya hardeneada sin ganar nada.
+- **Impacto en otras áreas: ninguno.** Las políticas son aditivas y los parámetros nuevos tienen
+  default, así que `CorteTab` sigue llamando con 7 argumentos sin cambios.
+
+### 2026-10-02 — producción — `schema_fase8i_rol_cortadora.sql` ✅ EJECUTADA
+
+Rol `cortadora`, **andamiaje de solo lectura**. La escritura llegó en la fase 8j.
 
 - **`user_roles.rol`**: el check pasa a `('admin', 'logistica', 'cortadora')`. El check viejo se
   busca en `pg_constraint` en vez de borrarlo por nombre — si el nombre no coincidiera quedarían

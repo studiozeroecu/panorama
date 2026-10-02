@@ -15,7 +15,7 @@ function pedido(ancho_real: number | null, ancho_pedido: number | null): PedidoT
     id: "p1", nombre_tela: "ZZ tela", fecha_pedido: "2026-10-01", unidad: "metros",
     rendimiento: null, ancho_pedido, ancho_real, proveedor_id: null, prenda_id: null,
     colores: [], total_metros: 50, valor_metro: 5, total_pagar: 250,
-    estado: "entregado", fecha_entrega_real: "2026-10-01",
+    estado: "entregado", fecha_entrega_real: "2026-10-01", corrida_base: null,
   };
 }
 

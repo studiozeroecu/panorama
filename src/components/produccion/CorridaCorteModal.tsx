@@ -48,12 +48,13 @@ export default function CorridaCorteModal({
   abierto: boolean;
   onCerrar: () => void;
 }) {
-  const { data } = useProd();
+  const { data, supabase, reload, toast } = useProd();
   const [sel, setSel] = useState<string[]>([]);
   // corridas[pedidoId][talla] = texto del input
   const [corridas, setCorridas] = useState<Record<string, Record<string, string>>>({});
   const [fecha, setFecha] = useState(hoyEcuador());
   const [nota, setNota] = useState("");
+  const [guardando, setGuardando] = useState(false);
   // Pieza 2. Arrancan vacías y se rellenan al montar: leerMesas() toca
   // localStorage, que no existe en el render del servidor.
   const [mesas, setMesas] = useState<MesaCorte[]>(MESAS_INICIALES);
@@ -113,8 +114,54 @@ export default function CorridaCorteModal({
 
   const listo = bloques.length > 0 && bloques.every((b) => b.filas.length > 0);
 
+  /**
+   * Fase 8j: al marcar una tela se precarga su corrida guardada, si la tiene.
+   * Así editar el plan es abrir y corregir, no volver a teclearlo entero.
+   */
   function alternar(id: string) {
-    setSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSel((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      const pedido = entregados.find((p) => p.id === id);
+      const guardada = pedido?.corrida_base;
+      if (guardada && !corridas[id]) {
+        setCorridas((c) => ({
+          ...c,
+          [id]: Object.fromEntries(Object.entries(guardada).map(([t, n]) => [t, String(n)])),
+        }));
+      }
+      return [...prev, id];
+    });
+  }
+
+  /**
+   * Guarda la corrida en `prod_pedidos_tela.corrida_base` — el PLAN que leerá la
+   * cortadora. No se guarda al imprimir: el documento es efímero y el plan no,
+   * así que son dos actos distintos y conviene que se vean distintos.
+   *
+   * Las tallas en cero no se guardan: el mapa dice lo que SÍ se corta.
+   */
+  async function guardarCorridas() {
+    setGuardando(true);
+    try {
+      for (const b of bloques) {
+        const base = Object.fromEntries(b.filas.map((f) => [f.talla, f.unidades]));
+        const { error } = await supabase
+          .from("prod_pedidos_tela")
+          .update({ corrida_base: base })
+          .eq("id", b.pedido.id);
+        if (error) throw new Error(error.message);
+      }
+      toast(
+        bloques.length === 1
+          ? "Corrida guardada para la cortadora"
+          : `${bloques.length} corridas guardadas para la cortadora`
+      );
+      await reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setGuardando(false);
+    }
   }
 
   function ponerCorrida(pedidoId: string, talla: string, valor: string) {
@@ -133,6 +180,9 @@ export default function CorridaCorteModal({
       pie={
         <>
           <button className="btn" onClick={onCerrar}>Cerrar</button>
+          <button className="btn" disabled={!listo || guardando} onClick={guardarCorridas}>
+            {guardando ? "Guardando…" : "Guardar para la cortadora"}
+          </button>
           <button className="btn primary" disabled={!listo} onClick={() => window.print()}>
             Imprimir / Guardar PDF
           </button>
