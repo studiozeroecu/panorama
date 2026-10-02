@@ -229,7 +229,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         failed.error.message.includes("does not exist") ||
         failed.error.message.includes("schema cache") ||
         failed.error.message.includes("relationship")
-          ? "Faltan tablas de producción. Ejecuta supabase/schema_fase3.sql y supabase/schema_fase7_colores.sql en el SQL Editor de Supabase."
+          // El detalle va siempre: "does not exist" también salta por una columna
+          // o una caché de PostgREST desactualizada, y sin él no hay cómo saber cuál.
+          ? `Faltan tablas de producción o la base no está al día. Detalle: ${failed.error.message}`
           : failed.error.message
       );
       setCargando(false);
