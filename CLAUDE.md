@@ -334,6 +334,27 @@ Formato:
 
 <!-- Nuevas entradas debajo de esta línea -->
 
+### 2026-10-02 — producción — Corrida de corte (pieza 1 del plan de cortadora)
+
+*(No es un cambio de schema: solo TypeScript y CSS.)*
+
+- **Qué es:** en `CorteTab`, un botón *"📄 Corrida de corte"* abre un modal donde se eligen varias
+  telas entregadas y se escribe, para cada una, cuántas unidades de cada talla salen de **una capa**.
+  Se imprime o se guarda como PDF con `window.print()` — sin dependencias nuevas.
+- **EFÍMERO**, como la ficha de estampado: no se guarda en Storage ni en la base.
+- **La visión completa está en [`docs/plan_cortadora.md`](docs/plan_cortadora.md)** — ocho piezas, de
+  las cuales solo esta está construida. Las otras siete son documentación; varias (3, 4, 5, 7, 8)
+  **sí tocarían schema**, y la 3 (rol `cortadora`) es el cuello de botella de casi todas.
+- ⚠️ **Dato sucio que esto destapó:** `prod_pedidos_tela.ancho_real` está **nulo en la mayoría de los
+  pedidos migrados** (nunca pasaron por `LlegadaTab`, que es quien lo escribe y sí lo exige `> 0`), y
+  las unidades están **mezcladas**: conviven `150`/`180` (cm, correcto) con `1.05`/`1.45` (metros).
+  El documento muestra el valor tal cual y **no convierte nada**; cuando falta el real cae al ancho
+  del pedido **con un aviso visible**. Es limpieza de datos pendiente, no de código.
+- ⚠️ **Las reglas globales de tabla son del tema oscuro y pisan a la hoja impresa** (`table` trae
+  `background: var(--surface)` y `tr:last-child td` quita el borde inferior). Los selectores de
+  `.corrida-hoja` ganan por especificidad; si alguien los simplifica, la hoja sale negra sobre negro.
+- **Impacto en otras áreas: ninguno.**
+
 ### 2026-10-01 — producción — `schema_fase8g_editar_pedido.sql` ✅ EJECUTADA
 
 Verificada con `supabase/smoke_test_fase8g.sql`: 6/6 comprobaciones OK.

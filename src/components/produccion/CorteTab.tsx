@@ -5,6 +5,7 @@ import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
+import CorridaCorteModal from "./CorridaCorteModal";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
@@ -19,6 +20,7 @@ export default function CorteTab() {
   // matriz[color][talla] = string; metros[color] = string
   const [matriz, setMatriz] = useState<Record<string, Record<string, string>>>({});
   const [metrosUsados, setMetrosUsados] = useState<Record<string, string>>({});
+  const [corrida, setCorrida] = useState(false);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -118,7 +120,12 @@ export default function CorteTab() {
     <section>
       <div className="section-head">
         <h2>Corte <span className="sub" style={{ fontWeight: 400 }}>· unidades por color y talla, con control de tela</span></h2>
+        {/* A nivel de pantalla y no por tarjeta: el documento combina varias telas. */}
+        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
+          📄 Corrida de corte
+        </button>
       </div>
+      <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
 
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />

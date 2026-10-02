@@ -579,3 +579,119 @@ textarea.pinput {
     font-size: 22px;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   Corrida de corte — hoja imprimible.
+   Pieza 1 de docs/plan_cortadora.md. El documento es EFÍMERO: se
+   imprime o se guarda como PDF desde el navegador y no se guarda
+   en ningún sitio.
+
+   La hoja se ve como papel TAMBIÉN en pantalla (fondo blanco sobre
+   la app oscura) a propósito: lo que se ve es exactamente lo que
+   sale impreso, sin sorpresas al darle a imprimir.
+   ────────────────────────────────────────────────────────────── */
+.corrida-hoja {
+  background: #ffffff;
+  color: #111111;
+  padding: 22px 26px;
+  border-radius: 10px;
+}
+.corrida-hoja .hoja-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 2px solid #111111;
+  padding-bottom: 8px;
+}
+.corrida-hoja h1 {
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  margin: 0;
+  font-family: var(--font-grotesk), sans-serif;
+}
+.corrida-hoja .hoja-fecha { font-size: 15px; font-weight: 700; }
+.corrida-bloque {
+  border: 1.5px solid #111111;
+  border-radius: 8px;
+  padding: 13px 15px;
+  margin-top: 14px;
+}
+.corrida-bloque h2 {
+  font-size: 16px;
+  margin: 0 0 6px;
+  font-family: var(--font-grotesk), sans-serif;
+}
+.corrida-bloque .dato { font-size: 12.5px; margin: 2px 0; }
+.corrida-bloque .dato b { font-weight: 700; }
+.corrida-bloque .aviso { color: #9a3412; font-weight: 700; }
+/* Las reglas globales de tabla son del tema oscuro y pisan a la hoja: `table`
+   trae `background: var(--surface)`, `tr:last-child td` quita el borde de abajo
+   y `tbody tr:hover td` repinta al pasar el ratón. Los selectores de aquí llevan
+   un elemento de más (o el `tbody`) para ganar por especificidad sin !important. */
+.corrida-hoja table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  background: #ffffff;
+  border: none;
+  border-radius: 0;
+}
+.corrida-hoja tr th,
+.corrida-hoja tr td {
+  border: 1px solid #111111;
+  padding: 6px 4px;
+  text-align: center;
+  color: #111111;
+}
+.corrida-hoja tr th {
+  background: #ececec;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.corrida-hoja tr td { background: #ffffff; font-size: 19px; font-weight: 700; }
+.corrida-hoja tbody tr:hover td { background: #ffffff; }
+.corrida-hoja .hoja-nota {
+  margin-top: 14px;
+  font-size: 12.5px;
+  border-top: 1px solid #bbbbbb;
+  padding-top: 8px;
+  white-space: pre-wrap;
+}
+
+@page { size: A4; margin: 14mm; }
+
+@media print {
+  /* `visibility` y no `display:none`: con display el layout colapsa y la hoja
+     se descoloca. Así se oculta la tinta pero las cajas siguen en su sitio. */
+  body * { visibility: hidden; }
+  .corrida-hoja, .corrida-hoja * { visibility: visible; }
+
+  /* El modal es `position: fixed` con `max-height` y scroll propio: sin esto
+     la impresión saldría recortada a lo que cabe en pantalla. */
+  .dialog-backdrop {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+  .dialog {
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    padding: 0 !important;
+    background: none !important;
+  }
+  .corrida-hoja {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+    border-radius: 0;
+  }
+  /* Que un bloque de tela no se parta entre dos páginas. */
+  .corrida-bloque { break-inside: avoid; page-break-inside: avoid; }
+  .no-imprimir { display: none !important; }
+}
