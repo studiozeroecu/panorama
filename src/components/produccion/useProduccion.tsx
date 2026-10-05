@@ -82,6 +82,8 @@ interface FilaCorte {
   metros_consumidos: number | string | null;
   observaciones: string;
   corrida_base: Record<string, number> | null;
+  insumos: { id: string; descripcion: string; cantidad: number | string; costo: number | string | null }[] | null;
+  jornadas: { jornada: { horas: number | string; tarifa_hora: number | string } | null }[] | null;
   colores:
     | {
         id: string;
@@ -111,7 +113,10 @@ interface FilaMaquila {
         procesado: boolean;
         corte_color: { color: string; unidades: number; orden: number; tallas: FilaTalla[] | null } | null;
         entregas:
-          | { id: string; fecha: string; tallas: Record<string, number>; unidades: number; procesado: boolean }[]
+          | {
+              id: string; fecha: string; tallas: Record<string, number>; unidades: number; procesado: boolean;
+              tipo: "entrega" | "falla" | "faltante"; motivo: string;
+            }[]
           | null;
       }[]
     | null;
@@ -204,7 +209,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
            colores:prod_corte_colores (
              id, pedido_color_id, color, unidades, metros_usados, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
-           )`
+           ),
+           insumos:prod_corte_insumos (id, descripcion, cantidad, costo),
+           jornadas:prod_jornada_cortes (jornada:prod_jornadas (horas, tarifa_hora))`
         )
         .order("fecha", { ascending: false }),
       supabase
@@ -217,7 +224,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
                color, unidades, orden,
                tallas:prod_corte_color_tallas (talla, unidades)
              ),
-             entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado)
+             entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado, tipo, motivo)
            )`
         )
         .order("created_at", { ascending: false }),
@@ -286,6 +293,15 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       metros_consumidos: k.metros_consumidos == null ? null : Number(k.metros_consumidos),
       observaciones: k.observaciones,
       corrida_base: k.corrida_base ?? null,
+      insumos: (k.insumos ?? []).map((i) => ({
+        id: i.id,
+        descripcion: i.descripcion,
+        cantidad: Number(i.cantidad),
+        costo: i.costo == null ? null : Number(i.costo),
+      })),
+      jornadas: (k.jornadas ?? []).flatMap((j) =>
+        j.jornada ? [{ horas: Number(j.jornada.horas), tarifa_hora: Number(j.jornada.tarifa_hora) }] : []
+      ),
       colores: [...(k.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({

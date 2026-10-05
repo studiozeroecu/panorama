@@ -7,6 +7,8 @@ import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
 import CorridaCorteModal from "./CorridaCorteModal";
+import CostoCorteCard from "./CostoCorteCard";
+import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
@@ -117,6 +119,82 @@ export default function CorteTab() {
     0
   );
 
+  /**
+   * Fase 8p: mismo criterio que la pantalla de la cortadora
+   * (src/lib/produccion/avanceCorte.ts). Una tela está cortada cuando todos sus
+   * colores salieron en algún corte, o cuando hay metros anotados y el saldo
+   * es <= 0.5. Solo con el saldo, una tela cortada sin anotar metros se quedaba
+   * aquí para siempre.
+   */
+  const estaCortada = (p: PedidoTela) =>
+    avanceCorte(p.total_metros, p.colores ?? [], data.cortes.filter((c) => c.pedido_id === p.id)).listo;
+  const porCortar = entregados.filter((p) => !estaCortada(p));
+  const yaCortadas = entregados.filter(estaCortada);
+
+  const tarjeta = (p: PedidoTela) => {
+    const saldo = saldoDe(p);
+    const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
+    const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
+    const prenda = prendaDe(p);
+    // Sobre total_metros y NO sobre el saldo: la tela de un pedido se dedica
+    // entera a su propósito, así que antes de cortar interesa cuánto rinde el
+    // pedido completo. Por eso este número y el badge de saldo no coinciden
+    // en cuanto hay un corte previo.
+    const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
+    return (
+      <div className="prod-card" key={p.id}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h4>{p.nombre_tela}</h4>
+            <div className="prod-meta">
+              {Number(p.total_metros).toFixed(1)} m comprados
+              {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <Badge color={saldo > 0.5 ? "verde" : "gris"}>
+                Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
+              </Badge>
+              {cortesDelPedido.length > 0 && (
+                <Badge color="azul">{cortesDelPedido.length} corte{cortesDelPedido.length !== 1 ? "s" : ""}</Badge>
+              )}
+            </div>
+            {prenda && unidadesEstimadas != null && (
+              <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
+                Consumo por unidad: {prenda.consumo_metros} m · con{" "}
+                {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
+              </div>
+            )}
+          </div>
+          <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => abrirCorte(p)}>
+            {cortesDelPedido.length ? "+ Nuevo corte" : "Registrar corte"}
+          </button>
+        </div>
+
+        {cortesDelPedido.length > 0 && (
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+            {cortesDelPedido.map((c) => (
+              <div key={c.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                <span className="sub">{fmtFecha(c.fecha)}</span>
+                {" · "}
+                <b>{c.total_unidades} und.</b>
+                {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
+                <div style={{ marginTop: 3 }}>
+                  {(c.colores ?? []).map((col) => (
+                    <span key={col.color} style={{ marginRight: 10 }}>
+                      <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
+                      <Tallas tallas={col.tallas} />
+                    </span>
+                  ))}
+                </div>
+                <CostoCorteCard corte={c} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <section>
       <div className="section-head">
@@ -131,68 +209,22 @@ export default function CorteTab() {
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />
       ) : (
-        entregados.map((p) => {
-          const saldo = saldoDe(p);
-          const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
-          const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
-          const prenda = prendaDe(p);
-          // Sobre total_metros y NO sobre el saldo: la tela de un pedido se dedica
-          // entera a su propósito, así que antes de cortar interesa cuánto rinde el
-          // pedido completo. Por eso este número y el badge de saldo no coinciden
-          // en cuanto hay un corte previo.
-          const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
-          return (
-            <div className="prod-card" key={p.id}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <h4>{p.nombre_tela}</h4>
-                  <div className="prod-meta">
-                    {Number(p.total_metros).toFixed(1)} m comprados
-                    {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <Badge color={saldo > 0.5 ? "verde" : "gris"}>
-                      Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
-                    </Badge>
-                    {cortesDelPedido.length > 0 && (
-                      <Badge color="azul">{cortesDelPedido.length} corte{cortesDelPedido.length !== 1 ? "s" : ""}</Badge>
-                    )}
-                  </div>
-                  {prenda && unidadesEstimadas != null && (
-                    <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
-                      Consumo por unidad: {prenda.consumo_metros} m · con{" "}
-                      {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
-                    </div>
-                  )}
-                </div>
-                <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => abrirCorte(p)}>
-                  {cortesDelPedido.length ? "+ Nuevo corte" : "Registrar corte"}
-                </button>
-              </div>
-
-              {cortesDelPedido.length > 0 && (
-                <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-                  {cortesDelPedido.map((c) => (
-                    <div key={c.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                      <span className="sub">{fmtFecha(c.fecha)}</span>
-                      {" · "}
-                      <b>{c.total_unidades} und.</b>
-                      {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
-                      <div style={{ marginTop: 3 }}>
-                        {(c.colores ?? []).map((col) => (
-                          <span key={col.color} style={{ marginRight: 10 }}>
-                            <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
-                            <Tallas tallas={col.tallas} />
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })
+        <>
+          {!porCortar.length && (
+            <Vacio titulo="Todo lo entregado ya está cortado" hint="Las telas cortadas están abajo, en «Ya cortadas»." />
+          )}
+          {porCortar.map(tarjeta)}
+          {yaCortadas.length > 0 && (
+            // Fase 8p: antes las cortadas seguían en la lista para siempre, como si
+            // faltara cortarlas. Se guardan aquí, plegadas, con su costo.
+            <details style={{ marginTop: 18 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                Ya cortadas ({yaCortadas.length})
+              </summary>
+              <div style={{ marginTop: 10 }}>{yaCortadas.map(tarjeta)}</div>
+            </details>
+          )}
+        </>
       )}
 
       <Modal

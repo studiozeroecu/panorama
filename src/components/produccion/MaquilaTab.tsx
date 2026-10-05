@@ -128,7 +128,9 @@ export default function MaquilaTab() {
                     {/* Fase 8o: entregas parciales (las registra la cortadora). */}
                     {c.estado !== "entregado" && c.entregas.length > 0 && (
                       <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
-                        Parcial: {c.entregas.reduce((s, e) => s + e.unidades, 0)} de {c.unidades} entregadas
+                        Parcial: {c.entregas.filter((e) => e.tipo === "entrega").reduce((s, e) => s + e.unidades, 0)} de {c.unidades} entregadas
+                        {c.entregas.some((e) => e.tipo !== "entrega") &&
+                          ` · ${c.entregas.filter((e) => e.tipo !== "entrega").reduce((s, e) => s + e.unidades, 0)} dadas de baja`}
                       </div>
                     )}
                   </td>

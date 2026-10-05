@@ -148,7 +148,7 @@ export default function CortadoraApp() {
            colores:prod_maquila_colores (
              id, estado, fecha_envio, fecha_entrega,
              corte_color:prod_corte_colores (color, orden, tallas:prod_corte_color_tallas (talla, unidades)),
-             entregas:prod_maquila_entregas (id, fecha, tallas, unidades)
+             entregas:prod_maquila_entregas (id, fecha, tallas, unidades, tipo, motivo)
            )`
         )
         .order("created_at", { ascending: false }),
@@ -667,7 +667,10 @@ function aMaquilas(data: unknown): MaquilaC[] {
       id: string; estado: "pendiente" | "enviado" | "entregado";
       fecha_envio: string | null; fecha_entrega: string | null;
       corte_color: { color: string; orden: number; tallas: { talla: string; unidades: number }[] | null } | null;
-      entregas: { id: string; fecha: string; tallas: Record<string, number>; unidades: number }[] | null;
+      entregas: {
+        id: string; fecha: string; tallas: Record<string, number>; unidades: number;
+        tipo: "entrega" | "falla" | "faltante"; motivo: string;
+      }[] | null;
     }[] | null;
   };
   return ((data ?? []) as Fila[]).map((m) => ({

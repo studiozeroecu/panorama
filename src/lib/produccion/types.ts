@@ -100,6 +100,17 @@ export interface Corte {
   observaciones: string;
   /** Fase 8j · FOTO de la corrida con la que se cortó. No se vuelve a tocar. */
   corrida_base: Record<string, number> | null;
+  /** Fase 8p: insumos anotados por la cortadora; `costo` lo pone el admin (null = sin costo). */
+  insumos: InsumoCorte[];
+  /** Fase 8o/8p: horas de la cortadora, con la tarifa CONGELADA de cada jornada. */
+  jornadas: { horas: number; tarifa_hora: number }[];
+}
+
+export interface InsumoCorte {
+  id: string;
+  descripcion: string;
+  cantidad: number;
+  costo: number | null;
 }
 
 export type EstadoColorMaquila = "pendiente" | "enviado" | "entregado";
@@ -126,6 +137,9 @@ export interface EntregaMaquila {
   tallas: Record<string, number>;
   unidades: number;
   procesado: boolean;
+  /** Fase 8p: entrega = llegó bien · falla / faltante = baja justificada, no se paga ni va a Envío. */
+  tipo: "entrega" | "falla" | "faltante";
+  motivo: string;
 }
 
 export interface Maquila {

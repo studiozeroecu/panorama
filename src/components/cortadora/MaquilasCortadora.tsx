@@ -22,6 +22,10 @@ import {
  * propósito — una política de update le dejaría tocar `procesado`, que es de
  * Envío. Una entrega parcial ya aparece en Envío de Mateo para mandarse a locales
  * o estampado sin esperar el resto.
+ *
+ * Fase 8p: "Justificar faltante" — prendas que llegaron con fallas o que la
+ * maquila no entregó, por talla y con motivo obligatorio. Cierran el lote, pero
+ * se dan de baja: no van a Envío y no se le pagan a la maquila.
  */
 
 export interface EntregaC {
@@ -29,6 +33,8 @@ export interface EntregaC {
   fecha: string;
   tallas: Record<string, number>;
   unidades: number;
+  tipo: "entrega" | "falla" | "faltante";
+  motivo: string;
 }
 
 export interface ColorMaquilaC {
@@ -160,7 +166,9 @@ function FilaColor({
   nombreTela: string;
   onListo: (mensaje: string) => void;
 }) {
-  const [modo, setModo] = useState<"enviar" | "entregar" | null>(null);
+  const [modo, setModo] = useState<"enviar" | "entregar" | "justificar" | null>(null);
+  const [tipoBaja, setTipoBaja] = useState<"falla" | "faltante">("falla");
+  const [motivo, setMotivo] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
   const [cantidades, setCantidades] = useState<Record<string, string>>({});
   const [idemId, setIdemId] = useState("");
@@ -170,7 +178,11 @@ function FilaColor({
   const etapa = etapaMaquila(col.estado, col.entregas);
   const cortado = sumaTallas(col.tallas);
   const falta = pendientesPorTalla(col.tallas, col.entregas);
-  const entregado = cortado - sumaTallas(falta);
+  const sumaTipo = (t: EntregaC["tipo"]) =>
+    col.entregas.filter((e) => e.tipo === t).reduce((s, e) => s + e.unidades, 0);
+  const buenas = sumaTipo("entrega");
+  const fallas = sumaTipo("falla");
+  const faltantes = sumaTipo("faltante");
 
   function abrirEntrega() {
     // Precargado con TODO lo que falta: si llegó completo, solo confirma. Si
@@ -183,6 +195,19 @@ function FilaColor({
     setIdemId(nuevoId());
     setErr(null);
     setModo("entregar");
+  }
+
+  function abrirJustificar() {
+    // Al revés que la entrega: arranca en CERO. Una baja se anota a propósito,
+    // talla por talla; precargarla con todo lo que falta invitaría a cerrar el
+    // lote sin mirar.
+    setCantidades({});
+    setFecha(hoyEcuador());
+    setTipoBaja("falla");
+    setMotivo("");
+    setIdemId(nuevoId());
+    setErr(null);
+    setModo("justificar");
   }
 
   async function marcarEnviado() {
@@ -200,6 +225,8 @@ function FilaColor({
   }
 
   async function registrarEntrega() {
+    const baja = modo === "justificar";
+    if (baja && !motivo.trim()) return setErr("Escribe el motivo: es lo que justifica las prendas que faltan.");
     const tallas: Record<string, number> = {};
     for (const [t, v] of Object.entries(cantidades)) {
       const n = v.trim() === "" ? 0 : Number(v);
@@ -207,7 +234,7 @@ function FilaColor({
       if (n > (falta[t] ?? 0)) return setErr(`Talla ${t}: solo faltan ${falta[t] ?? 0}.`);
       if (n > 0) tallas[t] = n;
     }
-    if (!sumaTallas(tallas)) return setErr("Anota al menos una prenda entregada.");
+    if (!sumaTallas(tallas)) return setErr(baja ? "Anota cuántas prendas justificas." : "Anota al menos una prenda entregada.");
     setOcupado(true);
     setErr(null);
     const { data, error } = await supabase.rpc("fn_registrar_entrega_maquila", {
@@ -215,6 +242,8 @@ function FilaColor({
       p_fecha: fecha,
       p_tallas: tallas,
       p_idem_id: idemId,
+      p_tipo: baja ? tipoBaja : "entrega",
+      p_motivo: baja ? motivo.trim() : null,
     });
     setOcupado(false);
     if (error) return setErr(faltaFase(error.message));
@@ -222,10 +251,12 @@ function FilaColor({
     setModo(null);
     onListo(
       r.ya_registrada
-        ? "Esta entrega ya estaba registrada."
-        : r.completo
-          ? `${col.color}: entrega completa (${r.unidades} und.)`
-          : `${col.color}: entrega parcial de ${r.unidades} und. — ya puede salir en Envío`
+        ? "Esto ya estaba registrado."
+        : baja
+          ? `${col.color}: ${r.unidades} ${tipoBaja === "falla" ? "con fallas" : "no entregadas"} justificadas${r.completo ? " — lote cerrado" : ""}`
+          : r.completo
+            ? `${col.color}: entrega completa (${r.unidades} und.)`
+            : `${col.color}: entrega parcial de ${r.unidades} und. — ya puede salir en Envío`
     );
   }
 
@@ -236,7 +267,9 @@ function FilaColor({
         <Badge color={COLOR_ETAPA[etapa]}>{TEXTO_ETAPA[etapa]}</Badge>
       </div>
       <div style={{ fontSize: 13.5, marginTop: 4 }}>
-        {entregado} de {cortado} entregadas
+        {buenas} de {cortado} entregadas bien
+        {fallas > 0 && <span style={{ color: "var(--warn)" }}> · {fallas} con fallas</span>}
+        {faltantes > 0 && <span style={{ color: "var(--warn)" }}> · {faltantes} no entregadas</span>}
         <span style={{ color: "var(--muted)" }}>
           {col.fecha_envio && ` · enviado ${fmtFecha(col.fecha_envio)}`}
           {col.fecha_entrega && ` · completo ${fmtFecha(col.fecha_entrega)}`}
@@ -253,9 +286,11 @@ function FilaColor({
           {[...col.entregas]
             .sort((a, b) => a.fecha.localeCompare(b.fecha))
             .map((e) => (
-              <div key={e.id}>
-                Llegaron {e.unidades} el {fmtFecha(e.fecha)} ·{" "}
+              <div key={e.id} style={e.tipo !== "entrega" ? { color: "var(--warn)" } : undefined}>
+                {e.tipo === "entrega" ? "Llegaron" : e.tipo === "falla" ? "Con fallas" : "No entregadas"}{" "}
+                {e.unidades} el {fmtFecha(e.fecha)} ·{" "}
                 {ordenarTallas(Object.keys(e.tallas)).map((t) => `${t}:${e.tallas[t]}`).join(" ")}
+                {e.motivo && ` — ${e.motivo}`}
               </div>
             ))}
         </div>
@@ -275,6 +310,11 @@ function FilaColor({
           </button>
         </div>
       )}
+      {etapa !== "entregado" && modo === null && etapa !== "por_enviar" && (
+        <button className="btn" style={{ ...BOTON, width: "100%", marginTop: 8 }} onClick={abrirJustificar}>
+          ⚠️ Justificar faltante o fallas
+        </button>
+      )}
 
       {modo === "enviar" && (
         <div style={FORM}>
@@ -285,15 +325,33 @@ function FilaColor({
         </div>
       )}
 
-      {modo === "entregar" && (
+      {(modo === "entregar" || modo === "justificar") && (
         <div style={FORM}>
-          <div className="label" style={{ fontSize: 10.5, marginBottom: 6 }}>
-            ¿Cuántas llegaron de cada talla?
-          </div>
-          <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "var(--muted)" }}>
-            Está lleno con todo lo que falta. Si llegó completo, solo confirma; si
-            llegó una parte, baja los números.
-          </p>
+          {modo === "justificar" ? (
+            <>
+              <div className="label" style={{ fontSize: 10.5, marginBottom: 6 }}>¿Qué pasó?</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {([["falla", "Llegaron con fallas"], ["faltante", "No las entregó"]] as const).map(([v, t]) => (
+                  <button key={v} className={tipoBaja === v ? "btn primary" : "btn"} style={BOTON}
+                    onClick={() => setTipoBaja(v)}>{t}</button>
+                ))}
+              </div>
+              <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "var(--muted)" }}>
+                ¿Cuántas de cada talla? Estas prendas se dan de baja: no van a Envío y no
+                se le pagan a la maquila.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="label" style={{ fontSize: 10.5, marginBottom: 6 }}>
+                ¿Cuántas llegaron de cada talla?
+              </div>
+              <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "var(--muted)" }}>
+                Está lleno con todo lo que falta. Si llegó completo, solo confirma; si
+                llegó una parte, baja los números.
+              </p>
+            </>
+          )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {ordenarTallas(Object.keys(falta)).map((t) => (
               <div key={t} style={{ textAlign: "center" }}>
@@ -307,10 +365,20 @@ function FilaColor({
               </div>
             ))}
           </div>
-          <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>Fecha en que llegó</div>
+          {modo === "justificar" && (
+            <>
+              <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>Motivo (obligatorio)</div>
+              <input className="pinput" value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                placeholder={tipoBaja === "falla" ? "Ej. costura torcida, mancha" : "Ej. la maquila no entregó la mitad"} />
+            </>
+          )}
+          <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>
+            {modo === "justificar" ? "Fecha" : "Fecha en que llegó"}
+          </div>
           <input className="pinput" type="date" max={hoyEcuador()} value={fecha}
             onChange={(e) => setFecha(e.target.value)} />
-          <Pie ocupado={ocupado} onCancelar={() => setModo(null)} onGuardar={registrarEntrega} texto="Guardar entrega" />
+          <Pie ocupado={ocupado} onCancelar={() => setModo(null)} onGuardar={registrarEntrega}
+            texto={modo === "justificar" ? "Guardar justificación" : "Guardar entrega"} />
         </div>
       )}
     </div>
