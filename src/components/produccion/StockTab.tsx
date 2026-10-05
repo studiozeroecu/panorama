@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
@@ -30,7 +31,7 @@ export default function StockTab() {
   function abrirVenta(s: StockOnline) {
     // Fase 8d: el id de idempotencia nace AL ABRIR el modal, no al confirmar.
     // Una apertura = una venta; vender dos veces lo mismo son dos aperturas.
-    setIdemId(crypto.randomUUID());
+    setIdemId(nuevoId());
     setVenta(s);
     setCantidad("1");
     setFecha(hoyEcuador());

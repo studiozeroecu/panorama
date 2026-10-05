@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/types";
@@ -148,7 +149,7 @@ export default function PedidosTab() {
       // Fase 8b: el id de idempotencia nace AL ABRIR el formulario, no al guardar.
       // Si naciera en el handler del clic, cada intento traería un id distinto y el
       // `on conflict do nothing` del servidor no deduplicaría nada.
-      setIdemId(crypto.randomUUID());
+      setIdemId(nuevoId());
       setForm({
         nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
         rendimiento: "", ancho_pedido: "", proveedor_id: "", prenda_id: "", valor_metro: "",

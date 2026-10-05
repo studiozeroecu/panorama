@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
@@ -41,7 +42,7 @@ export default function CorteTab() {
     // Fase 8b: el id de idempotencia nace AL ABRIR el modal, no al pulsar Guardar.
     // Si naciera en el handler del clic, cada intento traería un id distinto y la
     // deduplicación del servidor no serviría de nada. Una apertura = un intento.
-    setIdemId(crypto.randomUUID());
+    setIdemId(nuevoId());
     setPedidoSel(p);
     setErr(null);
     setFecha(hoyEcuador());

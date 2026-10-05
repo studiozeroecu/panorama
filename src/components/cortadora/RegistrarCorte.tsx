@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { nuevoId } from "@/lib/id";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hoyEcuador } from "@/lib/fechas";
 import { compararCorte, esperadoPorTalla } from "@/lib/produccion/descuadre";
@@ -63,7 +64,7 @@ export default function RegistrarCorte({
   onCancelar: () => void;
 }) {
   // Nace AL ABRIR, no al guardar: una apertura = un intento (regla de la fase 8b).
-  const [idemId] = useState(() => crypto.randomUUID());
+  const [idemId] = useState(() => nuevoId());
   const [filas, setFilas] = useState<Record<string, FilaColor>>({});
   const [ocupado, setOcupado] = useState(false);
   const [maquiladoraId, setMaquiladoraId] = useState("");
