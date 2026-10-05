@@ -42,6 +42,8 @@ export default function PedidosTab() {
     valor_metro: "",
     /** Fase 8l: solo se edita en pedidos ya entregados. */
     ancho_real: "",
+    /** Fase 8o: indicación para la cortadora. "" = sin indicación. */
+    destino_indicado: "" as "" | "locales" | "estampado",
   });
   const [colores, setColores] = useState<ColorForm[]>([{ color: "", cant: "" }]);
 
@@ -133,6 +135,7 @@ export default function PedidosTab() {
         prenda_id: p.prenda_id ?? "",
         valor_metro: String(p.valor_metro),
         ancho_real: p.ancho_real == null ? "" : String(p.ancho_real),
+        destino_indicado: p.destino_indicado ?? "",
       });
       // El formulario pide la cantidad en la UNIDAD DE COMPRA; la base guarda
       // siempre metros, y kilos solo cuando aplica. Hay que deshacer la conversión,
@@ -153,7 +156,7 @@ export default function PedidosTab() {
       setForm({
         nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
         rendimiento: "", ancho_pedido: "", proveedor_id: "", prenda_id: "", valor_metro: "",
-        ancho_real: "",
+        ancho_real: "", destino_indicado: "",
       });
       setColores([{ color: "", cant: "" }]);
     }
@@ -245,6 +248,8 @@ export default function PedidosTab() {
       prenda_id: form.prenda_id || null,
       valor_metro: valorMetro,
       total_pagar: +totalPagar.toFixed(2),
+      // Fase 8o: libre siempre — es solo un aviso, nada lo copia downstream.
+      destino_indicado: form.destino_indicado || null,
     };
     // Campos de TELA: los que mueven el saldo y la trazabilidad de colores.
     const tela = {
@@ -519,6 +524,19 @@ export default function PedidosTab() {
               <option value="">— Sin especificar —</option>
               {prendasActivas.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
+          </Campo>
+        </Fila>
+        <Fila>
+          <Campo label="👉 Indicación para la cortadora: ¿qué hacer con esta tela al volver de maquila?">
+            <select className="pinput" value={form.destino_indicado}
+              onChange={(e) => setForm({ ...form, destino_indicado: e.target.value as typeof form.destino_indicado })}>
+              <option value="">Sin indicación</option>
+              <option value="locales">Directo a locales</option>
+              <option value="estampado">Bodega de estampados</option>
+            </select>
+            <p className="sub" style={{ fontSize: 11.5, margin: "4px 0 0" }}>
+              Solo es un aviso que ella ve en su pantalla. En Envío sigues eligiendo el destino real.
+            </p>
           </Campo>
         </Fila>
         {prendaSel && (

@@ -17,16 +17,42 @@ import { nuevoId } from "@/lib/id";
  */
 export const TARIFA_HORA_CORTADORA = 4;
 
-/** Horas tecleadas → número válido, o un mensaje. Vacío = no anotó horas. */
-export function validarHoras(texto: string): { horas: number | null } | { error: string } {
-  const limpio = texto.trim().replace(",", ".");
-  if (!limpio) return { horas: null };
-  const h = Number(limpio);
-  if (!Number.isFinite(h) || h <= 0) return { error: "Las horas tienen que ser un número mayor que 0." };
+/**
+ * Los minutos se eligen de esta lista, no se teclean. Con un número decimal libre
+ * "2.9" no es nada que alguien mida en un reloj (¿2 h 9 min? ¿2 h 54 min?), y el
+ * costo saldría de una cifra que nadie quiso decir. Cuartos de hora bastan.
+ */
+export const MINUTOS_PERMITIDOS = [0, 15, 30, 45] as const;
+
+/**
+ * Horas ENTERAS + minutos de la lista → horas decimales para la base
+ * (2 h 30 min → 2.5), o un mensaje. Las dos cosas vacías o en cero = no anotó horas.
+ */
+export function validarHoras(
+  horasTexto: string,
+  minutosTexto: string
+): { horas: number | null } | { error: string } {
+  const ht = horasTexto.trim();
+  const h = ht === "" ? 0 : Number(ht);
+  if (!Number.isInteger(h) || h < 0)
+    return { error: "Las horas van en número entero (2, 3…). Los minutos se eligen al lado." };
+  const m = Number(minutosTexto || "0");
+  if (!(MINUTOS_PERMITIDOS as readonly number[]).includes(m))
+    return { error: "Elige los minutos de la lista (0, 15, 30 o 45)." };
+  if (h === 0 && m === 0) return { horas: null };
   // Un corte no ocupa más de un día de trabajo de una sola vez; más es un error
-  // de tecleo (minutos en vez de horas, o un cero de más).
+  // de tecleo (minutos escritos como horas, o un cero de más).
   if (h > 16) return { error: `${h} horas parece demasiado para un corte. ¿Son minutos?` };
-  return { horas: h };
+  return { horas: h + m / 60 };
+}
+
+/** 2.5 → "2 h 30 min", 3 → "3 h", 0.25 → "15 min". */
+export function fmtHoras(horas: number): string {
+  const totalMin = Math.round(horas * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
 export function costoHoras(horas: number, tarifa: number = TARIFA_HORA_CORTADORA): number {

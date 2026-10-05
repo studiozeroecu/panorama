@@ -11,7 +11,7 @@ import { avanceCorte, type AvanceCorte } from "@/lib/produccion/avanceCorte";
 import RegistrarCorte from "./RegistrarCorte";
 import ExtrasCorte from "./ExtrasCorte";
 import MaquilasCortadora, { TEXTO_DESTINO, type MaquilaC } from "./MaquilasCortadora";
-import { costoHoras } from "@/lib/produccion/horas";
+import { costoHoras, fmtHoras } from "@/lib/produccion/horas";
 import RecibirTela from "./RecibirTela";
 
 /**
@@ -650,13 +650,13 @@ function Indicacion({ destino }: { destino: "locales" | "estampado" | null }) {
   );
 }
 
-/** " · 3 h ($12.00)", con la tarifa congelada de cada jornada. */
+/** " · 2 h 30 min ($10.00)", con la tarifa congelada de cada jornada. */
 function textoHoras(horas: HorasCorte[] | null | undefined): string {
   const filas = (horas ?? []).flatMap((h) => (h.jornada ? [h.jornada] : []));
   if (!filas.length) return "";
   const total = filas.reduce((s, j) => s + Number(j.horas), 0);
   const costo = filas.reduce((s, j) => s + costoHoras(Number(j.horas), Number(j.tarifa_hora)), 0);
-  return ` · ${total} h ($${costo.toFixed(2)})`;
+  return ` · ${fmtHoras(total)} ($${costo.toFixed(2)})`;
 }
 
 /** Las filas de PostgREST → la forma de MaquilasCortadora. */

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge } from "@/components/ui";
-import { validarHoras, costoHoras, guardarHorasCorte, TARIFA_HORA_CORTADORA } from "@/lib/produccion/horas";
+import { validarHoras, fmtHoras, guardarHorasCorte } from "@/lib/produccion/horas";
+import CampoHoras from "./CampoHoras";
 
 /**
  * Retazos e insumos de un corte ya registrado — fase 8j.
@@ -34,6 +35,7 @@ export default function ExtrasCorte({
 }) {
   const [abierto, setAbierto] = useState<"retazo" | "insumo" | "horas" | null>(null);
   const [horas, setHoras] = useState("");
+  const [minutos, setMinutos] = useState("0");
   const [talla, setTalla] = useState(tallas[0] ?? "M");
   const [unidades, setUnidades] = useState("");
   const [nota, setNota] = useState("");
@@ -49,18 +51,19 @@ export default function ExtrasCorte({
     setDescripcion("");
     setCantidad("");
     setHoras("");
+    setMinutos("0");
     setErr(null);
   }
 
   async function guardarHoras() {
-    const vh = validarHoras(horas);
+    const vh = validarHoras(horas, minutos);
     if ("error" in vh) return setErr(vh.error);
     if (vh.horas == null) return setErr("¿Cuántas horas?");
     setOcupado(true);
     try {
       await guardarHorasCorte(supabase, corteId, vh.horas, nota);
       cerrar();
-      onListo(`Horas anotadas · ${vh.horas} h`);
+      onListo(`Horas anotadas · ${fmtHoras(vh.horas)}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -125,20 +128,8 @@ export default function ExtrasCorte({
           <div className="label" style={{ fontSize: 10, marginBottom: 6 }}>
             Horas trabajadas en este corte (hoy)
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <input
-              className="pinput" style={{ width: 92, textAlign: "center" }}
-              type="number" inputMode="decimal" min={0} step="0.5" placeholder="horas"
-              value={horas} onChange={(e) => setHoras(e.target.value)}
-            />
-            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-              {(() => {
-                const vh = validarHoras(horas);
-                return "horas" in vh && vh.horas != null
-                  ? `= $${costoHoras(vh.horas).toFixed(2)}`
-                  : `a $${TARIFA_HORA_CORTADORA}/h`;
-              })()}
-            </span>
+          <div style={{ marginBottom: 8 }}>
+            <CampoHoras horas={horas} minutos={minutos} onHoras={setHoras} onMinutos={setMinutos} />
           </div>
           <input
             className="pinput" placeholder="Nota (opcional)"
