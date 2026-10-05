@@ -61,7 +61,10 @@ begin
   if v_r like 'OK%' then v_ok := v_ok+1; else v_bad := v_bad+1; end if;
 
   -- ── 3. anon NO puede ejecutarla ──
-  v_r := case when not has_function_privilege('anon', 'fn_recibir_tela(uuid, numeric, date)', 'execute')
+  --    has_function_privilege REVIENTA si la función no existe; sin esta guarda
+  --    el smoke entero se cae en vez de reportar "falta aplicar la 8l".
+  v_r := case when v_n <> 1 then 'FALLA — fn_recibir_tela no existe: ¿se aplicó la 8l?'
+              when not has_function_privilege('anon', 'fn_recibir_tela(uuid, numeric, date)', 'execute')
                and has_function_privilege('authenticated', 'fn_recibir_tela(uuid, numeric, date)', 'execute')
               then 'OK — solo authenticated'
               else 'FALLA — revisar los grants' end;
