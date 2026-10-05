@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { hoyEcuador } from "@/lib/fechas";
 import { compararCorte, esperadoPorTalla } from "@/lib/produccion/descuadre";
 import type { Maquiladora } from "./CortadoraApp";
+import MaquilaDelCorte from "./MaquilaDelCorte";
 
 /**
  * Registro de un corte por la cortadora — fase 8k.
@@ -48,6 +49,7 @@ export default function RegistrarCorte({
   tallas,
   maquiladoras,
   costoMaquila,
+  onMaquiladoraCreada,
   onListo,
   onCancelar,
 }: {
@@ -60,6 +62,7 @@ export default function RegistrarCorte({
   maquiladoras: Maquiladora[];
   /** De la prenda del pedido. null = sin prenda o sin costo cargado. */
   costoMaquila: number | null;
+  onMaquiladoraCreada: (m: Maquiladora) => void;
   onListo: (mensaje: string) => void;
   onCancelar: () => void;
 }) {
@@ -68,6 +71,8 @@ export default function RegistrarCorte({
   const [filas, setFilas] = useState<Record<string, FilaColor>>({});
   const [ocupado, setOcupado] = useState(false);
   const [maquiladoraId, setMaquiladoraId] = useState("");
+  // Arranca con el de la prenda (como CorteTab); ella lo puede cambiar.
+  const [precio, setPrecio] = useState(costoMaquila != null ? String(costoMaquila) : "");
   const [err, setErr] = useState<string | null>(null);
 
   const fila = (c: string) => filas[c] ?? FILA_VACIA;
@@ -133,6 +138,10 @@ export default function RegistrarCorte({
     if (payload.every((c) => Object.keys(c.tallas).length === 0))
       return setErr("No hay ninguna unidad que registrar.");
 
+    const precioNum = precio.trim() ? Number(precio.replace(",", ".")) : null;
+    if (precioNum != null && (!Number.isFinite(precioNum) || precioNum < 0))
+      return setErr("El precio de maquila tiene que ser un número (o déjalo en blanco).");
+
     setOcupado(true);
     try {
       const { data, error } = await supabase.rpc("fn_registrar_corte", {
@@ -140,11 +149,11 @@ export default function RegistrarCorte({
         p_fecha: hoyEcuador(),
         p_maquiladora_id: maquiladoraId || null,
         p_observaciones: "",
-        // Lo mismo que CorteTab: el costo de la prenda, que la función congela en
-        // prod_maquilas.costo_unitario. ⚠️ Sin costo cargado viaja null y
-        // fn_registrar_corte lo guarda como 0 (coalesce) — por eso el aviso de
-        // abajo: no se inventa un valor, se avisa para que Mateo lo cargue.
-        p_costo_maquila: costoMaquila,
+        // El precio acordado para ESTE corte (arranca con el de la prenda). La
+        // función lo congela en prod_maquilas.costo_unitario. ⚠️ En blanco viaja
+        // null y fn_registrar_corte lo guarda como 0 (coalesce): no se inventa un
+        // valor; la pantalla avisa antes.
+        p_costo_maquila: precioNum,
         p_colores: payload,
         p_idem_id: idemId,
         // La corrida sí es una sola para todo el corte; las capas van dentro de
@@ -175,31 +184,6 @@ export default function RegistrarCorte({
       </p>
 
       {err && <div className="error-banner">{err}</div>}
-
-      <div style={{ marginBottom: 10 }}>
-        <div className="label" style={{ fontSize: 10.5 }}>Maquiladora</div>
-        <select
-          className="pinput" style={{ fontSize: 15 }}
-          value={maquiladoraId} onChange={(e) => setMaquiladoraId(e.target.value)}
-        >
-          <option value="">— Después —</option>
-          {/* Fase 8e: aquí se ELIGE, así que las archivadas no se ofrecen. */}
-          {maquiladoras
-            .filter((m) => !m.archivada_en)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nombre}
-              </option>
-            ))}
-        </select>
-      </div>
-
-      {costoMaquila == null && (
-        <p style={{ fontSize: 12.5, color: "var(--warn)", margin: "0 0 10px" }}>
-          ⚠️ La prenda de esta tela no tiene costo de maquila cargado. El corte se
-          puede registrar, pero quedará con costo 0 — avisa a Mateo.
-        </p>
-      )}
 
       {!corridaBase && (
         <p style={{ fontSize: 12.5, color: "var(--warn)", margin: "0 0 10px" }}>
@@ -305,6 +289,18 @@ export default function RegistrarCorte({
           </section>
         );
       })}
+
+      {/* Al final: primero se registra lo cortado, después a dónde va y a qué precio. */}
+      <MaquilaDelCorte
+        supabase={supabase}
+        maquiladoras={maquiladoras}
+        maquiladoraId={maquiladoraId}
+        onMaquiladora={setMaquiladoraId}
+        precio={precio}
+        onPrecio={setPrecio}
+        precioDeLaPrenda={costoMaquila}
+        onCreada={onMaquiladoraCreada}
+      />
 
       <div style={{ marginTop: 12, fontSize: 15 }}>
         Total del corte: <b>{comparacion.totalReal} unidades</b>

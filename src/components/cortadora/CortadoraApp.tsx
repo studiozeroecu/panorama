@@ -99,6 +99,8 @@ export default function CortadoraApp() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [registrando, setRegistrando] = useState<string | null>(null);
   const [recibiendo, setRecibiendo] = useState<string | null>(null);
+  /** null = todavía no la eligió ella: se decide sola según lo que haya. */
+  const [vista, setVista] = useState<"llegadas" | "corte" | null>(null);
 
   const reload = useCallback(async () => {
     const [pedR, corR, prendaR, maqR] = await Promise.all([
@@ -193,6 +195,19 @@ export default function CortadoraApp() {
   const pendientes = entregados.filter((p) => !avanceDe(p).listo);
   const listos = entregados.filter((p) => avanceDe(p).listo);
 
+  // Abre en Corte, que es su trabajo de todos los días; solo si no hay nada que
+  // cortar y sí telas por llegar, abre en Llegadas.
+  const vistaActual =
+    vista ?? (pendientes.length === 0 && porRecibir.length > 0 ? "llegadas" : "corte");
+
+  /** Una maquiladora recién creada en el formulario del corte entra a la lista
+   *  sin recargar todo — y así queda disponible para los demás cortes. */
+  function agregarMaquiladora(m: Maquiladora) {
+    setMaquiladoras((prev) =>
+      [...prev, m].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+    );
+  }
+
   if (cargando) {
     return (
       <main style={ENVOLTORIO}>
@@ -214,7 +229,7 @@ export default function CortadoraApp() {
             Corte
           </h1>
           <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13.5 }}>
-            Telas por recibir, por cortar y lo que ya se cortó.
+            Recibe las telas que llegan y registra lo que cortas.
           </p>
         </div>
         {/* Sin esto no hay forma de salir: el middleware manda a /cortadora
@@ -225,14 +240,29 @@ export default function CortadoraApp() {
       {error && <div className="error-banner">{error}</div>}
       {aviso && <div className="prod-toast">✓ {aviso}</div>}
 
-      {!pedidos.length && !error && (
-        <Vacio
-          titulo="No hay telas"
-          hint="Aquí aparecen las telas pedidas, las que llegaron y lo que se cortó."
-        />
+      {/* Dos pantallas separadas: lo que LLEGA y lo que se CORTA. */}
+      <nav style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+        <button
+          className={vistaActual === "llegadas" ? "btn primary" : "btn"}
+          style={PESTANA}
+          onClick={() => setVista("llegadas")}
+        >
+          📦 Telas por llegar ({porRecibir.length})
+        </button>
+        <button
+          className={vistaActual === "corte" ? "btn primary" : "btn"}
+          style={PESTANA}
+          onClick={() => setVista("corte")}
+        >
+          ✂️ Corte ({pendientes.length})
+        </button>
+      </nav>
+
+      {vistaActual === "llegadas" && porRecibir.length === 0 && (
+        <Vacio titulo="No hay telas por llegar" hint="Cuando Mateo pida una tela, aparecerá aquí." />
       )}
 
-      {porRecibir.length > 0 && (
+      {vistaActual === "llegadas" && porRecibir.length > 0 && (
         <>
           <h2 style={ROTULO}>Por recibir ({porRecibir.length})</h2>
           {porRecibir.map((p) => (
@@ -250,7 +280,11 @@ export default function CortadoraApp() {
         </>
       )}
 
-      {pendientes.length > 0 && (
+      {vistaActual === "corte" && entregados.length === 0 && (
+        <Vacio titulo="No hay telas para cortar" hint="Aparecen aquí cuando se confirma su llegada." />
+      )}
+
+      {vistaActual === "corte" && pendientes.length > 0 && (
         <>
           <h2 style={ROTULO}>Por cortar ({pendientes.length})</h2>
           {pendientes.map((p) => (
@@ -265,6 +299,7 @@ export default function CortadoraApp() {
               tallas={tallasDe(p)}
               maquiladoras={maquiladoras}
               costoMaquila={costoMaquilaDe(p)}
+              onMaquiladoraCreada={agregarMaquiladora}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
               onCancelar={() => setRegistrando(null)}
@@ -274,7 +309,7 @@ export default function CortadoraApp() {
         </>
       )}
 
-      {listos.length > 0 && (
+      {vistaActual === "corte" && listos.length > 0 && (
         <>
           <h2 style={ROTULO}>Ya cortadas ({listos.length})</h2>
           {listos.map((p) => (
@@ -288,6 +323,7 @@ export default function CortadoraApp() {
               tallas={tallasDe(p)}
               maquiladoras={maquiladoras}
               costoMaquila={costoMaquilaDe(p)}
+              onMaquiladoraCreada={agregarMaquiladora}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
               onCancelar={() => setRegistrando(null)}
@@ -296,7 +332,9 @@ export default function CortadoraApp() {
           ))}
         </>
       )}
-      <Jornadas supabase={supabase} cortes={cortes} onListo={trasRegistrar} />
+      {vistaActual === "corte" && (
+        <Jornadas supabase={supabase} cortes={cortes} onListo={trasRegistrar} />
+      )}
     </main>
   );
 }
@@ -379,6 +417,7 @@ function TarjetaTela({
   tallas,
   maquiladoras,
   costoMaquila,
+  onMaquiladoraCreada,
   registrando,
   onRegistrar,
   onCancelar,
@@ -393,6 +432,7 @@ function TarjetaTela({
   tallas: string[];
   maquiladoras: Maquiladora[];
   costoMaquila: number | null;
+  onMaquiladoraCreada: (m: Maquiladora) => void;
   registrando: boolean;
   onRegistrar: () => void;
   onCancelar: () => void;
@@ -492,6 +532,7 @@ function TarjetaTela({
           tallas={tallas}
           maquiladoras={maquiladoras}
           costoMaquila={costoMaquila}
+          onMaquiladoraCreada={onMaquiladoraCreada}
           onListo={onListo}
           onCancelar={onCancelar}
         />
@@ -552,6 +593,9 @@ const ENVOLTORIO: React.CSSProperties = {
   margin: "0 auto",
   padding: "18px 14px 60px",
 };
+
+/** Pestañas grandes: se usan con el dedo. */
+const PESTANA: React.CSSProperties = { flex: 1, padding: "11px 8px", fontSize: 14.5 };
 
 const TARJETA: React.CSSProperties = {
   background: "var(--surface)",
