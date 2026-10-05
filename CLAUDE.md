@@ -187,6 +187,15 @@ pool, y una tabla creada en una sentencia deja de existir para la siguiente
 Cuando hace falta atomicidad de verdad, la forma es un bloque `DO` — que es **una sola sentencia**
 y por tanto una sola transacción en una sola conexión.
 
+⚠️ **Tampoco `select … into variable` ni `returning … into variable`, ni dentro de PL/pgSQL**
+(desde el 2026-10-05). El SQL Editor de Supabase añade solo un *"enable Row Level Security on newly
+created tables"*, confunde esas asignaciones con un `SELECT INTO` que crea una tabla, inyecta
+`ALTER TABLE v_n ENABLE ROW LEVEL SECURITY` en medio del script y lo rompe con *"unterminated
+dollar-quoted string"* (no se ejecuta nada). La forma segura: `v := (select …)` para asignar,
+`perform … for update` + `found` para bloquear, y generar el id antes del insert
+(`v := gen_random_uuid()`) en vez de `returning id into`. Los `.sql` anteriores a la 8l sí lo usan:
+ya están aplicados y **no se vuelven a correr**, así que no hay que tocarlos.
+
 ### Costos (`costos_*`) — FKs internas del área
 
 | Tabla | PK | Columnas clave | FKs |

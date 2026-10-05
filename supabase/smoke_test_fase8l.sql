@@ -8,6 +8,10 @@
 -- y al lanzarlo PostgreSQL revierte todo. No queda NADA en la base — tampoco las
 -- versiones de mentira de fn_es_admin / fn_es_cortadora que usa para simular roles.
 --
+-- ⚠️ Sin asignaciones con la palabra clave de destino de PL/pgSQL: el SQL Editor
+-- de Supabase las confunde con crear una tabla y rompe el script (ver la cabecera
+-- de schema_fase8l). Todo se asigna con `v := (subconsulta)`.
+--
 -- Requiere también la 8m (aplicada antes que esta), aunque no la prueba: eso
 -- lo hace smoke_test_fase8m.sql.
 --
@@ -38,9 +42,9 @@ begin
               language sql stable as 'select true' $q$;
 
   -- ── 1. las dos columnas existen, y el check del rol cierra ──
-  select count(*) into v_n from information_schema.columns
-  where table_name = 'prod_pedidos_tela'
-    and column_name in ('recibido_por_rol', 'ancho_recibido');
+  v_n := (select count(*) from information_schema.columns
+          where table_name = 'prod_pedidos_tela'
+            and column_name in ('recibido_por_rol', 'ancho_recibido'));
   v_r := case when v_n = 2 then 'OK — recibido_por_rol y ancho_recibido'
               else 'FALLA — hay ' || v_n || ' de 2' end;
   v_rep := v_rep || E'\n  1 · columnas nuevas ................. ' || v_r;
@@ -48,8 +52,8 @@ begin
 
   -- ── 2. UNA sola fn_recibir_tela, y SECURITY DEFINER ──
   --    Sin definer necesitaría una política de update, que es lo que se evita.
-  select count(*), bool_and(prosecdef) into v_n, v_r
-  from pg_proc where proname = 'fn_recibir_tela';
+  v_n := (select count(*) from pg_proc where proname = 'fn_recibir_tela');
+  v_r := (select bool_and(prosecdef)::text from pg_proc where proname = 'fn_recibir_tela');
   v_r := case when v_n <> 1 then 'FALLA — hay ' || v_n || ' versiones'
               when v_r::boolean then 'OK — una sola, security definer'
               else 'FALLA — no es security definer' end;
@@ -68,16 +72,15 @@ begin
   --    Toda política de escritura tiene que ser la de admin o un candado
   --    `with check (false)` como el de la 8m. Se juzga por lo que HACE, no por
   --    el nombre. Y su lectura ya no está acotada a 'entregado'.
-  select count(*), string_agg(policyname || ' [' || cmd || ']', ', ')
-    into v_n, v_r
-  from pg_policies
-  where tablename = 'prod_pedidos_tela'
-    and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
-    and not (cmd = 'UPDATE' and with_check = 'false')
-    and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()');
-  select qual into v_txt from pg_policies
-  where tablename = 'prod_pedidos_tela' and policyname = 'cortadora_lee_pedidos';
-  v_r := case when v_n > 0 then 'FALLA — políticas de escritura no previstas: ' || v_r
+  v_r := (select string_agg(policyname || ' [' || cmd || ']', ', ')
+          from pg_policies
+          where tablename = 'prod_pedidos_tela'
+            and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
+            and not (cmd = 'UPDATE' and with_check = 'false')
+            and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()'));
+  v_txt := (select qual from pg_policies
+            where tablename = 'prod_pedidos_tela' and policyname = 'cortadora_lee_pedidos');
+  v_r := case when v_r is not null then 'FALLA — políticas de escritura no previstas: ' || v_r
               when v_txt is null then 'FALLA — no existe cortadora_lee_pedidos'
               when v_txt ilike '%entregado%' then 'FALLA — la lectura sigue acotada: ' || v_txt
               else 'OK — solo admin escribe; lee todos los estados' end;
@@ -85,21 +88,21 @@ begin
   if v_r like 'OK%' then v_ok := v_ok+1; else v_bad := v_bad+1; end if;
 
   -- ── montaje: un pedido en camino ──
+  v_ped := gen_random_uuid();
   insert into prod_pedidos_tela
-    (nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
+    (id, nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
      total_metros, valor_metro, total_pagar, estado)
-  values ('ZZ_SMOKE 8l', fn_hoy_ecuador() - 5, 'metros', 150,
+  values (v_ped, 'ZZ_SMOKE 8l', fn_hoy_ecuador() - 5, 'metros', 150,
           '[{"color":"Negro","metros":60},{"color":"Crudo","metros":40}]'::jsonb,
-          100, 5, 500, 'en_camino')
-  returning id into v_ped;
+          100, 5, 500, 'en_camino');
 
   -- ── 5. la cortadora recibe: se escriben las cinco columnas y nada más ──
   begin
     v_res := fn_recibir_tela(v_ped, 152.5, fn_hoy_ecuador() - 1);
-    select estado || ' · ' || ancho_real || ' · ' || ancho_recibido || ' · ' ||
-           recibido_por_rol || ' · ' || (fecha_entrega_real = fn_hoy_ecuador() - 1) ||
-           ' · ' || total_pagar
-      into v_txt from prod_pedidos_tela where id = v_ped;
+    v_txt := (select estado || ' · ' || ancho_real || ' · ' || ancho_recibido || ' · ' ||
+                     recibido_por_rol || ' · ' || (fecha_entrega_real = fn_hoy_ecuador() - 1) ||
+                     ' · ' || total_pagar
+              from prod_pedidos_tela where id = v_ped);
     v_r := case when v_txt = 'entregado · 152.50 · 152.50 · cortadora · true · 500.00'
                  and (v_res ->> 'ya_recibido')::boolean = false
                 then 'OK — ' || v_txt
@@ -115,7 +118,7 @@ begin
   --    quedaría 160.
   begin
     v_res := fn_recibir_tela(v_ped, 160, fn_hoy_ecuador());
-    select ancho_real::text into v_txt from prod_pedidos_tela where id = v_ped;
+    v_txt := (select ancho_real::text from prod_pedidos_tela where id = v_ped);
     v_r := case when (v_res ->> 'ya_recibido')::boolean and v_txt = '152.50'
                 then 'OK — ya_recibido, el ancho sigue en 152.50'
                 else 'FALLA — ' || v_res::text || ' · ancho ' || v_txt end;
@@ -130,23 +133,22 @@ begin
   --    consumió más metros (999) de los que tiene el pedido (100). Si el update
   --    de la recepción disparara ese trigger, esto fallaría. Y si disparara el de
   --    colores, las filas de prod_pedido_colores se recrearían con otros ids.
+  v_ped2 := gen_random_uuid();
   insert into prod_pedidos_tela
-    (nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
+    (id, nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
      total_metros, valor_metro, total_pagar, estado)
-  values ('ZZ_SMOKE 8l b', fn_hoy_ecuador() - 5, 'metros', 150,
-          '[{"color":"Negro","metros":100}]'::jsonb, 100, 5, 500, 'pendiente')
-  returning id into v_ped2;
+  values (v_ped2, 'ZZ_SMOKE 8l b', fn_hoy_ecuador() - 5, 'metros', 150,
+          '[{"color":"Negro","metros":100}]'::jsonb, 100, 5, 500, 'pendiente');
   insert into prod_cortes (pedido_id, fecha, colores, total_unidades, metros_consumidos)
   values (v_ped2, fn_hoy_ecuador(), '[]'::jsonb, 1, 999);
-  select string_agg(id::text, ',' order by id) into v_txt
-  from prod_pedido_colores where pedido_id = v_ped2;
+  v_txt := (select string_agg(id::text, ',' order by id)
+            from prod_pedido_colores where pedido_id = v_ped2);
   begin
     perform fn_recibir_tela(v_ped2, 180, fn_hoy_ecuador());
-    select case when string_agg(id::text, ',' order by id) = v_txt
+    v_r := case when (select string_agg(id::text, ',' order by id)
+                      from prod_pedido_colores where pedido_id = v_ped2) = v_txt
                 then 'OK — ningún trigger saltó; colores intactos'
-                else 'FALLA — las filas de color cambiaron' end
-      into v_r
-    from prod_pedido_colores where pedido_id = v_ped2;
+                else 'FALLA — las filas de color cambiaron' end;
   exception when others then
     v_r := 'FALLA — saltó un trigger: ' || SQLERRM;
   end;
@@ -166,7 +168,7 @@ begin
   exception when others then v_n := v_n + 1; end;
   begin perform fn_recibir_tela(v_ped, null, fn_hoy_ecuador());
   exception when others then v_n := v_n + 1; end;
-  select estado into v_txt from prod_pedidos_tela where id = v_ped;
+  v_txt := (select estado from prod_pedidos_tela where id = v_ped);
   v_r := case when v_n = 3 and v_txt = 'pendiente' then 'OK — los 3 rechazados, sigue pendiente'
               else 'FALLA — ' || v_n || ' de 3 rechazados, estado ' || v_txt end;
   v_rep := v_rep || E'\n  8 · ancho en cm (1.5 / 1500 / null) . ' || v_r;
@@ -202,7 +204,7 @@ begin
               language sql stable as 'select true' $q$;
   begin
     perform fn_recibir_tela(v_ped, 150, fn_hoy_ecuador());
-    select recibido_por_rol into v_txt from prod_pedidos_tela where id = v_ped;
+    v_txt := (select recibido_por_rol from prod_pedidos_tela where id = v_ped);
     v_r := case when v_txt = 'admin' then 'OK — recibido_por_rol = admin'
                 else 'FALLA — quedó ' || coalesce(v_txt, 'null') end;
   exception when others then

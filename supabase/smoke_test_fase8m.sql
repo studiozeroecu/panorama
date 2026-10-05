@@ -8,6 +8,10 @@
 -- y al lanzarlo PostgreSQL revierte todo. No queda NADA en la base — tampoco las
 -- versiones de mentira de fn_es_admin / fn_es_cortadora ni el cambio de rol.
 --
+-- ⚠️ Sin asignaciones con la palabra clave de destino de PL/pgSQL: el SQL Editor
+-- de Supabase las confunde con crear una tabla y rompe el script (ver la cabecera
+-- de schema_fase8l). Todo se asigna con `v := (subconsulta)`.
+--
 -- A DIFERENCIA de los otros smoke tests, este necesita que RLS APLIQUE: corriendo
 -- como `postgres` (dueño de las tablas) las políticas se saltan y no se probaría
 -- nada. Por eso las comprobaciones 3–6 cambian a `set local role authenticated`,
@@ -26,11 +30,9 @@ declare
   v_r    text;
   v_ok   int := 0;
   v_bad  int := 0;
-  v_n    int;
   v_txt  text;
   v_ped  uuid;
   v_pend uuid;
-  v_id   uuid;
   v_res  jsonb;
 begin
   -- Simulación de roles. Se redefinen dentro de la transacción y el raise final
@@ -41,10 +43,9 @@ begin
               language sql stable as 'select true' $q$;
 
   -- ── 1. la política existe y es exactamente un candado ──
-  select cmd || ' · using=' || qual || ' · check=' || coalesce(with_check, 'null')
-    into v_txt
-  from pg_policies
-  where tablename = 'prod_pedidos_tela' and policyname = 'cortadora_bloquea_pedido';
+  v_txt := (select cmd || ' · using=' || qual || ' · check=' || coalesce(with_check, 'null')
+            from pg_policies
+            where tablename = 'prod_pedidos_tela' and policyname = 'cortadora_bloquea_pedido');
   v_r := case when v_txt is null then 'FALLA — no existe cortadora_bloquea_pedido'
               when v_txt like 'UPDATE · %fn_es_cortadora()%entregado% · check=false'
                 then 'OK — UPDATE, acotada a entregado, with check (false)'
@@ -54,39 +55,38 @@ begin
 
   -- ── 2. ninguna otra política deja escribir en prod_pedidos_tela ──
   --    Solo la de admin o candados `with check (false)`.
-  select count(*), string_agg(policyname || ' [' || cmd || ']', ', ')
-    into v_n, v_txt
-  from pg_policies
-  where tablename = 'prod_pedidos_tela'
-    and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
-    and not (cmd = 'UPDATE' and with_check = 'false')
-    and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()');
-  v_r := case when v_n = 0 then 'OK — solo admin escribe'
+  v_txt := (select string_agg(policyname || ' [' || cmd || ']', ', ')
+            from pg_policies
+            where tablename = 'prod_pedidos_tela'
+              and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
+              and not (cmd = 'UPDATE' and with_check = 'false')
+              and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()'));
+  v_r := case when v_txt is null then 'OK — solo admin escribe'
               else 'FALLA — no previstas: ' || v_txt end;
   v_rep := v_rep || E'\n  2 · sin otras políticas de escritura . ' || v_r;
   if v_r like 'OK%' then v_ok := v_ok+1; else v_bad := v_bad+1; end if;
 
   -- ── montaje (como postgres): un pedido entregado y uno pendiente ──
+  v_ped := gen_random_uuid();
+  v_pend := gen_random_uuid();
   insert into prod_pedidos_tela
-    (nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
+    (id, nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
      total_metros, valor_metro, total_pagar, estado, fecha_entrega_real)
-  values ('ZZ_SMOKE 8m', fn_hoy_ecuador(), 'metros', 150,
-          '[{"color":"Negro","metros":60}]'::jsonb, 60, 5, 300, 'entregado', fn_hoy_ecuador())
-  returning id into v_ped;
+  values (v_ped, 'ZZ_SMOKE 8m', fn_hoy_ecuador(), 'metros', 150,
+          '[{"color":"Negro","metros":60}]'::jsonb, 60, 5, 300, 'entregado', fn_hoy_ecuador());
   insert into prod_pedidos_tela
-    (nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
+    (id, nombre_tela, fecha_pedido, unidad, ancho_pedido, colores,
      total_metros, valor_metro, total_pagar, estado)
-  values ('ZZ_SMOKE 8m pend', fn_hoy_ecuador(), 'metros', 150,
-          '[{"color":"Negro","metros":60}]'::jsonb, 60, 5, 300, 'pendiente')
-  returning id into v_pend;
+  values (v_pend, 'ZZ_SMOKE 8m pend', fn_hoy_ecuador(), 'metros', 150,
+          '[{"color":"Negro","metros":60}]'::jsonb, 60, 5, 300, 'pendiente');
 
   -- ════ desde aquí, con RLS aplicando ════
   execute 'set local role authenticated';
 
   -- ── 3. ⚠️ puede BLOQUEAR el pedido entregado ──
   begin
-    select id into v_id from prod_pedidos_tela where id = v_ped for update;
-    v_r := case when v_id = v_ped then 'OK — el for update encuentra la fila'
+    perform 1 from prod_pedidos_tela where id = v_ped for update;
+    v_r := case when found then 'OK — el for update encuentra la fila'
                 else 'FALLA — el for update no ve la fila (el fallo original)' end;
   exception when others then
     v_r := 'FALLA — ' || SQLERRM;
@@ -111,10 +111,9 @@ begin
   -- ── 5. NO bloquea un pedido que no está entregado ──
   --    El candado está acotado a la tela que puede cortar. (Desde la 8l lo puede
   --    LEER; bloquearlo, no.)
-  v_id := null;
   begin
-    select id into v_id from prod_pedidos_tela where id = v_pend for update;
-    v_r := case when v_id is null then 'OK — no lo bloquea'
+    perform 1 from prod_pedidos_tela where id = v_pend for update;
+    v_r := case when not found then 'OK — no lo bloquea'
                 else 'FALLA — bloqueó un pedido pendiente' end;
   exception when others then
     v_r := 'FALLA — ' || SQLERRM;
@@ -141,8 +140,8 @@ begin
   -- ════ fin de RLS ════
 
   -- ── 7. y el pedido quedó intacto ──
-  select valor_metro || ' · ' || coalesce(corrida_base::text, 'null') into v_txt
-  from prod_pedidos_tela where id = v_ped;
+  v_txt := (select valor_metro || ' · ' || coalesce(corrida_base::text, 'null')
+            from prod_pedidos_tela where id = v_ped);
   v_r := case when v_txt = '5.0000 · null' then 'OK — precio y corrida sin tocar'
               else 'FALLA — quedó: ' || v_txt end;
   v_rep := v_rep || E'\n  7 · el pedido sigue intacto ......... ' || v_r;

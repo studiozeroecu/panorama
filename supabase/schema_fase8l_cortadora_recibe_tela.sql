@@ -6,6 +6,14 @@
 --
 -- ⚠️ SIN begin;/commit; — ver la nota en schema_fase7_colores.sql.
 --
+-- ⚠️ NINGUNA asignación con la palabra clave de destino de PL/pgSQL (la que va
+-- tras la lista de columnas, o tras `returning`), ni siquiera dentro de funciones.
+-- Desde el 2026-10-05 el SQL Editor de Supabase añade solo un
+-- "enable Row Level Security on newly created tables", confunde esas
+-- asignaciones con la creación de una tabla, inyecta `ALTER TABLE v_n …` en medio
+-- del script y lo rompe ("unterminated dollar-quoted string"). Aquí se asigna con
+-- `v := (subconsulta)` y se bloquea con `perform … for update`.
+--
 -- ════════════════════════════════════════════════════════════
 -- QUÉ HACE
 --
@@ -99,7 +107,6 @@ declare
   v_estado text;
   v_nombre text;
   v_rol    text;
-  v_ped    prod_pedidos_tela%rowtype;
 begin
   -- ⚠️ Con SECURITY DEFINER esta guarda es la ÚNICA barrera: RLS no aplica
   -- dentro. No quitarla ni relajarla "porque la pantalla ya filtra".
@@ -113,26 +120,29 @@ begin
 
   -- Lock de la fila: dos confirmaciones simultáneas se serializan aquí, y la
   -- segunda ve el estado que dejó la primera.
-  select estado, nombre_tela into v_estado, v_nombre
-  from prod_pedidos_tela
-  where id = p_pedido_id
-  for update;
+  perform 1 from prod_pedidos_tela where id = p_pedido_id for update;
 
   if not found then
     raise exception 'El pedido de tela no existe.';
   end if;
 
+  -- Ya con el lock tomado: lo que se lee aquí es el estado definitivo.
+  v_estado := (select estado from prod_pedidos_tela where id = p_pedido_id);
+  v_nombre := (select nombre_tela from prod_pedidos_tela where id = p_pedido_id);
+
   -- ⚠️ IDEMPOTENCIA ANTES DE VALIDAR, igual que en fn_registrar_corte: un
   -- reintento no debe toparse con una validación que ya no aplica. Se devuelve
   -- lo que quedó guardado para que la pantalla lo muestre tal cual.
   if v_estado = 'entregado' then
-    select * into v_ped from prod_pedidos_tela where id = p_pedido_id;
-    return jsonb_build_object(
-      'ya_recibido',        true,
-      'nombre_tela',        v_ped.nombre_tela,
-      'ancho_real',         v_ped.ancho_real,
-      'fecha_entrega_real', v_ped.fecha_entrega_real,
-      'recibido_por_rol',   v_ped.recibido_por_rol
+    return (
+      select jsonb_build_object(
+        'ya_recibido',        true,
+        'nombre_tela',        p.nombre_tela,
+        'ancho_real',         p.ancho_real,
+        'fecha_entrega_real', p.fecha_entrega_real,
+        'recibido_por_rol',   p.recibido_por_rol)
+      from prod_pedidos_tela p
+      where p.id = p_pedido_id
     );
   end if;
 
@@ -222,7 +232,7 @@ declare
   v_n   int;
   v_txt text;
 begin
-  select count(*) into v_n from pg_proc where proname = 'fn_recibir_tela';
+  v_n := (select count(*) from pg_proc where proname = 'fn_recibir_tela');
   if v_n <> 1 then
     raise exception 'Fase 8l: hay % versiones de fn_recibir_tela (debe haber 1).', v_n;
   end if;
@@ -233,20 +243,20 @@ begin
   --   · un candado sin escritura (fase 8m): UPDATE con `with check (false)`
   -- Cualquier otra —también una de cortadora con with check verdadero, o un
   -- UPDATE sin with check, que entonces reutiliza el using— aborta.
-  select count(*), string_agg(policyname || ' [' || cmd || ']', ', ')
-    into v_n, v_txt
-  from pg_policies
-  where tablename = 'prod_pedidos_tela'
-    and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
-    and not (cmd = 'UPDATE' and with_check = 'false')
-    and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()');
-  if v_n > 0 then
-    raise exception 'Fase 8l: hay % política(s) de escritura no previstas sobre prod_pedidos_tela: %', v_n, v_txt;
+  v_txt := (
+    select string_agg(policyname || ' [' || cmd || ']', ', ')
+    from pg_policies
+    where tablename = 'prod_pedidos_tela'
+      and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
+      and not (cmd = 'UPDATE' and with_check = 'false')
+      and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()'));
+  if v_txt is not null then
+    raise exception 'Fase 8l: hay políticas de escritura no previstas sobre prod_pedidos_tela: %', v_txt;
   end if;
 
-  select count(*) into v_n from information_schema.columns
-  where table_name = 'prod_pedidos_tela'
-    and column_name in ('recibido_por_rol', 'ancho_recibido');
+  v_n := (select count(*) from information_schema.columns
+          where table_name = 'prod_pedidos_tela'
+            and column_name in ('recibido_por_rol', 'ancho_recibido'));
   if v_n <> 2 then
     raise exception 'Fase 8l: faltan columnas nuevas (hay % de 2).', v_n;
   end if;
