@@ -148,7 +148,10 @@ totales del corte.
 
 ---
 
-## Pieza 5 · Costo de la cortadora ⏳ SOLO DOCUMENTADA
+## Pieza 5 · Costo de la cortadora ✅ CONSTRUIDA (fase 8o)
+
+> Horas al registrar cada corte, tarifa de $4 congelada en cada jornada por trigger. Falta
+> sumarlo en los reportes (ResumenTab) — hoy se ve por corte en la pantalla de la cortadora.
 
 `horas × $4/hora`, **separado del costo de maquila**.
 
@@ -193,11 +196,15 @@ relación 1-a-1 y hay que decidir qué significa.
 es solo tela. Tabla nueva, con su RLS.
 
 **Confirmar llegada.** Para **tela** ✅ hecho en la fase 8l: la cortadora la confirma desde
-`/cortadora` con el ancho medido, por `fn_recibir_tela`. Para insumos y para maquila, pendiente.
+`/cortadora` con el ancho medido, por `fn_recibir_tela`. Para **maquila** ✅ fase 8o: pestaña
+Maquila, con entregas completas o parciales por talla. Para insumos, pendiente.
 
 ---
 
-## Pieza 8 · Mateo decide el destino al pasar a maquila ⏳ SOLO DOCUMENTADA
+## Pieza 8 · Mateo decide el destino al pasar a maquila ✅ COMO INDICACIÓN (fase 8o)
+
+> Decidido por el dueño: **no es vinculante**. `prod_pedidos_tela.destino_indicado` es un aviso
+> para la cortadora; Envío sigue eligiendo el destino real. Lo que sigue era el análisis previo.
 
 **Es el cambio de flujo más profundo de las ocho.** Hoy el destino se decide **al final**, en Envío:
 

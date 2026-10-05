@@ -56,7 +56,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar** →
-`schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8o_maquila_entregas.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -123,6 +124,7 @@ triggers mantienen el jsonb al día detrás.
 | `prod_corte_colores` | uuid | `color`, `unidades`, `metros_usados`, `orden`; índice único `(corte_id, lower(btrim(color)))` | `corte_id → prod_cortes` **cascade** · `pedido_color_id → prod_pedido_colores` set null |
 | `prod_corte_color_tallas` | uuid | `talla`, `unidades`, **unique** (`corte_color_id`,`talla`); las tallas en cero no se guardan | `corte_color_id → prod_corte_colores` **cascade** |
 | `prod_maquila_colores` | uuid | `estado` (pendiente\|enviado\|entregado), `fecha_envio/entrega`, `procesado`, **unique** (`maquila_id`,`corte_color_id`) | `maquila_id → prod_maquilas` **cascade** · `corte_color_id → prod_corte_colores` **restrict** |
+| `prod_maquila_entregas` *(fase 8o)* | uuid | `fecha`, `tallas jsonb`, `unidades` (>0), `procesado`, `procesada_en`, `idempotencia_id` unique | `maquila_color_id → prod_maquila_colores` **cascade** |
 
 `prod_maquila_colores` **no repite** `color`/`tallas`/`unidades`: los toma por join de
 `prod_corte_colores`. Es válido porque `CorteTab` los copia literales del corte y ningún otro código
@@ -363,6 +365,43 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-05 — producción — `schema_fase8o_maquila_entregas.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8o.sql` (12 comprobaciones).
+⚠️ **Aplicar y desplegar JUNTOS:** la fase **borra** `fn_procesar_lote_maquila`; entre aplicar y
+desplegar, Envío fallaría con *"function does not exist"* (sin dañar datos). Y al revés: el código
+nuevo pide `destino_indicado` y `prod_maquila_entregas`, y sin la fase `/produccion` no carga.
+
+- **Entregas parciales de maquila — el cambio de fondo.** Tabla nueva `prod_maquila_entregas`: una
+  fila por entrega, con sus tallas. **Envío procesa ENTREGAS, no colores enteros**
+  (`fn_procesar_entrega_maquila`, que reemplaza a `fn_procesar_lote_maquila` con las mismas reglas
+  de los tres destinos), así que lo que llega en parte ya puede salir a locales o estampado sin
+  esperar el resto — decisión explícita del dueño.
+- ⚠️ **La invariante:** la suma de las entregas de un color nunca supera lo cortado, talla por talla
+  (`fn_tallas_pendientes_maquila`). Un color pasa a `entregado` cuando sus entregas cubren el corte;
+  "parcial" **no se guarda**, se deduce (enviado + con entregas). `procesado` del color = entregado
+  **y** todas sus entregas procesadas.
+- **Un solo camino a Envío:** `trg_entrega_por_resto` crea la entrega de lo que faltaba cuando algo
+  marca `entregado` directo (MaquilaTab de Mateo no cambió su escritura). Backfill: los colores ya
+  entregados recibieron su entrega única (procesada si el color lo estaba).
+- **Cortadora:** `fn_marcar_enviado_maquila` y `fn_registrar_entrega_maquila`, `SECURITY DEFINER`
+  como `fn_recibir_tela` — ella **no** tiene update sobre `prod_maquila_colores` (le dejaría tocar
+  `procesado`) ni insert sobre las entregas. Idempotentes: por estado el envío, por `idem_id` la
+  entrega (generado al abrir el formulario).
+- **Horas por corte con tarifa CONGELADA (pieza 5).** `prod_jornadas.tarifa_hora` (not null), fijada
+  por `trg_congelar_tarifa_jornada` con `fn_tarifa_hora_cortadora()` (= $4) para todo el que no sea
+  admin, y conservada en los updates — RLS es de fila y su política de insert le dejaría poner
+  cualquier tarifa. **Cambiar la tarifa = `create or replace` de esa función** (y la constante
+  `TARIFA_HORA_CORTADORA` de `src/lib/produccion/horas.ts`, que es solo para mostrar). Las horas se
+  anotan al registrar el corte (una jornada enlazada) o con "+ Horas"; la sección de jornadas
+  suelta (`Jornadas.tsx`) se borró.
+- **`prod_pedidos_tela.destino_indicado`** (`locales` | `estampado` | null): indicación de Mateo
+  para la cortadora, **solo informativa** — Envío sigue decidiendo el destino real. Contesta la
+  pregunta abierta de la pieza 8: no es vinculante.
+- **Pendiente:** el bot (`ordenes_en_proceso` en `src/lib/bot/tools.ts`) sigue contando "listos para
+  envío" como colores entregados sin procesar; no ve las entregas parciales.
+- **Impacto en otras áreas: ninguno** fuera de producción (el bot solo lee).
 
 ### 2026-10-05 — producción — `schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ PENDIENTE DE APLICAR
 
