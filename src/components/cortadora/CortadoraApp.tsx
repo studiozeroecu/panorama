@@ -78,6 +78,14 @@ interface Prenda {
   id: string;
   nombre: string;
   tallas: string[] | null;
+  /** PostgREST devuelve los numeric como texto. null/0 = sin costo cargado. */
+  costo_maquila: number | string | null;
+}
+
+export interface Maquiladora {
+  id: string;
+  nombre: string;
+  archivada_en: string | null;
 }
 
 export default function CortadoraApp() {
@@ -85,6 +93,7 @@ export default function CortadoraApp() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [cortes, setCortes] = useState<Corte[]>([]);
   const [prendas, setPrendas] = useState<Prenda[]>([]);
+  const [maquiladoras, setMaquiladoras] = useState<Maquiladora[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -92,7 +101,7 @@ export default function CortadoraApp() {
   const [recibiendo, setRecibiendo] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const [pedR, corR, prendaR] = await Promise.all([
+    const [pedR, corR, prendaR, maqR] = await Promise.all([
       supabase
         .from("prod_pedidos_tela")
         .select(
@@ -113,7 +122,10 @@ export default function CortadoraApp() {
            )`
         )
         .order("fecha", { ascending: false }),
-      supabase.from("prod_prendas").select("id, nombre, tallas"),
+      supabase.from("prod_prendas").select("id, nombre, tallas, costo_maquila"),
+      // Fase 8e: se cargan TODAS, archivadas incluidas; el filtro va solo en el
+      // <select> donde se elige (RegistrarCorte).
+      supabase.from("prod_maquiladoras").select("id, nombre, archivada_en").order("nombre"),
     ]);
 
     if (pedR.error) {
@@ -132,6 +144,7 @@ export default function CortadoraApp() {
     setPedidos((pedR.data ?? []) as unknown as Pedido[]);
     setCortes((corR.data ?? []) as unknown as Corte[]);
     setPrendas((prendaR.data ?? []) as Prenda[]);
+    setMaquiladoras((maqR.data ?? []) as Maquiladora[]);
     setError(null);
     setCargando(false);
   }, [supabase]);
@@ -154,6 +167,12 @@ export default function CortadoraApp() {
   }, [pedidos, cortes]);
 
   const prendaDe = (p: Pedido) => prendas.find((x) => x.id === p.prenda_id)?.nombre;
+  /** Costo de maquila de la prenda del pedido, como en CorteTab. null = no hay
+   *  prenda o la prenda no tiene costo cargado: NO se inventa uno. */
+  const costoMaquilaDe = (p: Pedido): number | null => {
+    const c = Number(prendas.find((x) => x.id === p.prenda_id)?.costo_maquila);
+    return c > 0 ? c : null;
+  };
   const tallasDe = (p: Pedido) => {
     const pr = prendas.find((x) => x.id === p.prenda_id);
     return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
@@ -244,6 +263,8 @@ export default function CortadoraApp() {
               pendiente
               supabase={supabase}
               tallas={tallasDe(p)}
+              maquiladoras={maquiladoras}
+              costoMaquila={costoMaquilaDe(p)}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
               onCancelar={() => setRegistrando(null)}
@@ -265,6 +286,8 @@ export default function CortadoraApp() {
               cortes={cortesDe(p)}
               supabase={supabase}
               tallas={tallasDe(p)}
+              maquiladoras={maquiladoras}
+              costoMaquila={costoMaquilaDe(p)}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
               onCancelar={() => setRegistrando(null)}
@@ -354,6 +377,8 @@ function TarjetaTela({
   pendiente,
   supabase,
   tallas,
+  maquiladoras,
+  costoMaquila,
   registrando,
   onRegistrar,
   onCancelar,
@@ -366,6 +391,8 @@ function TarjetaTela({
   pendiente?: boolean;
   supabase: SupabaseClient;
   tallas: string[];
+  maquiladoras: Maquiladora[];
+  costoMaquila: number | null;
   registrando: boolean;
   onRegistrar: () => void;
   onCancelar: () => void;
@@ -463,6 +490,8 @@ function TarjetaTela({
           colores={pedido.colores ?? []}
           corridaBase={pedido.corrida_base}
           tallas={tallas}
+          maquiladoras={maquiladoras}
+          costoMaquila={costoMaquila}
           onListo={onListo}
           onCancelar={onCancelar}
         />

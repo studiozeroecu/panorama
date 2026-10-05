@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hoyEcuador } from "@/lib/fechas";
 import { compararCorte, esperadoPorTalla } from "@/lib/produccion/descuadre";
+import type { Maquiladora } from "./CortadoraApp";
 
 /**
  * Registro de un corte por la cortadora — fase 8k.
@@ -44,6 +45,8 @@ export default function RegistrarCorte({
   colores,
   corridaBase,
   tallas,
+  maquiladoras,
+  costoMaquila,
   onListo,
   onCancelar,
 }: {
@@ -53,6 +56,9 @@ export default function RegistrarCorte({
   colores: ColorTela[];
   corridaBase: Record<string, number> | null;
   tallas: string[];
+  maquiladoras: Maquiladora[];
+  /** De la prenda del pedido. null = sin prenda o sin costo cargado. */
+  costoMaquila: number | null;
   onListo: (mensaje: string) => void;
   onCancelar: () => void;
 }) {
@@ -60,6 +66,7 @@ export default function RegistrarCorte({
   const [idemId] = useState(() => crypto.randomUUID());
   const [filas, setFilas] = useState<Record<string, FilaColor>>({});
   const [ocupado, setOcupado] = useState(false);
+  const [maquiladoraId, setMaquiladoraId] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const fila = (c: string) => filas[c] ?? FILA_VACIA;
@@ -130,9 +137,13 @@ export default function RegistrarCorte({
       const { data, error } = await supabase.rpc("fn_registrar_corte", {
         p_pedido_id: pedidoId,
         p_fecha: hoyEcuador(),
-        p_maquiladora_id: null,
+        p_maquiladora_id: maquiladoraId || null,
         p_observaciones: "",
-        p_costo_maquila: 0,
+        // Lo mismo que CorteTab: el costo de la prenda, que la función congela en
+        // prod_maquilas.costo_unitario. ⚠️ Sin costo cargado viaja null y
+        // fn_registrar_corte lo guarda como 0 (coalesce) — por eso el aviso de
+        // abajo: no se inventa un valor, se avisa para que Mateo lo cargue.
+        p_costo_maquila: costoMaquila,
         p_colores: payload,
         p_idem_id: idemId,
         // La corrida sí es una sola para todo el corte; las capas van dentro de
@@ -163,6 +174,31 @@ export default function RegistrarCorte({
       </p>
 
       {err && <div className="error-banner">{err}</div>}
+
+      <div style={{ marginBottom: 10 }}>
+        <div className="label" style={{ fontSize: 10.5 }}>Maquiladora</div>
+        <select
+          className="pinput" style={{ fontSize: 15 }}
+          value={maquiladoraId} onChange={(e) => setMaquiladoraId(e.target.value)}
+        >
+          <option value="">— Después —</option>
+          {/* Fase 8e: aquí se ELIGE, así que las archivadas no se ofrecen. */}
+          {maquiladoras
+            .filter((m) => !m.archivada_en)
+            .map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.nombre}
+              </option>
+            ))}
+        </select>
+      </div>
+
+      {costoMaquila == null && (
+        <p style={{ fontSize: 12.5, color: "var(--warn)", margin: "0 0 10px" }}>
+          ⚠️ La prenda de esta tela no tiene costo de maquila cargado. El corte se
+          puede registrar, pero quedará con costo 0 — avisa a Mateo.
+        </p>
+      )}
 
       {!corridaBase && (
         <p style={{ fontSize: 12.5, color: "var(--warn)", margin: "0 0 10px" }}>
