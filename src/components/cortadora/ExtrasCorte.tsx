@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge } from "@/components/ui";
+import { validarHoras, costoHoras, guardarHorasCorte, TARIFA_HORA_CORTADORA } from "@/lib/produccion/horas";
 
 /**
  * Retazos e insumos de un corte ya registrado — fase 8j.
@@ -15,6 +16,9 @@ import { Badge } from "@/components/ui";
  * El retazo lleva la talla puesta A MANO: un trozo sobrante sirve para cierta
  * talla si alcanza, y eso lo decide quien lo tiene delante, no una fórmula. Y no
  * suma al total del corte — es tela que podría dar una unidad, no una unidad.
+ *
+ * Fase 8o: "+ Horas" suma horas a un corte ya registrado — para el corte que
+ * ocupó otro día, o si al registrarlo no se anotaron.
  */
 
 export default function ExtrasCorte({
@@ -28,7 +32,8 @@ export default function ExtrasCorte({
   tallas: string[];
   onListo: (mensaje: string) => void;
 }) {
-  const [abierto, setAbierto] = useState<"retazo" | "insumo" | null>(null);
+  const [abierto, setAbierto] = useState<"retazo" | "insumo" | "horas" | null>(null);
+  const [horas, setHoras] = useState("");
   const [talla, setTalla] = useState(tallas[0] ?? "M");
   const [unidades, setUnidades] = useState("");
   const [nota, setNota] = useState("");
@@ -43,7 +48,24 @@ export default function ExtrasCorte({
     setNota("");
     setDescripcion("");
     setCantidad("");
+    setHoras("");
     setErr(null);
+  }
+
+  async function guardarHoras() {
+    const vh = validarHoras(horas);
+    if ("error" in vh) return setErr(vh.error);
+    if (vh.horas == null) return setErr("¿Cuántas horas?");
+    setOcupado(true);
+    try {
+      await guardarHorasCorte(supabase, corteId, vh.horas, nota);
+      cerrar();
+      onListo(`Horas anotadas · ${vh.horas} h`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOcupado(false);
+    }
   }
 
   async function guardarRetazo() {
@@ -82,6 +104,9 @@ export default function ExtrasCorte({
         <button className="btn" style={CHICO} onClick={() => setAbierto("insumo")}>
           + Insumo
         </button>
+        <button className="btn" style={CHICO} onClick={() => setAbierto("horas")}>
+          + Horas
+        </button>
       </div>
     );
   }
@@ -95,7 +120,33 @@ export default function ExtrasCorte({
     >
       {err && <div className="error-banner">{err}</div>}
 
-      {abierto === "retazo" ? (
+      {abierto === "horas" ? (
+        <>
+          <div className="label" style={{ fontSize: 10, marginBottom: 6 }}>
+            Horas trabajadas en este corte (hoy)
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <input
+              className="pinput" style={{ width: 92, textAlign: "center" }}
+              type="number" inputMode="decimal" min={0} step="0.5" placeholder="horas"
+              value={horas} onChange={(e) => setHoras(e.target.value)}
+            />
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              {(() => {
+                const vh = validarHoras(horas);
+                return "horas" in vh && vh.horas != null
+                  ? `= $${costoHoras(vh.horas).toFixed(2)}`
+                  : `a $${TARIFA_HORA_CORTADORA}/h`;
+              })()}
+            </span>
+          </div>
+          <input
+            className="pinput" placeholder="Nota (opcional)"
+            value={nota} onChange={(e) => setNota(e.target.value)}
+          />
+          <Pie ocupado={ocupado} onCancelar={cerrar} onGuardar={guardarHoras} />
+        </>
+      ) : abierto === "retazo" ? (
         <>
           <div className="label" style={{ fontSize: 10, marginBottom: 6 }}>
             Retazo — ¿para qué talla alcanza?

@@ -67,6 +67,7 @@ interface FilaPedido {
   corrida_base: Record<string, number> | null;
   recibido_por_rol: "admin" | "cortadora" | null;
   ancho_recibido: number | string | null;
+  destino_indicado: "locales" | "estampado" | null;
   colores:
     | { id: string; color: string; metros: number | string; kilos: number | string | null; orden: number }[]
     | null;
@@ -109,6 +110,9 @@ interface FilaMaquila {
         fecha_entrega: string | null;
         procesado: boolean;
         corte_color: { color: string; unidades: number; orden: number; tallas: FilaTalla[] | null } | null;
+        entregas:
+          | { id: string; fecha: string; tallas: Record<string, number>; unidades: number; procesado: boolean }[]
+          | null;
       }[]
     | null;
 }
@@ -188,7 +192,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .select(
           `id, nombre_tela, fecha_pedido, unidad, rendimiento, ancho_pedido, ancho_real,
            proveedor_id, prenda_id, total_metros, valor_metro, total_pagar, estado,
-           fecha_entrega_real, corrida_base, recibido_por_rol, ancho_recibido,
+           fecha_entrega_real, corrida_base, recibido_por_rol, ancho_recibido, destino_indicado,
            colores:prod_pedido_colores (id, color, metros, kilos, orden)`
         )
         .order("fecha_pedido", { ascending: false }),
@@ -212,7 +216,8 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
              corte_color:prod_corte_colores (
                color, unidades, orden,
                tallas:prod_corte_color_tallas (talla, unidades)
-             )
+             ),
+             entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado)
            )`
         )
         .order("created_at", { ascending: false }),
@@ -260,6 +265,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       corrida_base: p.corrida_base ?? null,
       recibido_por_rol: p.recibido_por_rol ?? null,
       ancho_recibido: p.ancho_recibido == null ? null : Number(p.ancho_recibido),
+      destino_indicado: p.destino_indicado ?? null,
       colores: [...(p.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({
@@ -311,6 +317,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           fecha_envio: c.fecha_envio,
           fecha_entrega: c.fecha_entrega,
           procesado: c.procesado,
+          entregas: [...(c.entregas ?? [])]
+            .sort((a, b) => a.fecha.localeCompare(b.fecha))
+            .map((e) => ({ ...e, unidades: Number(e.unidades) })),
         })),
     }));
 

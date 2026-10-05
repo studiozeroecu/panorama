@@ -7,6 +7,7 @@ import { hoyEcuador } from "@/lib/fechas";
 import { compararCorte, esperadoPorTalla } from "@/lib/produccion/descuadre";
 import type { Maquiladora } from "./CortadoraApp";
 import MaquilaDelCorte from "./MaquilaDelCorte";
+import { validarHoras, costoHoras, guardarHorasCorte, TARIFA_HORA_CORTADORA } from "@/lib/produccion/horas";
 
 /**
  * Registro de un corte por la cortadora — fase 8k.
@@ -73,6 +74,7 @@ export default function RegistrarCorte({
   const [maquiladoraId, setMaquiladoraId] = useState("");
   // Arranca con el de la prenda (como CorteTab); ella lo puede cambiar.
   const [precio, setPrecio] = useState(costoMaquila != null ? String(costoMaquila) : "");
+  const [horas, setHoras] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const fila = (c: string) => filas[c] ?? FILA_VACIA;
@@ -138,6 +140,9 @@ export default function RegistrarCorte({
     if (payload.every((c) => Object.keys(c.tallas).length === 0))
       return setErr("No hay ninguna unidad que registrar.");
 
+    const vh = validarHoras(horas);
+    if ("error" in vh) return setErr(vh.error);
+
     const precioNum = precio.trim() ? Number(precio.replace(",", ".")) : null;
     if (precioNum != null && (!Number.isFinite(precioNum) || precioNum < 0))
       return setErr("El precio de maquila tiene que ser un número (o déjalo en blanco).");
@@ -161,12 +166,21 @@ export default function RegistrarCorte({
         p_corrida_base: corridaBase,
       });
       if (error) throw new Error(error.message);
-      const r = (data ?? {}) as { ya_registrado?: boolean; unidades?: number };
-      onListo(
-        r.ya_registrado
-          ? "Este corte ya estaba registrado."
-          : `Corte registrado · ${r.unidades ?? comparacion.totalReal} unidades`
-      );
+      const r = (data ?? {}) as { ya_registrado?: boolean; unidades?: number; corte_id?: string };
+      if (r.ya_registrado) return onListo("Este corte ya estaba registrado.");
+
+      let msg = `Corte registrado · ${r.unidades ?? comparacion.totalReal} unidades`;
+      // Las horas van DESPUÉS y aparte (fase 8o): si fallaran, el corte ya está
+      // guardado y no se pierde; se avisa para añadirlas con «+ Horas».
+      if (vh.horas != null && r.corte_id) {
+        try {
+          await guardarHorasCorte(supabase, r.corte_id, vh.horas, `Corte ${nombreTela}`);
+          msg += ` · ${vh.horas} h`;
+        } catch (e) {
+          msg += ` — ⚠️ ${e instanceof Error ? e.message : String(e)}. Añádelas con «+ Horas».`;
+        }
+      }
+      onListo(msg);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -289,6 +303,26 @@ export default function RegistrarCorte({
           </section>
         );
       })}
+
+      {/* Fase 8o: las horas de ESTE corte. La tarifa la congela la base. */}
+      <section style={{ ...BLOQUE, marginTop: 10, marginBottom: 0 }}>
+        <b style={{ fontSize: 15 }}>Horas de este corte</b>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
+          <input
+            className="pinput" style={{ width: 110, textAlign: "center", fontSize: 16 }}
+            type="number" inputMode="decimal" min={0} step="0.5" placeholder="Ej. 3"
+            value={horas} onChange={(e) => setHoras(e.target.value)}
+          />
+          <span style={{ fontSize: 13.5, color: "var(--muted)" }}>
+            {(() => {
+              const vh = validarHoras(horas);
+              return "horas" in vh && vh.horas != null
+                ? `× $${TARIFA_HORA_CORTADORA}/h = $${costoHoras(vh.horas).toFixed(2)}`
+                : `a $${TARIFA_HORA_CORTADORA} la hora`;
+            })()}
+          </span>
+        </div>
+      </section>
 
       {/* Al final: primero se registra lo cortado, después a dónde va y a qué precio. */}
       <MaquilaDelCorte

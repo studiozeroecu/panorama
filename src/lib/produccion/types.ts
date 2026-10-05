@@ -75,6 +75,8 @@ export interface PedidoTela {
   recibido_por_rol: "admin" | "cortadora" | null;
   /** Fase 8l: FOTO del ancho medido al recibir. `ancho_real` puede corregirse después; este no. */
   ancho_recibido: number | null;
+  /** Fase 8o: qué hacer con la tela al volver de maquila. SOLO informativo: Envío decide. */
+  destino_indicado: "locales" | "estampado" | null;
 }
 
 export interface ColorCorte {
@@ -113,6 +115,17 @@ export interface ColorMaquila {
   fecha_envio: string | null;
   fecha_entrega: string | null;
   procesado: boolean; // ya se envió a estampado/online/locales desde Envío
+  /** Fase 8o: lo que la maquiladora fue devolviendo. Envío procesa CADA entrega. */
+  entregas: EntregaMaquila[];
+}
+
+/** Fase 8o: una entrega (completa o parcial) de un color en maquila. */
+export interface EntregaMaquila {
+  id: string;
+  fecha: string;
+  tallas: Record<string, number>;
+  unidades: number;
+  procesado: boolean;
 }
 
 export interface Maquila {

@@ -125,6 +125,12 @@ export default function MaquilaTab() {
                       {c.fecha_envio && <>Env: {fmtFecha(c.fecha_envio)} </>}
                       {c.fecha_entrega && <>· Rec: {fmtFecha(c.fecha_entrega)}</>}
                     </div>
+                    {/* Fase 8o: entregas parciales (las registra la cortadora). */}
+                    {c.estado !== "entregado" && c.entregas.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
+                        Parcial: {c.entregas.reduce((s, e) => s + e.unidades, 0)} de {c.unidades} entregadas
+                      </div>
+                    )}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     {c.estado === "pendiente" && (
@@ -134,15 +140,20 @@ export default function MaquilaTab() {
                       </button>
                     )}
                     {c.estado === "enviado" && (
+                      // Fase 8o: marcar entregado crea (por trigger) la entrega de lo
+                      // que faltaba, así que con parciales previas cierra el resto.
                       <button className="btn primary" style={{ fontSize: 12 }}
                         onClick={() => { setFecha(hoyEcuador()); setFechaModal({ color: c, tipo: "entregado" }); }}>
-                        Marcar entregado
+                        {c.entregas.length > 0 ? "Entregado el resto" : "Marcar entregado"}
                       </button>
                     )}
                     {c.estado === "entregado" && (
                       c.procesado
                         ? <span className="sub" style={{ fontSize: 11.5 }}>Procesado en Envío</span>
                         : <span style={{ fontSize: 11.5, color: "var(--good)" }}>Listo para Envío →</span>
+                    )}
+                    {c.estado === "enviado" && c.entregas.some((e) => !e.procesado) && (
+                      <div style={{ fontSize: 11.5, color: "var(--good)", marginTop: 4 }}>Parcial lista para Envío →</div>
                     )}
                   </td>
                 </tr>

@@ -10,7 +10,8 @@ import { ordenarTallas } from "@/lib/produccion/types";
 import { avanceCorte, type AvanceCorte } from "@/lib/produccion/avanceCorte";
 import RegistrarCorte from "./RegistrarCorte";
 import ExtrasCorte from "./ExtrasCorte";
-import Jornadas from "./Jornadas";
+import MaquilasCortadora, { TEXTO_DESTINO, type MaquilaC } from "./MaquilasCortadora";
+import { costoHoras } from "@/lib/produccion/horas";
 import RecibirTela from "./RecibirTela";
 
 /**
@@ -27,8 +28,9 @@ import RecibirTela from "./RecibirTela";
  * Fase 8l: también ve las telas que VIENEN (pendientes y en camino) y confirma
  * su llegada con el ancho medido, por `fn_recibir_tela`.
  *
- * Lo que todavía NO hace (ver docs/plan_cortadora.md): crear maquilas,
- * confirmar la llegada de una maquila y ver el destino que decidió Mateo.
+ * Fase 8o: tercera pestaña, Maquila — dónde está cada lote y registrar lo que
+ * vuelve, completo o en partes. Las horas se anotan con cada corte (ya no hay
+ * una sección de jornadas suelta), y se ve la indicación de destino de Mateo.
  */
 
 interface ColorPedido {
@@ -43,6 +45,8 @@ interface Pedido {
   nombre_tela: string;
   estado: "pendiente" | "en_camino" | "entregado";
   fecha_pedido: string;
+  /** Fase 8o: indicación de Mateo, solo informativa. */
+  destino_indicado: "locales" | "estampado" | null;
   prenda_id: string | null;
   corrida_base: Record<string, number> | null;
   ancho_real: number | string | null;
@@ -65,6 +69,11 @@ interface ColorCorte {
   tallas: TallaCorte[] | null;
 }
 
+/** Fase 8o: horas anotadas a un corte, con la tarifa CONGELADA de cada jornada. */
+interface HorasCorte {
+  jornada: { horas: number | string; tarifa_hora: number | string } | null;
+}
+
 interface Corte {
   id: string;
   pedido_id: string;
@@ -72,6 +81,7 @@ interface Corte {
   total_unidades: number;
   metros_consumidos: number | string | null;
   colores: ColorCorte[] | null;
+  horas: HorasCorte[] | null;
 }
 
 interface Prenda {
@@ -92,6 +102,7 @@ export default function CortadoraApp() {
   const supabase = useMemo(() => createClient(), []);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [cortes, setCortes] = useState<Corte[]>([]);
+  const [maquilas, setMaquilas] = useState<MaquilaC[]>([]);
   const [prendas, setPrendas] = useState<Prenda[]>([]);
   const [maquiladoras, setMaquiladoras] = useState<Maquiladora[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -100,15 +111,15 @@ export default function CortadoraApp() {
   const [registrando, setRegistrando] = useState<string | null>(null);
   const [recibiendo, setRecibiendo] = useState<string | null>(null);
   /** null = todavía no la eligió ella: se decide sola según lo que haya. */
-  const [vista, setVista] = useState<"llegadas" | "corte" | null>(null);
+  const [vista, setVista] = useState<"llegadas" | "corte" | "maquila" | null>(null);
 
   const reload = useCallback(async () => {
-    const [pedR, corR, prendaR, maqR] = await Promise.all([
+    const [pedR, corR, prendaR, maqR, lotesR] = await Promise.all([
       supabase
         .from("prod_pedidos_tela")
         .select(
           `id, nombre_tela, estado, fecha_pedido, prenda_id, ancho_real, ancho_pedido,
-           total_metros, fecha_entrega_real, corrida_base,
+           total_metros, fecha_entrega_real, corrida_base, destino_indicado,
            colores:prod_pedido_colores (id, color, metros, orden)`
         )
         // Fase 8l: todos los estados. Las que vienen se separan abajo; antes la
@@ -121,33 +132,62 @@ export default function CortadoraApp() {
            colores:prod_corte_colores (
              pedido_color_id, color, unidades, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
-           )`
+           ),
+           horas:prod_jornada_cortes (jornada:prod_jornadas (horas, tarifa_hora))`
         )
         .order("fecha", { ascending: false }),
       supabase.from("prod_prendas").select("id, nombre, tallas, costo_maquila"),
       // Fase 8e: se cargan TODAS, archivadas incluidas; el filtro va solo en el
       // <select> donde se elige (RegistrarCorte).
       supabase.from("prod_maquiladoras").select("id, nombre, archivada_en").order("nombre"),
+      // Fase 8o: los lotes en maquila, con lo cortado por talla y sus entregas.
+      supabase
+        .from("prod_maquilas")
+        .select(
+          `id, corte_id, maquiladora_id,
+           colores:prod_maquila_colores (
+             id, estado, fecha_envio, fecha_entrega,
+             corte_color:prod_corte_colores (color, orden, tallas:prod_corte_color_tallas (talla, unidades)),
+             entregas:prod_maquila_entregas (id, fecha, tallas, unidades)
+           )`
+        )
+        .order("created_at", { ascending: false }),
     ]);
 
     if (pedR.error) {
       // Con el rol mal configurado esto vuelve vacío en vez de fallar, así que
       // el mensaje distingue el caso "falta el SQL" del resto.
+      // El detalle va siempre: "does not exist" salta igual por un rol sin
+      // configurar que por una columna de una fase sin aplicar (8l, 8o…), y sin
+      // él no hay cómo saber cuál.
       setError(
         pedR.error.message.includes("does not exist") ||
           pedR.error.message.includes("schema cache")
-          ? "Falta ejecutar supabase/schema_fase8i_rol_cortadora.sql."
+          ? `La base no está al día: falta aplicar alguna fase de la cortadora. Detalle: ${pedR.error.message}`
           : pedR.error.message
       );
       setCargando(false);
       return;
     }
 
+    // Cortes y lotes también pueden fallar (p. ej. la fase 8o sin aplicar): se
+    // dice cuál y por qué, en vez de enseñar listas vacías que parecen ciertas.
+    const fallo = corR.error ?? lotesR.error;
+    if (fallo) {
+      setError(
+        fallo.message.includes("does not exist") || fallo.message.includes("schema cache") ||
+          fallo.message.includes("relationship")
+          ? `Falta aplicar la fase 8o en la base. Detalle: ${fallo.message}`
+          : fallo.message
+      );
+    }
+
     setPedidos((pedR.data ?? []) as unknown as Pedido[]);
     setCortes((corR.data ?? []) as unknown as Corte[]);
+    setMaquilas(aMaquilas(lotesR.data));
     setPrendas((prendaR.data ?? []) as Prenda[]);
     setMaquiladoras((maqR.data ?? []) as Maquiladora[]);
-    setError(null);
+    if (!fallo) setError(null);
     setCargando(false);
   }, [supabase]);
 
@@ -199,6 +239,7 @@ export default function CortadoraApp() {
   // cortar y sí telas por llegar, abre en Llegadas.
   const vistaActual =
     vista ?? (pendientes.length === 0 && porRecibir.length > 0 ? "llegadas" : "corte");
+  const lotesActivos = maquilas.filter((m) => m.colores.some((c) => c.estado !== "entregado")).length;
 
   /** Una maquiladora recién creada en el formulario del corte entra a la lista
    *  sin recargar todo — y así queda disponible para los demás cortes. */
@@ -256,7 +297,25 @@ export default function CortadoraApp() {
         >
           ✂️ Corte ({pendientes.length})
         </button>
+        <button
+          className={vistaActual === "maquila" ? "btn primary" : "btn"}
+          style={PESTANA}
+          onClick={() => setVista("maquila")}
+        >
+          🧵 Maquila ({lotesActivos})
+        </button>
       </nav>
+
+      {vistaActual === "maquila" && (
+        <MaquilasCortadora
+          supabase={supabase}
+          maquilas={maquilas}
+          cortes={cortes}
+          pedidos={pedidos}
+          maquiladoras={maquiladoras}
+          onListo={trasRegistrar}
+        />
+      )}
 
       {vistaActual === "llegadas" && porRecibir.length === 0 && (
         <Vacio titulo="No hay telas por llegar" hint="Cuando Mateo pida una tela, aparecerá aquí." />
@@ -332,9 +391,6 @@ export default function CortadoraApp() {
           ))}
         </>
       )}
-      {vistaActual === "corte" && (
-        <Jornadas supabase={supabase} cortes={cortes} onListo={trasRegistrar} />
-      )}
     </main>
   );
 }
@@ -369,6 +425,7 @@ function TarjetaRecibir({
       <p style={{ margin: "5px 0 0", fontSize: 13.5, color: "var(--muted)" }}>
         {prenda ?? "Sin prenda asignada"} · pedida {fmtFecha(pedido.fecha_pedido)}
       </p>
+      <Indicacion destino={pedido.destino_indicado} />
       <p style={{ margin: "7px 0 0", fontSize: 14 }}>
         {Number(pedido.total_metros).toFixed(1)} m
         {anchoPed != null && <> · ancho pedido {anchoPed} cm</>}
@@ -456,6 +513,7 @@ function TarjetaTela({
         {prenda ?? "Sin prenda asignada"}
         {pedido.fecha_entrega_real && ` · llegó ${fmtFecha(pedido.fecha_entrega_real)}`}
       </p>
+      <Indicacion destino={pedido.destino_indicado} />
 
       <p style={{ margin: "7px 0 0", fontSize: 14 }}>
         Ancho{" "}
@@ -552,6 +610,7 @@ function TarjetaTela({
                   {fmtFecha(c.fecha)}
                   {c.metros_consumidos != null &&
                     ` · ${Number(c.metros_consumidos).toFixed(1)} m usados`}
+                  {textoHoras(c.horas)}
                 </span>
               </div>
               {[...(c.colores ?? [])]
@@ -574,6 +633,62 @@ function TarjetaTela({
       )}
     </section>
   );
+}
+
+/** Fase 8o: lo que Mateo indicó hacer con la tela. Solo un aviso. */
+function Indicacion({ destino }: { destino: "locales" | "estampado" | null }) {
+  if (!destino) return null;
+  return (
+    <p
+      style={{
+        margin: "8px 0 0", padding: "7px 10px", borderRadius: 8, fontSize: 13.5,
+        background: "var(--accent-soft)", color: "var(--accent)",
+      }}
+    >
+      👉 Mateo indica: <b>{TEXTO_DESTINO[destino]}</b>
+    </p>
+  );
+}
+
+/** " · 3 h ($12.00)", con la tarifa congelada de cada jornada. */
+function textoHoras(horas: HorasCorte[] | null | undefined): string {
+  const filas = (horas ?? []).flatMap((h) => (h.jornada ? [h.jornada] : []));
+  if (!filas.length) return "";
+  const total = filas.reduce((s, j) => s + Number(j.horas), 0);
+  const costo = filas.reduce((s, j) => s + costoHoras(Number(j.horas), Number(j.tarifa_hora)), 0);
+  return ` · ${total} h ($${costo.toFixed(2)})`;
+}
+
+/** Las filas de PostgREST → la forma de MaquilasCortadora. */
+function aMaquilas(data: unknown): MaquilaC[] {
+  type Fila = {
+    id: string; corte_id: string; maquiladora_id: string | null;
+    colores: {
+      id: string; estado: "pendiente" | "enviado" | "entregado";
+      fecha_envio: string | null; fecha_entrega: string | null;
+      corte_color: { color: string; orden: number; tallas: { talla: string; unidades: number }[] | null } | null;
+      entregas: { id: string; fecha: string; tallas: Record<string, number>; unidades: number }[] | null;
+    }[] | null;
+  };
+  return ((data ?? []) as Fila[]).map((m) => ({
+    id: m.id,
+    corte_id: m.corte_id,
+    maquiladora_id: m.maquiladora_id,
+    colores: (m.colores ?? []).map((c) => {
+      const tallas: Record<string, number> = {};
+      for (const t of c.corte_color?.tallas ?? []) if (t.unidades > 0) tallas[t.talla] = Number(t.unidades);
+      return {
+        id: c.id,
+        estado: c.estado,
+        fecha_envio: c.fecha_envio,
+        fecha_entrega: c.fecha_entrega,
+        color: c.corte_color?.color ?? "",
+        orden: c.corte_color?.orden ?? 0,
+        tallas,
+        entregas: (c.entregas ?? []).map((e) => ({ ...e, unidades: Number(e.unidades) })),
+      };
+    }),
+  }));
 }
 
 /** Las tallas llegan como filas; `Tallas` las espera como objeto, en orden. */

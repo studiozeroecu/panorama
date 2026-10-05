@@ -292,6 +292,22 @@ export default function PedidosTab() {
     await reload();
   }
 
+  /**
+   * Fase 8o: qué hacer con la tela al volver de maquila. Es SOLO un aviso para la
+   * cortadora — no cambia nada en Envío, que sigue decidiendo el destino real.
+   * Se guarda al elegir, sin abrir el formulario.
+   */
+  async function cambiarDestino(p: PedidoTela, valor: string) {
+    const destino = valor === "" ? null : (valor as "locales" | "estampado");
+    const { error } = await supabase
+      .from("prod_pedidos_tela")
+      .update({ destino_indicado: destino })
+      .eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(destino ? `«${p.nombre_tela}»: indicado ${destino === "locales" ? "directo a locales" : "a bodega de estampados"}` : `«${p.nombre_tela}»: sin indicación`);
+    await reload();
+  }
+
   async function marcarEnCamino(p: PedidoTela) {
     const { error } = await supabase.from("prod_pedidos_tela").update({ estado: "en_camino" }).eq("id", p.id);
     if (error) return toast(error.message, "error");
@@ -369,6 +385,17 @@ export default function PedidosTab() {
                       {textoRecepcionCortadora(p) && (
                         <div className="sub" style={{ fontSize: 11.5, marginTop: 3 }}>{textoRecepcionCortadora(p)}</div>
                       )}
+                      <select
+                        className="pinput"
+                        title="Indicación para la cortadora: qué hacer con la tela al volver de maquila"
+                        style={{ marginTop: 5, padding: "3px 6px", fontSize: 11.5, width: "auto" }}
+                        value={p.destino_indicado ?? ""}
+                        onChange={(e) => cambiarDestino(p, e.target.value)}
+                      >
+                        <option value="">👉 Sin indicación</option>
+                        <option value="locales">👉 Directo a locales</option>
+                        <option value="estampado">👉 Bodega de estampados</option>
+                      </select>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {/* Visible en los tres estados: el proveedor mal puesto se
