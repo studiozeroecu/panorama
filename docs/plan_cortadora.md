@@ -192,7 +192,8 @@ relación 1-a-1 y hay que decidir qué significa.
 **Insumos con fecha de entrega.** Concepto **nuevo**: no hay ninguna tabla de insumos. `prod_pedidos_tela`
 es solo tela. Tabla nueva, con su RLS.
 
-**Confirmar llegada.** Ya existe para tela (`LlegadaTab`); para insumos sería el equivalente.
+**Confirmar llegada.** Para **tela** ✅ hecho en la fase 8l: la cortadora la confirma desde
+`/cortadora` con el ancho medido, por `fn_recibir_tela`. Para insumos y para maquila, pendiente.
 
 ---
 

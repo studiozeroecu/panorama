@@ -71,6 +71,10 @@ export interface PedidoTela {
   fecha_entrega_real: string | null;
   /** Fase 8j · PLAN: unidades por talla de UNA capa. Lo define el admin, lo lee la cortadora. */
   corrida_base: Record<string, number> | null;
+  /** Fase 8l: quién confirmó la llegada. null = anterior a la 8l, no se sabe. */
+  recibido_por_rol: "admin" | "cortadora" | null;
+  /** Fase 8l: FOTO del ancho medido al recibir. `ancho_real` puede corregirse después; este no. */
+  ancho_recibido: number | null;
 }
 
 export interface ColorCorte {

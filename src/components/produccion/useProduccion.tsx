@@ -65,6 +65,8 @@ interface FilaPedido {
   estado: EstadoPedido;
   fecha_entrega_real: string | null;
   corrida_base: Record<string, number> | null;
+  recibido_por_rol: "admin" | "cortadora" | null;
+  ancho_recibido: number | string | null;
   colores:
     | { id: string; color: string; metros: number | string; kilos: number | string | null; orden: number }[]
     | null;
@@ -186,7 +188,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .select(
           `id, nombre_tela, fecha_pedido, unidad, rendimiento, ancho_pedido, ancho_real,
            proveedor_id, prenda_id, total_metros, valor_metro, total_pagar, estado,
-           fecha_entrega_real, corrida_base,
+           fecha_entrega_real, corrida_base, recibido_por_rol, ancho_recibido,
            colores:prod_pedido_colores (id, color, metros, kilos, orden)`
         )
         .order("fecha_pedido", { ascending: false }),
@@ -256,6 +258,8 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       estado: p.estado,
       fecha_entrega_real: p.fecha_entrega_real,
       corrida_base: p.corrida_base ?? null,
+      recibido_por_rol: p.recibido_por_rol ?? null,
+      ancho_recibido: p.ancho_recibido == null ? null : Number(p.ancho_recibido),
       colores: [...(p.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({

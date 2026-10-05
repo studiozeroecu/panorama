@@ -53,7 +53,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8i_rol_cortadora.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02** →
-`schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05**
+`schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
+`schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -97,7 +98,7 @@ versionadas. Orden real de ejecución:
 | `prod_costos_fijos` | uuid | `nombre`, `valor`, `legacy_id` | — |
 | `prod_maquiladoras` | uuid | `nombre` unique | — |
 | `prod_talleres` | uuid | `nombre` unique | — |
-| `prod_pedidos_tela` | uuid | `nombre_tela`, `unidad` (metros\|kilos), `rendimiento`, `ancho_pedido/real`, `colores jsonb`, `total_metros`, `valor_metro`, `total_pagar`, `estado` (pendiente\|en_camino\|entregado) | `proveedor_id → prod_proveedores` set null · `prenda_id → prod_prendas` set null |
+| `prod_pedidos_tela` | uuid | `nombre_tela`, `unidad` (metros\|kilos), `rendimiento`, `ancho_pedido/real`, `colores jsonb`, `total_metros`, `valor_metro`, `total_pagar`, `estado` (pendiente\|en_camino\|entregado), `recibido_por_rol` + `ancho_recibido` (fase 8l) | `proveedor_id → prod_proveedores` set null · `prenda_id → prod_prendas` set null |
 | `prod_cortes` | uuid | `fecha`, `colores jsonb`, `total_unidades`, `metros_consumidos` (null = no registrado) | `pedido_id → prod_pedidos_tela` **restrict** · `maquiladora_id → prod_maquiladoras` set null |
 | `prod_maquilas` | uuid | `costo_unitario`, `colores jsonb` (estado y fechas por color), `total_unidades` | `corte_id → prod_cortes` **cascade** · `maquiladora_id → prod_maquiladoras` set null |
 | `prod_lotes_estampado` | uuid | `tallas jsonb`, `disenos jsonb`, `costo_unitario` (def. 2), `costo_total`, `fecha_envio/retorno`, `estado` | `maquila_id → prod_maquilas` set null · `prenda_id → prod_prendas` set null · `taller_id → prod_talleres` set null |
@@ -342,6 +343,46 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-05 — producción — `schema_fase8l_cortadora_recibe_tela.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificar con `supabase/smoke_test_fase8l.sql` (11 comprobaciones, termina en rollback).
+⚠️ **Aplicar ANTES de desplegar**: `useProduccion` ya pide las dos columnas nuevas y, sin ellas,
+`/produccion` entera falla al cargar.
+
+- **Qué:** la cortadora confirma la llegada de una tela desde `/cortadora` — mide el ancho, lo
+  escribe (siempre en cm) y el pedido pasa a `entregado`. Mateo lo sigue pudiendo hacer en
+  `LlegadaTab`, que ahora usa **la misma función**.
+- **Columnas nuevas** en `prod_pedidos_tela`: `recibido_por_rol text` (check `admin | cortadora`,
+  null = anterior a esta fase, no se inventa) y `ancho_recibido numeric(8,2)`.
+- ⚠️ **`ancho_recibido` es una FOTO y no duplica `ancho_real`.** Mateo puede corregir
+  `ancho_real` después (Pedidos → Editar, campo nuevo solo en entregados); sin la foto, el aviso
+  *"Recibido por la cortadora · ancho X"* le atribuiría a ella un número que puso él. Cuando difieren,
+  la pantalla dice los dos. Mismo patrón que `corrida_base` en pedido y en corte.
+- **Función nueva:** `fn_recibir_tela(p_pedido_id, p_ancho_real, p_fecha) → jsonb`.
+  ⚠️ **Es `SECURITY DEFINER`, la primera RPC de negocio del proyecto que lo es**, y a propósito:
+  RLS es de fila, y una política `for update` sobre `prod_pedidos_tela` le dejaría tocar precios,
+  proveedor o colores por la API. Así la cortadora **no tiene ninguna política de escritura** sobre
+  esa tabla, y la función solo escribe 5 columnas. El precio: la guarda `fn_es_admin() or
+  fn_es_cortadora()` de dentro deja de ser cosmética y es **la única barrera**. Se le quitó el
+  `EXECUTE` a `anon` y `public`. **No relajar esa guarda.**
+- **Validaciones:** ancho entre 10 y 400 cm (por debajo es un ancho en metros —la base ya los
+  mezcla—, por encima, milímetros), fecha no nula y no futura. Los mismos límites viven en
+  `src/lib/produccion/recepcion.ts` para avisar antes de enviar: **se mueven juntos**.
+- **Idempotencia por estado, sin `idem_id`:** aquí sí basta, porque el registro ya existe. Un pedido
+  ya `entregado` devuelve `{"ya_recibido": true, …}` con lo guardado y **no modifica nada** — un
+  doble toque, o Mateo y ella a la vez, se ven como aviso y no como error rojo. Con `for update`.
+- **No dispara los triggers de las fases 7 / 8g:** el update no nombra `colores` ni `total_metros`,
+  y los dos triggers son por columna. La comprobación 7 del smoke lo fija con un pedido cuyo corte
+  consumió más de lo que tiene — si la guarda B de la 8g disparara, fallaría.
+- **Lectura ampliada:** `cortadora_lee_pedidos` y `cortadora_lee_pedido_colores` dejan de filtrar
+  `estado = 'entregado'` (necesita ver lo que viene). Cortes, maquilas y demás **siguen** acotados:
+  no hay cortes de una tela que no llegó. `CortadoraApp` separa por estado en el cliente.
+- **Pantallas:** `/cortadora` gana la sección *"Por recibir"* (`RecibirTela.tsx`; el ancho arranca
+  vacío para obligar a medir). `PedidosTab` muestra el indicador bajo el estado; `LlegadaTab` lista
+  lo recibido por ella en los últimos 14 días, porque esas telas desaparecen de sus pendientes
+  sin que él las haya tocado.
+- **Impacto en otras áreas: ninguno.**
 
 <!-- Nuevas entradas debajo de esta línea -->
 

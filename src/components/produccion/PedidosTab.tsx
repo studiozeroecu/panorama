@@ -7,6 +7,7 @@ import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/type
 import { estimar } from "@/lib/produccion/estimacion";
 import { leerMesas } from "@/lib/produccion/corrida";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
+import { validarAnchoCm, textoRecepcionCortadora } from "@/lib/produccion/recepcion";
 
 const ESTADO_LABEL: Record<EstadoPedido, { txt: string; color: "ambar" | "azul" | "verde" }> = {
   pendiente: { txt: "Pendiente", color: "ambar" },
@@ -38,6 +39,8 @@ export default function PedidosTab() {
     proveedor_id: "",
     prenda_id: "",
     valor_metro: "",
+    /** Fase 8l: solo se edita en pedidos ya entregados. */
+    ancho_real: "",
   });
   const [colores, setColores] = useState<ColorForm[]>([{ color: "", cant: "" }]);
 
@@ -128,6 +131,7 @@ export default function PedidosTab() {
         proveedor_id: p.proveedor_id ?? "",
         prenda_id: p.prenda_id ?? "",
         valor_metro: String(p.valor_metro),
+        ancho_real: p.ancho_real == null ? "" : String(p.ancho_real),
       });
       // El formulario pide la cantidad en la UNIDAD DE COMPRA; la base guarda
       // siempre metros, y kilos solo cuando aplica. Hay que deshacer la conversión,
@@ -148,6 +152,7 @@ export default function PedidosTab() {
       setForm({
         nombre_tela: "", fecha_pedido: hoyEcuador(), unidad: "metros",
         rendimiento: "", ancho_pedido: "", proveedor_id: "", prenda_id: "", valor_metro: "",
+        ancho_real: "",
       });
       setColores([{ color: "", cant: "" }]);
     }
@@ -160,6 +165,21 @@ export default function PedidosTab() {
     const ancho = parseFloat(form.ancho_pedido);
     if (!(ancho > 0)) return setErr("Ingresa un ancho válido (cm).");
     if (!(valorMetro > 0)) return setErr("Ingresa el valor por metro.");
+
+    // Fase 8l: corregir el ancho real de una tela ya recibida (por la cortadora o
+    // por Mateo). Solo viaja si CAMBIÓ: muchos pedidos migrados traen el ancho en
+    // metros (1.05), y exigir que pase la validación aunque nadie lo tocara
+    // dejaría esos pedidos imposibles de editar — p. ej. para cambiar el proveedor.
+    // `ancho_recibido` y `recibido_por_rol` NO se tocan: son la foto de la recepción.
+    let anchoRealCorregido: number | undefined;
+    if (pedidoEdit?.estado === "entregado") {
+      const original = pedidoEdit.ancho_real == null ? "" : String(pedidoEdit.ancho_real);
+      if (form.ancho_real.trim() !== original) {
+        const v = validarAnchoCm(form.ancho_real);
+        if ("error" in v) return setErr(v.error);
+        anchoRealCorregido = v.cm;
+      }
+    }
 
     // Con los campos de tela bloqueados no viajan al servidor, así que exigirles
     // nada sería pedirle al usuario que arregle algo que ni siquiera se va a
@@ -246,7 +266,10 @@ export default function PedidosTab() {
       // trabajo de LlegadaTab sin decir nada.
       const { error } = await supabase
         .from("prod_pedidos_tela")
-        .update(bloqueado ? libres : { ...libres, ...tela })
+        .update({
+          ...(bloqueado ? libres : { ...libres, ...tela }),
+          ...(anchoRealCorregido != null ? { ancho_real: anchoRealCorregido } : {}),
+        })
         .eq("id", editId);
       setOcupado(false);
       if (error) return setErr(error.message);
@@ -340,7 +363,12 @@ export default function PedidosTab() {
                       {Number(p.total_metros).toFixed(1)} m
                       <div className="sub" style={{ fontSize: 11.5 }}>{money(Number(p.total_pagar))}</div>
                     </td>
-                    <td><Badge color={est.color}>{est.txt}</Badge></td>
+                    <td>
+                      <Badge color={est.color}>{est.txt}</Badge>
+                      {textoRecepcionCortadora(p) && (
+                        <div className="sub" style={{ fontSize: 11.5, marginTop: 3 }}>{textoRecepcionCortadora(p)}</div>
+                      )}
+                    </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {/* Visible en los tres estados: el proveedor mal puesto se
                           descubre casi siempre DESPUÉS de que la tela llegó. */}
@@ -417,6 +445,21 @@ export default function PedidosTab() {
               onChange={(e) => setForm({ ...form, ancho_pedido: e.target.value })} />
           </Campo>
         </Fila>
+        {pedidoEdit?.estado === "entregado" && (
+          <Fila>
+            <Campo label="Ancho real medido (cm)">
+              <input className="pinput" type="number" inputMode="decimal" min="10" max="400" step="0.5"
+                value={form.ancho_real}
+                onChange={(e) => setForm({ ...form, ancho_real: e.target.value })} />
+            </Campo>
+            <Campo label="Recepción">
+              <div className="pinput" style={{ color: "var(--muted)", fontSize: 12.5 }}>
+                {textoRecepcionCortadora(pedidoEdit) ??
+                  (pedidoEdit.recibido_por_rol === "admin" ? "Confirmada por admin" : "Sin registro de quién la recibió")}
+              </div>
+            </Campo>
+          </Fila>
+        )}
         {esKilos && (
           <Fila>
             <Campo label="Rendimiento (metros por kilo)" requerido>

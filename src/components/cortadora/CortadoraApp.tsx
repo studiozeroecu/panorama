@@ -10,6 +10,7 @@ import { ordenarTallas } from "@/lib/produccion/types";
 import RegistrarCorte from "./RegistrarCorte";
 import ExtrasCorte from "./ExtrasCorte";
 import Jornadas from "./Jornadas";
+import RecibirTela from "./RecibirTela";
 
 /**
  * Pantalla de la cortadora — fase 8i, modo SOLO LECTURA.
@@ -22,9 +23,11 @@ import Jornadas from "./Jornadas";
  * Pensada para el teléfono: una sola columna, tarjetas apiladas y nada de
  * tablas, que es lo que usa el resto de la app en escritorio.
  *
- * Lo que todavía NO hace (necesita tablas que no existen — ver
- * docs/plan_cortadora.md, piezas 4, 7 y 8): registrar capas, retazos, horas e
- * insumos, y ver el destino que decidió Mateo.
+ * Fase 8l: también ve las telas que VIENEN (pendientes y en camino) y confirma
+ * su llegada con el ancho medido, por `fn_recibir_tela`.
+ *
+ * Lo que todavía NO hace (ver docs/plan_cortadora.md): crear maquilas,
+ * confirmar la llegada de una maquila y ver el destino que decidió Mateo.
  */
 
 interface ColorPedido {
@@ -36,6 +39,8 @@ interface ColorPedido {
 interface Pedido {
   id: string;
   nombre_tela: string;
+  estado: "pendiente" | "en_camino" | "entregado";
+  fecha_pedido: string;
   prenda_id: string | null;
   corrida_base: Record<string, number> | null;
   ancho_real: number | string | null;
@@ -81,18 +86,20 @@ export default function CortadoraApp() {
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [registrando, setRegistrando] = useState<string | null>(null);
+  const [recibiendo, setRecibiendo] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const [pedR, corR, prendaR] = await Promise.all([
       supabase
         .from("prod_pedidos_tela")
         .select(
-          `id, nombre_tela, prenda_id, ancho_real, ancho_pedido, total_metros,
-           fecha_entrega_real, corrida_base,
+          `id, nombre_tela, estado, fecha_pedido, prenda_id, ancho_real, ancho_pedido,
+           total_metros, fecha_entrega_real, corrida_base,
            colores:prod_pedido_colores (color, metros, orden)`
         )
-        .eq("estado", "entregado")
-        .order("fecha_entrega_real", { ascending: false }),
+        // Fase 8l: todos los estados. Las que vienen se separan abajo; antes la
+        // política solo dejaba ver las entregadas.
+        .order("fecha_pedido", { ascending: false }),
       supabase
         .from("prod_cortes")
         .select(
@@ -148,6 +155,7 @@ export default function CortadoraApp() {
 
   async function trasRegistrar(mensaje: string) {
     setRegistrando(null);
+    setRecibiendo(null);
     setAviso(mensaje);
     setTimeout(() => setAviso(null), 4000);
     await reload();
@@ -155,8 +163,10 @@ export default function CortadoraApp() {
   const saldoDe = (p: Pedido) => Number(p.total_metros) - (consumido.get(p.id) ?? 0);
   const cortesDe = (p: Pedido) => cortes.filter((c) => c.pedido_id === p.id);
 
-  const pendientes = pedidos.filter((p) => saldoDe(p) > 0.5);
-  const listos = pedidos.filter((p) => saldoDe(p) <= 0.5);
+  const porRecibir = pedidos.filter((p) => p.estado !== "entregado");
+  const entregados = pedidos.filter((p) => p.estado === "entregado");
+  const pendientes = entregados.filter((p) => saldoDe(p) > 0.5);
+  const listos = entregados.filter((p) => saldoDe(p) <= 0.5);
 
   if (cargando) {
     return (
@@ -179,7 +189,7 @@ export default function CortadoraApp() {
             Corte
           </h1>
           <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13.5 }}>
-            Telas entregadas y lo que ya se cortó de cada una.
+            Telas por recibir, por cortar y lo que ya se cortó.
           </p>
         </div>
         {/* Sin esto no hay forma de salir: el middleware manda a /cortadora
@@ -192,9 +202,27 @@ export default function CortadoraApp() {
 
       {!pedidos.length && !error && (
         <Vacio
-          titulo="No hay telas para cortar"
-          hint="Aquí aparecen las telas cuya llegada ya se confirmó."
+          titulo="No hay telas"
+          hint="Aquí aparecen las telas pedidas, las que llegaron y lo que se cortó."
         />
+      )}
+
+      {porRecibir.length > 0 && (
+        <>
+          <h2 style={ROTULO}>Por recibir ({porRecibir.length})</h2>
+          {porRecibir.map((p) => (
+            <TarjetaRecibir
+              key={p.id}
+              pedido={p}
+              prenda={prendaDe(p)}
+              supabase={supabase}
+              recibiendo={recibiendo === p.id}
+              onRecibir={() => setRecibiendo(p.id)}
+              onCancelar={() => setRecibiendo(null)}
+              onListo={trasRegistrar}
+            />
+          ))}
+        </>
       )}
 
       {pendientes.length > 0 && (
@@ -244,6 +272,74 @@ export default function CortadoraApp() {
   );
 }
 
+/** Una tela que todavía no llega: lo justo para reconocerla al recibirla. */
+function TarjetaRecibir({
+  pedido,
+  prenda,
+  supabase,
+  recibiendo,
+  onRecibir,
+  onCancelar,
+  onListo,
+}: {
+  pedido: Pedido;
+  prenda: string | undefined;
+  supabase: SupabaseClient;
+  recibiendo: boolean;
+  onRecibir: () => void;
+  onCancelar: () => void;
+  onListo: (mensaje: string) => void;
+}) {
+  const anchoPed = Number(pedido.ancho_pedido) > 0 ? Number(pedido.ancho_pedido) : null;
+  return (
+    <section style={TARJETA}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+        <h3 style={{ margin: 0, fontSize: 17 }}>{pedido.nombre_tela}</h3>
+        <Badge color={pedido.estado === "en_camino" ? "azul" : "ambar"}>
+          {pedido.estado === "en_camino" ? "En camino" : "Pedida"}
+        </Badge>
+      </div>
+      <p style={{ margin: "5px 0 0", fontSize: 13.5, color: "var(--muted)" }}>
+        {prenda ?? "Sin prenda asignada"} · pedida {fmtFecha(pedido.fecha_pedido)}
+      </p>
+      <p style={{ margin: "7px 0 0", fontSize: 14 }}>
+        {Number(pedido.total_metros).toFixed(1)} m
+        {anchoPed != null && <> · ancho pedido {anchoPed} cm</>}
+      </p>
+      {!!pedido.colores?.length && (
+        <div style={{ marginTop: 8 }}>
+          {[...pedido.colores]
+            .sort((a, b) => a.orden - b.orden)
+            .map((c) => (
+              <Badge key={c.color}>
+                {c.color}: {Number(c.metros).toFixed(1)} m
+              </Badge>
+            ))}
+        </div>
+      )}
+
+      {!recibiendo ? (
+        <button
+          className="btn primary"
+          style={{ width: "100%", padding: "12px", fontSize: 15, marginTop: 12 }}
+          onClick={onRecibir}
+        >
+          Llegó esta tela
+        </button>
+      ) : (
+        <RecibirTela
+          supabase={supabase}
+          pedidoId={pedido.id}
+          nombreTela={pedido.nombre_tela}
+          anchoPedido={anchoPed}
+          onListo={onListo}
+          onCancelar={onCancelar}
+        />
+      )}
+    </section>
+  );
+}
+
 function TarjetaTela({
   pedido,
   prenda,
@@ -275,15 +371,7 @@ function TarjetaTela({
   const anchoPed = Number(pedido.ancho_pedido) > 0 ? Number(pedido.ancho_pedido) : null;
 
   return (
-    <section
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        padding: 15,
-        marginBottom: 12,
-      }}
-    >
+    <section style={TARJETA}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
         <h3 style={{ margin: 0, fontSize: 17 }}>{pedido.nombre_tela}</h3>
         <Badge color={pendiente ? "verde" : "gris"}>
@@ -410,6 +498,14 @@ const ENVOLTORIO: React.CSSProperties = {
   maxWidth: 560,
   margin: "0 auto",
   padding: "18px 14px 60px",
+};
+
+const TARJETA: React.CSSProperties = {
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  padding: 15,
+  marginBottom: 12,
 };
 
 const ROTULO: React.CSSProperties = {
