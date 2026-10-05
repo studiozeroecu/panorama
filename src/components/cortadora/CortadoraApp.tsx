@@ -7,6 +7,7 @@ import { Badge, Vacio, Tallas } from "@/components/ui";
 import LogoutButton from "@/components/LogoutButton";
 import { fmtFecha } from "@/lib/fechas";
 import { ordenarTallas } from "@/lib/produccion/types";
+import { avanceCorte, type AvanceCorte } from "@/lib/produccion/avanceCorte";
 import RegistrarCorte from "./RegistrarCorte";
 import ExtrasCorte from "./ExtrasCorte";
 import Jornadas from "./Jornadas";
@@ -31,6 +32,7 @@ import RecibirTela from "./RecibirTela";
  */
 
 interface ColorPedido {
+  id: string;
   color: string;
   metros: number | string;
   orden: number;
@@ -56,6 +58,7 @@ interface TallaCorte {
 }
 
 interface ColorCorte {
+  pedido_color_id: string | null;
   color: string;
   unidades: number;
   orden: number;
@@ -95,7 +98,7 @@ export default function CortadoraApp() {
         .select(
           `id, nombre_tela, estado, fecha_pedido, prenda_id, ancho_real, ancho_pedido,
            total_metros, fecha_entrega_real, corrida_base,
-           colores:prod_pedido_colores (color, metros, orden)`
+           colores:prod_pedido_colores (id, color, metros, orden)`
         )
         // Fase 8l: todos los estados. Las que vienen se separan abajo; antes la
         // política solo dejaba ver las entregadas.
@@ -105,7 +108,7 @@ export default function CortadoraApp() {
         .select(
           `id, pedido_id, fecha, total_unidades, metros_consumidos,
            colores:prod_corte_colores (
-             color, unidades, orden,
+             pedido_color_id, color, unidades, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
            )`
         )
@@ -137,15 +140,18 @@ export default function CortadoraApp() {
     reload();
   }, [reload]);
 
-  /** Metros ya consumidos por pedido. Los cortes sin metros cuentan 0, igual
-   *  que en CorteTab y en fn_registrar_corte. */
-  const consumido = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of cortes) {
-      m.set(c.pedido_id, (m.get(c.pedido_id) ?? 0) + Number(c.metros_consumidos ?? 0));
+  /** Avance de corte por pedido: qué colores ya salieron y cuánto saldo queda.
+   *  El criterio de "ya cortada" vive en src/lib/produccion/avanceCorte.ts. */
+  const avance = useMemo(() => {
+    const m = new Map<string, AvanceCorte>();
+    for (const p of pedidos) {
+      m.set(
+        p.id,
+        avanceCorte(p.total_metros, p.colores ?? [], cortes.filter((c) => c.pedido_id === p.id))
+      );
     }
     return m;
-  }, [cortes]);
+  }, [pedidos, cortes]);
 
   const prendaDe = (p: Pedido) => prendas.find((x) => x.id === p.prenda_id)?.nombre;
   const tallasDe = (p: Pedido) => {
@@ -160,13 +166,13 @@ export default function CortadoraApp() {
     setTimeout(() => setAviso(null), 4000);
     await reload();
   }
-  const saldoDe = (p: Pedido) => Number(p.total_metros) - (consumido.get(p.id) ?? 0);
+  const avanceDe = (p: Pedido) => avance.get(p.id) ?? avanceCorte(p.total_metros, [], []);
   const cortesDe = (p: Pedido) => cortes.filter((c) => c.pedido_id === p.id);
 
   const porRecibir = pedidos.filter((p) => p.estado !== "entregado");
   const entregados = pedidos.filter((p) => p.estado === "entregado");
-  const pendientes = entregados.filter((p) => saldoDe(p) > 0.5);
-  const listos = entregados.filter((p) => saldoDe(p) <= 0.5);
+  const pendientes = entregados.filter((p) => !avanceDe(p).listo);
+  const listos = entregados.filter((p) => avanceDe(p).listo);
 
   if (cargando) {
     return (
@@ -233,7 +239,7 @@ export default function CortadoraApp() {
               key={p.id}
               pedido={p}
               prenda={prendaDe(p)}
-              saldo={saldoDe(p)}
+              avance={avanceDe(p)}
               cortes={cortesDe(p)}
               pendiente
               supabase={supabase}
@@ -255,7 +261,7 @@ export default function CortadoraApp() {
               key={p.id}
               pedido={p}
               prenda={prendaDe(p)}
-              saldo={saldoDe(p)}
+              avance={avanceDe(p)}
               cortes={cortesDe(p)}
               supabase={supabase}
               tallas={tallasDe(p)}
@@ -343,7 +349,7 @@ function TarjetaRecibir({
 function TarjetaTela({
   pedido,
   prenda,
-  saldo,
+  avance,
   cortes,
   pendiente,
   supabase,
@@ -355,7 +361,7 @@ function TarjetaTela({
 }: {
   pedido: Pedido;
   prenda: string | undefined;
-  saldo: number;
+  avance: AvanceCorte;
   cortes: Corte[];
   pendiente?: boolean;
   supabase: SupabaseClient;
@@ -375,7 +381,7 @@ function TarjetaTela({
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
         <h3 style={{ margin: 0, fontSize: 17 }}>{pedido.nombre_tela}</h3>
         <Badge color={pendiente ? "verde" : "gris"}>
-          {pendiente ? `${saldo.toFixed(1)} m` : "sin saldo"}
+          {pendiente ? "por cortar" : "cortada"}
         </Badge>
       </div>
 
@@ -399,6 +405,24 @@ function TarjetaTela({
         {" · "}
         {Number(pedido.total_metros).toFixed(1)} m comprados
       </p>
+
+      {/* El saldo es un DATO, no el criterio: sin metros registrados no baja
+          nunca, así que solo se enseña cuando significa algo. */}
+      {cortes.length > 0 && (
+        <p style={{ margin: "7px 0 0", fontSize: 13.5 }}>
+          {avance.faltan.length === 0 ? (
+            <span style={{ color: "var(--good)" }}>Todos los colores cortados</span>
+          ) : (
+            <>
+              Cortados: <b>{avance.cortados.join(", ") || "ninguno"}</b>
+              <span style={{ color: "var(--muted)" }}> · faltan {avance.faltan.join(", ")}</span>
+            </>
+          )}
+          {avance.hayMetros && (
+            <span style={{ color: "var(--muted)" }}> · saldo {Math.max(0, avance.saldo).toFixed(1)} m</span>
+          )}
+        </p>
+      )}
 
       {pedido.corrida_base && Object.keys(pedido.corrida_base).length > 0 && (
         <p style={{ margin: "8px 0 0", fontSize: 14 }}>
