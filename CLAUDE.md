@@ -57,7 +57,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar** →
 `schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar** →
-`schema_fase8o_maquila_entregas.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
+`schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
+`schema_fase8p_bajas_y_costos.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -366,7 +367,32 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-05 — producción — `schema_fase8o_maquila_entregas.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-05 — producción — `schema_fase8p_bajas_y_costos.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8p.sql` (7 comprobaciones). ⚠️ Aplicar y desplegar juntos:
+el código pide `prod_maquila_entregas.tipo/motivo` y `prod_corte_insumos.costo`.
+
+- **Bajas justificadas.** `prod_maquila_entregas` gana `tipo` (`entrega` | `falla` | `faltante`) y
+  `motivo` (obligatorio si no es `entrega`, por check). Las bajas cuentan para cerrar el lote pero
+  **no van a Envío ni al stock y no se le pagan a la maquila** (decisiones del dueño). Nacen con
+  `procesado = true` (check), así Envío nunca las ve y `fn_procesar_entrega_maquila` no se tocó.
+- ⚠️ **Si una baja cierra un lote cuyas entregas buenas ya salieron por Envío**, nadie más marcaría el
+  color como procesado: `fn_registrar_entrega_maquila` lo hace. Es la comprobación 5 del smoke.
+- **`fn_registrar_entrega_maquila` cambia de firma** (6 parámetros: `p_tipo`, `p_motivo` al final
+  con default). **DROP + CREATE en un bloque DO**, y la verificación final aborta si sobrevive más de
+  una — la trampa de las fases 8b/8k.
+- **`prod_corte_insumos.costo`** (costo TOTAL de la línea, null = sin costo). Lo pone el admin en
+  Corte; `trg_costo_insumo_solo_admin` lo protege de la política de update de la cortadora.
+- **Costo de producción por corte** (`src/lib/produccion/costoCorte.ts`, con tests; panel
+  `CostoCorteCard` en CorteTab): tela + maquila + horas de corte + insumos + estampado, ÷ prendas
+  buenas. Tela sin metros anotados = costo del pedido repartido por prendas entre sus cortes
+  (marcado "estimado"). Con el lote aún en maquila, lo que falta cuenta como si llegara bien.
+  **No incluye costos fijos** (siguen en ResumenTab por mes). Nada de esto se guarda: se calcula.
+- **CorteTab separa "Por cortar" de "Ya cortadas"** con `avanceCorte` (el criterio de la cortadora):
+  antes toda tela entregada seguía en la lista para siempre.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-05 — producción — `schema_fase8o_maquila_entregas.sql` ✅ EJECUTADA
 
 Verificable con `supabase/smoke_test_fase8o.sql` (12 comprobaciones).
 ⚠️ **Aplicar y desplegar JUNTOS:** la fase **borra** `fn_procesar_lote_maquila`; entre aplicar y
