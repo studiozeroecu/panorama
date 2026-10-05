@@ -55,7 +55,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
-`schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -333,6 +334,14 @@ por botón**.
 lunes 7:00 y urgencias (<3 días), máximo una vez al día y solo si hay algo **nuevo**. No añadir más
 mensajes automáticos. Ante la duda, silencio.
 
+**No correr `npm run build` con `npm run dev` levantado.** Los dos escriben en `.next/` y el build
+deja el servidor de desarrollo sirviendo páginas en blanco (`__webpack_modules__[moduleId] is not a
+function`). Si pasa: parar el dev, borrar `.next/` y volver a levantarlo.
+
+**Ids en el navegador: `nuevoId()` de `src/lib/id.ts`, nunca `crypto.randomUUID()` directo.** Este
+último solo existe en contextos seguros (https o localhost) y revienta al abrir la app desde el
+teléfono por la IP de la red local.
+
 **Tests.** `tests/*.test.ts` con Vitest, contra el archivo real de `tests/fixtures/`. `parser.test.ts`
 fija cifras de referencia (115 líneas de venta, 283 unidades, $4,421.98 neto, 11 locales, 4,136 líneas
 de stock, 215 alertas): si cambian, es un bug, no un test desactualizado.
@@ -354,6 +363,22 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-05 — producción — `schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8n.sql` (4 comprobaciones, con RLS aplicando como el de la 8m).
+
+- **Política nueva:** `cortadora_crea_maquiladora` — `for insert with check (fn_es_cortadora() and
+  archivada_en is null)`. La cortadora da de alta una maquiladora desde el formulario del corte
+  (`MaquilaDelCorte.tsx`). **Solo insert:** renombrar, archivar o borrar sigue siendo del admin.
+- **Sin función:** es un insert de una sola columna; no hay cadena de escrituras que proteger.
+- El índice único de `nombre` también choca con las archivadas: la pantalla lo traduce a
+  *"está archivada, pídele a Mateo que la reactive"* en vez del error crudo.
+- **Precio unitario de maquila editable por la cortadora** (no es schema, pero va con esto): arranca
+  con `prod_prendas.costo_maquila`, como en `CorteTab`, y ella lo puede cambiar para ESE corte. Se
+  congela en `prod_maquilas.costo_unitario`. En blanco viaja null y `fn_registrar_corte` guarda 0
+  (`coalesce`): la pantalla lo avisa en vez de inventar un valor.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-05 — producción — `schema_fase8m_lock_pedido_cortadora.sql` ✅ EJECUTADA
 
