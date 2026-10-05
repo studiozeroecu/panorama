@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { esperadoPorTalla, compararConCorrida } from "@/lib/produccion/descuadre";
+import { esperadoPorTalla, compararConCorrida, compararCorte } from "@/lib/produccion/descuadre";
 
 const CORRIDA = { S: 1, M: 2, L: 1 }; // 4 unidades por capa
 
@@ -104,5 +104,50 @@ describe("compararConCorrida", () => {
     expect(d.real).toBe(7);
     expect(d.mensaje).toBeNull();
     expect(d.severidad).toBe("exacto");
+  });
+});
+
+describe("compararCorte — por color", () => {
+  const CORRIDA2 = { S: 1, M: 2, L: 1 };
+
+  it("cada color se compara con SUS capas, no con una cifra común", () => {
+    const d = compararCorte(CORRIDA2, [
+      { color: "Negro", capas: 5, real: { S: 5, M: 10, L: 5 } },
+      { color: "Crudo", capas: 3, real: { S: 3, M: 6, L: 3 } },
+    ]);
+    expect(d.porColor.map((c) => c.severidad)).toEqual(["exacto", "exacto"]);
+    expect(d.porColor[0].esperado).toBe(20);
+    expect(d.porColor[1].esperado).toBe(12);
+    expect(d.totalEsperado).toBe(32);
+  });
+
+  /**
+   * La razón de que el aviso sea por color y no por total: dos tendidos mal que
+   * se compensan darían un total exacto y nadie iría a mirar.
+   */
+  it("dos colores descuadrados en sentidos opuestos NO se tapan entre sí", () => {
+    const d = compararCorte(CORRIDA2, [
+      { color: "Negro", capas: 5, real: { S: 5, M: 18, L: 5 } }, // +8
+      { color: "Crudo", capas: 5, real: { S: 5, M: 2, L: 5 } },  // -8
+    ]);
+    expect(d.totalReal).toBe(d.totalEsperado); // el total engañaría
+    expect(d.porColor[0].severidad).toBe("alto");
+    expect(d.porColor[1].severidad).toBe("alto");
+    expect(d.porColor[0].mensaje).toContain("más");
+    expect(d.porColor[1].mensaje).toContain("menos");
+  });
+
+  it("un color sin capas no arrastra a los demás", () => {
+    const d = compararCorte(CORRIDA2, [
+      { color: "Negro", capas: 5, real: { M: 10 } },
+      { color: "Crudo", capas: 0, real: { M: 4 } },
+    ]);
+    expect(d.porColor[1].esperado).toBe(0);
+    expect(d.porColor[1].mensaje).toBeNull();
+    expect(d.totalReal).toBe(14);
+  });
+
+  it("sin colores devuelve ceros y no revienta", () => {
+    expect(compararCorte(CORRIDA2, [])).toEqual({ porColor: [], totalEsperado: 0, totalReal: 0 });
   });
 });

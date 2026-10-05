@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge, Vacio, Tallas } from "@/components/ui";
+import LogoutButton from "@/components/LogoutButton";
 import { fmtFecha } from "@/lib/fechas";
 import { ordenarTallas } from "@/lib/produccion/types";
 import RegistrarCorte from "./RegistrarCorte";
@@ -62,7 +63,6 @@ interface Corte {
   fecha: string;
   total_unidades: number;
   metros_consumidos: number | string | null;
-  capas: number | null;
   colores: ColorCorte[] | null;
 }
 
@@ -96,7 +96,7 @@ export default function CortadoraApp() {
       supabase
         .from("prod_cortes")
         .select(
-          `id, pedido_id, fecha, total_unidades, metros_consumidos, capas,
+          `id, pedido_id, fecha, total_unidades, metros_consumidos,
            colores:prod_corte_colores (
              color, unidades, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
@@ -168,13 +168,23 @@ export default function CortadoraApp() {
 
   return (
     <main style={ENVOLTORIO}>
-      <header style={{ marginBottom: 18 }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontFamily: "var(--font-grotesk), sans-serif" }}>
-          Corte
-        </h1>
-        <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13.5 }}>
-          Telas entregadas y lo que ya se cortó de cada una.
-        </p>
+      <header
+        style={{
+          marginBottom: 18, display: "flex",
+          justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+        }}
+      >
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontFamily: "var(--font-grotesk), sans-serif" }}>
+            Corte
+          </h1>
+          <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13.5 }}>
+            Telas entregadas y lo que ya se cortó de cada una.
+          </p>
+        </div>
+        {/* Sin esto no hay forma de salir: el middleware manda a /cortadora
+            cualquier ruta, incluida /login. */}
+        <LogoutButton />
       </header>
 
       {error && <div className="error-banner">{error}</div>}
@@ -370,11 +380,6 @@ function TarjetaTela({
                     <Tallas tallas={tallasDeColor(col)} />
                   </div>
                 ))}
-              {c.capas != null && (
-                <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
-                  {c.capas} capa{c.capas !== 1 ? "s" : ""}
-                </div>
-              )}
               <ExtrasCorte
                 supabase={supabase}
                 corteId={c.id}

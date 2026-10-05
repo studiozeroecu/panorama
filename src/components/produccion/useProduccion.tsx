@@ -79,7 +79,6 @@ interface FilaCorte {
   metros_consumidos: number | string | null;
   observaciones: string;
   corrida_base: Record<string, number> | null;
-  capas: number | null;
   colores:
     | {
         id: string;
@@ -195,7 +194,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .from("prod_cortes")
         .select(
           `id, pedido_id, fecha, maquiladora_id, total_unidades, metros_consumidos,
-           observaciones, corrida_base, capas,
+           observaciones, corrida_base,
            colores:prod_corte_colores (
              id, pedido_color_id, color, unidades, metros_usados, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
@@ -277,7 +276,6 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       metros_consumidos: k.metros_consumidos == null ? null : Number(k.metros_consumidos),
       observaciones: k.observaciones,
       corrida_base: k.corrida_base ?? null,
-      capas: k.capas ?? null,
       colores: [...(k.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({

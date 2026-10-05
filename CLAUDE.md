@@ -52,7 +52,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8g_editar_pedido.sql` ✅ **aplicada el 2026-10-01** →
 `schema_fase8h_consumo_m2.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8i_rol_cortadora.sql` ✅ **aplicada el 2026-10-02** →
-`schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02**
+`schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02** →
+`schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05**
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -64,6 +65,13 @@ versionadas. Orden real de ejecución:
 > corte con jsonb y cero filas normalizadas. Si vuelves a separar migración y deploy, corre
 > `resync_fase7.sql` justo después de desplegar — o no separes.
 
+> ⚠️ **NO vuelvas a correr un `.sql` ya aplicado "por si acaso".** Los archivos son acumulativos y
+> varios contienen `create or replace function` de funciones que fases POSTERIORES reemplazaron con
+> otra firma. Reejecutar uno viejo **revive la versión antigua** y deja dos sobrecargas vivas; PostgreSQL
+> entonces elige por número de argumentos y media app escribe contra la función equivocada **sin ningún
+> error**. Pasó el 2026-10-05 con `fn_registrar_corte` (ver fase 8k). Si dudas de si algo se aplicó,
+> CONSULTA el estado (`pg_proc`, `information_schema.columns`) en vez de reejecutar.
+>
 > El schema efectivo de una tabla es la suma de su `create table` **más** los `alter table` de los
 > archivos posteriores. Ejemplos: `cheques` gana `cuenta_por_pagar_id` en fase 5 y `alertado_hasta`
 > en `actualizacion_alertas.sql`; `cuentas_por_pagar` gana `ambito` en `migracion_pagos.sql`.
@@ -336,6 +344,39 @@ Formato:
 ```
 
 <!-- Nuevas entradas debajo de esta línea -->
+
+### 2026-10-05 — producción — `schema_fase8k_capas_por_color.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8k.sql`: 10/10 — tras pasar por
+`supabase/reparar_fase8k.sql`, ver abajo.
+
+- **Corrige a la 8j, que estaba mal:** las capas no son una por corte sino **una por COLOR**. Las
+  telas no llegan con el metraje exacto por color y uno puede dar más tendidos que otro. La
+  **corrida** (proporción por talla) sí sigue siendo una sola para toda la tela.
+- **Columna nueva:** `prod_corte_colores.capas integer` (+ check `capas is null or capas > 0`).
+  **`prod_cortes.capas` se ELIMINA**, no se deja como total: sumar capas entre colores no significa
+  nada — son tendidos separados, no una cantidad acumulable — y sería un derivado almacenado.
+- `prod_cortes.corrida_base` **se queda**: esa sí es una sola para todo el corte.
+- **`fn_registrar_corte` pierde `p_capas`** (vuelve a 8 parámetros). Las capas viajan dentro de cada
+  elemento de `p_colores`, junto a `tallas` y `metros_usados`.
+- ⚠️ **LA LECCIÓN DE ESTA FASE, y es cara:** al aplicarla aparecieron **dos versiones vivas** de
+  `fn_registrar_corte` (la de 7 parámetros de la fase 8i y la de 8 nueva), porque un archivo
+  anterior se volvió a ejecutar y su `create or replace` **revivió la firma vieja**. Con dos
+  sobrecargas, PostgreSQL elige por número de argumentos: `CorteTab` llama con 7 y habría seguido
+  registrando cortes **sin guardar las capas y sin dar ningún error**.
+  Lo arregló `supabase/reparar_fase8k.sql`, que borra las TRES firmas posibles (7, 8 y 9) antes de
+  crear la buena y **verifica al final**, abortando si queda más de una.
+- ⚠️ **Y la lección de forma:** en la 8k el `drop column` iba dentro de un `if exists (...) then`, y
+  al no entrar esa condición el bloque entero se saltó **en silencio**. Un `alter table ... drop
+  column if exists` suelto no se puede saltar. Las condiciones que envuelven varias sentencias
+  esconden fallos; las de cada sentencia, no.
+- **El descuadre pasa a calcularse por color** (`compararCorte` en `src/lib/produccion/descuadre.ts`).
+  El aviso es **por color y no sobre el total**: un total puede salir exacto con dos tendidos mal
+  — +8 en Negro y −8 en Crudo se compensan — y nadie iría a mirar. Hay un test que fija ese caso.
+- **`supabase/smoke_test_fase8j.sql` queda OBSOLETO**: su comprobación 6 lee `prod_cortes.capas` y
+  llama con 9 argumentos. Falla a propósito; no es una regresión.
+- **Impacto en otras áreas: ninguno.** `CorteTab` sigue llamando con 7 argumentos — que ahora
+  resuelven a la única función viva, con las capas en null.
 
 ### 2026-10-02 — producción — `schema_fase8j_cortadora_escritura.sql` ✅ EJECUTADA
 

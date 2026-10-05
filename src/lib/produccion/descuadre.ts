@@ -117,3 +117,49 @@ function mensajeDe(severidad: Severidad, diferencia: number, esperado: number): 
     ? `Salieron ${unidades} ${signo} de lo esperado. Diferencia normal del tendido.`
     : `Salieron ${unidades} ${signo} de lo esperado (${pct}% del total). Revisa las cantidades antes de guardar.`;
 }
+
+// ── Por color ───────────────────────────────────────────────────────
+
+export interface DescuadreColor extends Descuadre {
+  color: string;
+  capas: number;
+}
+
+export interface DescuadreCorte {
+  /** Uno por color: es donde está la señal accionable. */
+  porColor: DescuadreColor[];
+  /** Suma de todos los colores. Solo resumen — ver la nota de abajo. */
+  totalEsperado: number;
+  totalReal: number;
+}
+
+/**
+ * Compara color por color. La corrida es UNA para toda la tela, pero las capas
+ * son de cada color: las telas no llegan con el metraje exacto por color y uno
+ * puede dar más tendidos que otro.
+ *
+ * ⚠️ **El aviso útil es el de cada color, no el total.** Un total que sume todos
+ * los colores puede salir en cero teniendo dos tendidos mal: Negro con 8 de más
+ * y Crudo con 8 de menos se compensan y el corte parecería exacto. El descuadre
+ * lo causa algo físico en el tendido de UN color concreto, y promediarlo entre
+ * colores borra justo el dato que hace falta para ir a mirar.
+ *
+ * Por eso `porColor` lleva su propio mensaje y el total se queda en cifras, sin
+ * severidad ni aviso.
+ */
+export function compararCorte(
+  corrida: Record<string, number> | null | undefined,
+  colores: { color: string; capas: number; real: Record<string, number> }[]
+): DescuadreCorte {
+  const porColor = colores.map((c) => ({
+    color: c.color,
+    capas: c.capas,
+    ...compararConCorrida(corrida, c.capas, c.real),
+  }));
+
+  return {
+    porColor,
+    totalEsperado: porColor.reduce((s, c) => s + c.esperado, 0),
+    totalReal: porColor.reduce((s, c) => s + c.real, 0),
+  };
+}

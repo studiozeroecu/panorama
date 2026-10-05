@@ -94,7 +94,6 @@ export interface Corte {
   observaciones: string;
   /** Fase 8j · FOTO de la corrida con la que se cortó. No se vuelve a tocar. */
   corrida_base: Record<string, number> | null;
-  capas: number | null;
 }
 
 export type EstadoColorMaquila = "pendiente" | "enviado" | "entregado";
