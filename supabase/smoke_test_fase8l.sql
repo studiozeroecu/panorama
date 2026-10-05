@@ -8,9 +8,13 @@
 -- y al lanzarlo PostgreSQL revierte todo. No queda NADA en la base — tampoco las
 -- versiones de mentira de fn_es_admin / fn_es_cortadora que usa para simular roles.
 --
+-- Requiere también la 8m (aplicada antes que esta), aunque no la prueba: eso
+-- lo hace smoke_test_fase8m.sql.
+--
 -- Las comprobaciones que justifican el archivo entero:
---   · la 4, que la cortadora NO tenga ninguna política de escritura sobre
---     prod_pedidos_tela: si la tuviera, la RPC sería decorativa;
+--   · la 4, que la cortadora NO pueda MODIFICAR prod_pedidos_tela por ninguna
+--     política: si pudiera, la RPC sería decorativa. El candado de la 8m
+--     (`with check (false)`) se acepta porque bloquea sin escribir;
 --   · la 6, que un doble toque NO dé error ni pise lo guardado;
 --   · la 7, que recibir no dispare los triggers de colores ni de saldo.
 
@@ -60,18 +64,23 @@ begin
   v_rep := v_rep || E'\n  3 · permisos de ejecución ........... ' || v_r;
   if v_r like 'OK%' then v_ok := v_ok+1; else v_bad := v_bad+1; end if;
 
-  -- ── 4. ⚠️ la cortadora NO escribe directo en prod_pedidos_tela ──
-  --    Y su lectura ya no está acotada a 'entregado'.
-  select count(*) into v_n from pg_policies
+  -- ── 4. ⚠️ la cortadora NO puede modificar prod_pedidos_tela ──
+  --    Toda política de escritura tiene que ser la de admin o un candado
+  --    `with check (false)` como el de la 8m. Se juzga por lo que HACE, no por
+  --    el nombre. Y su lectura ya no está acotada a 'entregado'.
+  select count(*), string_agg(policyname || ' [' || cmd || ']', ', ')
+    into v_n, v_r
+  from pg_policies
   where tablename = 'prod_pedidos_tela'
     and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
-    and (coalesce(qual, '') || coalesce(with_check, '')) ilike '%fn_es_cortadora%';
+    and not (cmd = 'UPDATE' and with_check = 'false')
+    and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()');
   select qual into v_txt from pg_policies
   where tablename = 'prod_pedidos_tela' and policyname = 'cortadora_lee_pedidos';
-  v_r := case when v_n > 0 then 'FALLA — tiene ' || v_n || ' política(s) de escritura'
+  v_r := case when v_n > 0 then 'FALLA — políticas de escritura no previstas: ' || v_r
               when v_txt is null then 'FALLA — no existe cortadora_lee_pedidos'
               when v_txt ilike '%entregado%' then 'FALLA — la lectura sigue acotada: ' || v_txt
-              else 'OK — sin escritura, lee todos los estados' end;
+              else 'OK — solo admin escribe; lee todos los estados' end;
   v_rep := v_rep || E'\n  4 · sin escritura directa ........... ' || v_r;
   if v_r like 'OK%' then v_ok := v_ok+1; else v_bad := v_bad+1; end if;
 

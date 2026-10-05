@@ -1,5 +1,8 @@
 -- Panorama — Bear & Trend · Fase 8l: la cortadora confirma la llegada de la tela
--- Ejecutar DESPUÉS de schema_fase8k_capas_por_color.sql. Idempotente.
+-- Ejecutar DESPUÉS de schema_fase8m_lock_pedido_cortadora.sql. Idempotente.
+--
+-- (Sí: la 8m se aplicó ANTES que la 8l. La 8m arregló un fallo en producción
+-- mientras esta se escribía; el número no cambia el orden real.)
 --
 -- ⚠️ SIN begin;/commit; — ver la nota en schema_fase7_colores.sql.
 --
@@ -15,8 +18,14 @@
 -- RLS es de FILA, no de columna. Una política `for update` sobre
 -- prod_pedidos_tela le dejaría cambiar, con su sesión y desde la API, el precio,
 -- el proveedor, los colores o el total de metros — aunque la pantalla no se los
--- enseñe. Por eso la cortadora NO recibe ninguna política de escritura sobre
--- esta tabla, y la única puerta es fn_recibir_tela:
+-- enseñe. Por eso la cortadora NO recibe ninguna política que le deje ESCRIBIR
+-- en esta tabla, y la única puerta es fn_recibir_tela.
+--
+-- (Sí tiene una de UPDATE, "cortadora_bloquea_pedido" de la fase 8m, pero con
+-- `with check (false)`: le deja BLOQUEAR la fila —lo exige el `for update` de
+-- fn_registrar_corte— y rechaza cualquier modificación real. La verificación del
+-- final acepta exactamente ese tipo de política y ninguna otra.)
+--
 --
 --   · SECURITY DEFINER: corre con los permisos del dueño, así que no necesita
 --     política de update. A cambio la guarda de rol de dentro deja de ser
@@ -186,8 +195,9 @@ grant execute on function fn_recibir_tela(uuid, numeric, date) to authenticated,
 --    Los cortes, maquilas y demás SIGUEN acotados a pedidos entregados — no
 --    puede haber cortes de una tela que no llegó, así que ampliarlos no aporta.
 --
---    ⚠️ Sigue sin ninguna política de UPDATE sobre prod_pedidos_tela. Eso es lo
---    que obliga a pasar por fn_recibir_tela.
+--    ⚠️ Sigue sin ninguna política que le deje MODIFICAR prod_pedidos_tela (la
+--    de la 8m solo bloquea: `with check (false)`). Eso es lo que obliga a pasar
+--    por fn_recibir_tela.
 -- ============================================================
 
 drop policy if exists "cortadora_lee_pedidos" on prod_pedidos_tela;
@@ -208,19 +218,30 @@ create policy "cortadora_lee_pedido_colores" on prod_pedido_colores
 -- ============================================================
 
 do $VERIF8L$
-declare v_n int;
+declare
+  v_n   int;
+  v_txt text;
 begin
   select count(*) into v_n from pg_proc where proname = 'fn_recibir_tela';
   if v_n <> 1 then
     raise exception 'Fase 8l: hay % versiones de fn_recibir_tela (debe haber 1).', v_n;
   end if;
 
-  select count(*) into v_n from pg_policies
+  -- Toda política de escritura sobre prod_pedidos_tela tiene que ser de UNA de
+  -- estas dos formas, y no se mira el nombre sino lo que hace:
+  --   · la de admin (fase 6):  using y with check = fn_es_admin()
+  --   · un candado sin escritura (fase 8m): UPDATE con `with check (false)`
+  -- Cualquier otra —también una de cortadora con with check verdadero, o un
+  -- UPDATE sin with check, que entonces reutiliza el using— aborta.
+  select count(*), string_agg(policyname || ' [' || cmd || ']', ', ')
+    into v_n, v_txt
+  from pg_policies
   where tablename = 'prod_pedidos_tela'
     and cmd in ('UPDATE', 'ALL', 'INSERT', 'DELETE')
-    and (coalesce(qual, '') || coalesce(with_check, '')) ilike '%fn_es_cortadora%';
+    and not (cmd = 'UPDATE' and with_check = 'false')
+    and not (qual = 'fn_es_admin()' and with_check = 'fn_es_admin()');
   if v_n > 0 then
-    raise exception 'Fase 8l: la cortadora tiene % política(s) de escritura sobre prod_pedidos_tela. No debe tener ninguna.', v_n;
+    raise exception 'Fase 8l: hay % política(s) de escritura no previstas sobre prod_pedidos_tela: %', v_n, v_txt;
   end if;
 
   select count(*) into v_n from information_schema.columns

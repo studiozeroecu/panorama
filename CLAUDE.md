@@ -54,7 +54,9 @@ versionadas. Orden real de ejecución:
 `schema_fase8i_rol_cortadora.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
+`schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar**
+*(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
 > ✅ **Base y código alineados desde el 2026-09-08.** El TypeScript de la fase 7 está desplegado
@@ -344,6 +346,25 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
+### 2026-10-05 — producción — `schema_fase8m_lock_pedido_cortadora.sql` ✅ EJECUTADA
+
+Verificable con `supabase/smoke_test_fase8m.sql` (7 comprobaciones). Es el **primer smoke que corre
+con RLS aplicando** (`set local role authenticated`): como `postgres` las políticas se saltan y no
+se probaría nada.
+
+- **El fallo:** la cortadora recibía *"El pedido de tela no existe"* al registrar un corte.
+  `fn_registrar_corte` (SECURITY INVOKER) empieza con `select … for update` sobre el pedido, y en
+  PostgreSQL **bloquear una fila con RLS exige pasar el `using` de una política de UPDATE**, no solo
+  la de SELECT. Sin ella, la fila simplemente no aparece — sin error.
+- **Política nueva:** `cortadora_bloquea_pedido` — `for update using (fn_es_cortadora() and
+  estado = 'entregado') with check (false)`. El `using` le deja tomar el lock; el `with check (false)`
+  rechaza cualquier escritura real. **Puede bloquear, nunca modificar.**
+- ⚠️ **Toda verificación de "la cortadora no escribe en `prod_pedidos_tela`" tiene que aceptar
+  esta política.** La regla que usan la 8l y los smoke 8l/8m: una política de escritura sobre esa
+  tabla solo vale si es la de admin (`using` y `with check` = `fn_es_admin()`) o un UPDATE con
+  `with check (false)`. Se juzga por lo que HACE, no por el nombre.
+- **Impacto en otras áreas: ninguno.**
+
 ### 2026-10-05 — producción — `schema_fase8l_cortadora_recibe_tela.sql` ⏳ PENDIENTE DE APLICAR
 
 Verificar con `supabase/smoke_test_fase8l.sql` (11 comprobaciones, termina en rollback).
@@ -365,7 +386,8 @@ Verificar con `supabase/smoke_test_fase8l.sql` (11 comprobaciones, termina en ro
   proveedor o colores por la API. Así la cortadora **no tiene ninguna política de escritura** sobre
   esa tabla, y la función solo escribe 5 columnas. El precio: la guarda `fn_es_admin() or
   fn_es_cortadora()` de dentro deja de ser cosmética y es **la única barrera**. Se le quitó el
-  `EXECUTE` a `anon` y `public`. **No relajar esa guarda.**
+  `EXECUTE` a `anon` y `public`. **No relajar esa guarda.** (La política de la 8m es de UPDATE pero
+  con `with check (false)`: bloquea sin escribir, y la verificación final de la 8l la acepta.)
 - **Validaciones:** ancho entre 10 y 400 cm (por debajo es un ancho en metros —la base ya los
   mezcla—, por encima, milímetros), fecha no nula y no futura. Los mismos límites viven en
   `src/lib/produccion/recepcion.ts` para avisar antes de enviar: **se mueven juntos**.
