@@ -56,7 +56,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8l_cortadora_recibe_tela.sql` ✅ **aplicada el 2026-10-05** →
-`schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8n_cortadora_crea_maquiladora.sql` ✅ **aplicada el 2026-10-06** →
 `schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
@@ -429,9 +429,9 @@ nuevo pide `destino_indicado` y `prod_maquila_entregas`, y sin la fase `/producc
   envío" como colores entregados sin procesar; no ve las entregas parciales.
 - **Impacto en otras áreas: ninguno** fuera de producción (el bot solo lee).
 
-### 2026-10-05 — producción — `schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-05 — producción — `schema_fase8n_cortadora_crea_maquiladora.sql` ✅ EJECUTADA (2026-10-06)
 
-Verificable con `supabase/smoke_test_fase8n.sql` (4 comprobaciones, con RLS aplicando como el de la 8m).
+Verificada con `supabase/smoke_test_fase8n.sql`: 4/4, con RLS aplicando como el de la 8m.
 
 - **Política nueva:** `cortadora_crea_maquiladora` — `for insert with check (fn_es_cortadora() and
   archivada_en is null)`. La cortadora da de alta una maquiladora desde el formulario del corte
