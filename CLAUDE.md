@@ -55,10 +55,10 @@ versionadas. Orden real de ejecución:
 `schema_fase8j_cortadora_escritura.sql` ✅ **aplicada el 2026-10-02** →
 `schema_fase8k_capas_por_color.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8m_lock_pedido_cortadora.sql` ✅ **aplicada el 2026-10-05** →
-`schema_fase8l_cortadora_recibe_tela.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8l_cortadora_recibe_tela.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8n_cortadora_crea_maquiladora.sql` ⏳ **escrita, PENDIENTE de aplicar** →
 `schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
-`schema_fase8p_bajas_y_costos.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
+`schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -367,9 +367,9 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-05 — producción — `schema_fase8p_bajas_y_costos.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-05 — producción — `schema_fase8p_bajas_y_costos.sql` ✅ EJECUTADA (2026-10-06)
 
-Verificable con `supabase/smoke_test_fase8p.sql` (7 comprobaciones). ⚠️ Aplicar y desplegar juntos:
+Verificada con `supabase/smoke_test_fase8p.sql`: 7/7. ⚠️ Aplicar y desplegar juntos:
 el código pide `prod_maquila_entregas.tipo/motivo` y `prod_corte_insumos.costo`.
 
 - **Bajas justificadas.** `prod_maquila_entregas` gana `tipo` (`entrega` | `falla` | `faltante`) y
@@ -464,9 +464,9 @@ se probaría nada.
   `with check (false)`. Se juzga por lo que HACE, no por el nombre.
 - **Impacto en otras áreas: ninguno.**
 
-### 2026-10-05 — producción — `schema_fase8l_cortadora_recibe_tela.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-05 — producción — `schema_fase8l_cortadora_recibe_tela.sql` ✅ EJECUTADA
 
-Verificar con `supabase/smoke_test_fase8l.sql` (11 comprobaciones, termina en rollback).
+Verificable con `supabase/smoke_test_fase8l.sql` (11 comprobaciones, termina en rollback).
 ⚠️ **Aplicar ANTES de desplegar**: `useProduccion` ya pide las dos columnas nuevas y, sin ellas,
 `/produccion` entera falla al cargar.
 
