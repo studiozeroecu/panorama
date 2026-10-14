@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela, type EstadoPedido } from "@/lib/produccion/types";
 import { estimar } from "@/lib/produccion/estimacion";
@@ -371,7 +372,7 @@ export default function PedidosTab() {
                 return (
                   <tr key={p.id}>
                     <td>
-                      <strong>{p.nombre_tela}</strong>
+                      <strong><NombreTela pedido={p} /></strong>
                       <div className="sub" style={{ fontSize: 11.5 }}>{fmtFecha(p.fecha_pedido)}</div>
                     </td>
                     <td>{prov?.empresa ?? "—"}</td>

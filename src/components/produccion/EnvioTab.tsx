@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, ordenarTallas, type Maquila, type ColorMaquila, type EntregaMaquila } from "@/lib/produccion/types";
 import { fmtFecha, diasHasta } from "@/lib/fechas";
@@ -139,7 +140,7 @@ function LoteCard({ lote }: { lote: Lote }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h4>
-            {pedido?.nombre_tela ?? "(pedido eliminado)"} <Badge color="azul">{col.color}</Badge>
+            <NombreTela pedido={pedido} /> <Badge color="azul">{col.color}</Badge>
             {parcial && <Badge color="ambar">Entrega parcial</Badge>}
           </h4>
           <div className="prod-meta">

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela } from "@/lib/produccion/types";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
@@ -116,7 +117,7 @@ export default function LlegadaTab() {
             <div className="prod-card" key={p.id}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h4>{p.nombre_tela}</h4>
+                  <h4><NombreTela pedido={p} /></h4>
                   <div className="prod-meta">
                     {prov?.empresa ?? "Sin proveedor"}
                     {prenda ? ` · Para: ${prenda.nombre}` : ""} · {Number(p.total_metros).toFixed(1)} m

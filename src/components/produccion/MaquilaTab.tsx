@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
@@ -63,7 +64,7 @@ export default function MaquilaTab() {
       <div className="prod-card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h4>{pedido?.nombre_tela ?? "(pedido eliminado)"}{prenda ? ` — ${prenda.nombre}` : ""}</h4>
+            <h4><NombreTela pedido={pedido} />{prenda ? ` — ${prenda.nombre}` : ""}</h4>
             <div className="prod-meta">
               Cortado: {corte ? fmtFecha(corte.fecha) : "—"} · {m.total_unidades} unidades · {m.colores.length} color{m.colores.length !== 1 ? "es" : ""}
             </div>
