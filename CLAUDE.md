@@ -387,7 +387,10 @@ el código pide `prod_maquila_entregas.tipo/motivo` y `prod_corte_insumos.costo`
   `CostoCorteCard` en CorteTab): tela + maquila + horas de corte + insumos + estampado, ÷ prendas
   buenas. Tela sin metros anotados = costo del pedido repartido por prendas entre sus cortes
   (marcado "estimado"). Con el lote aún en maquila, lo que falta cuenta como si llegara bien.
-  **No incluye costos fijos** (siguen en ResumenTab por mes). Nada de esto se guarda: se calcula.
+  Desde el 2026-10-14 suma también los **costos fijos POR PRENDA** (etiquetas, fundas… = suma de
+  `prod_costos_fijos` × prendas buenas), el mismo criterio que Envío y Resumen. Nada de esto se
+  guarda: se calcula. El **resumen por tela** (tocar el nombre de una tela en cualquier pestaña,
+  `ResumenTela.tsx` + `src/lib/produccion/resumenTela.ts`) usa las mismas reglas.
 - **CorteTab separa "Por cortar" de "Ya cortadas"** con `avanceCorte` (el criterio de la cortadora):
   antes toda tela entregada seguía en la lista para siempre.
 - **Impacto en otras áreas: ninguno.**

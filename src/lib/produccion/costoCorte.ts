@@ -14,7 +14,10 @@
  * fuera a llegar bien: así el costo sirve ANTES de que vuelva, y se ajusta solo
  * al cerrar (si llegan fallas, hay menos prendas buenas y el unitario sube).
  *
- * NO incluye los costos fijos (arriendo, etc.): eso lo reparte ResumenTab por mes.
+ * Costos fijos: van POR PRENDA (etiquetas, fundas, etiquetas colgantes…), la
+ * suma de prod_costos_fijos × prendas buenas — el mismo criterio que Envío y
+ * Resumen. ⚠️ Se leen con su valor de HOY: si cambia el precio de la funda,
+ * cambia el costo de cortes pasados (pendiente anotado en CLAUDE.md).
  */
 
 export interface PedidoCosto {
@@ -54,6 +57,8 @@ export interface CostoCorte {
   corte: { horas: number; valor: number };
   insumos: { valor: number; sinCosto: number };
   estampado: number;
+  /** Etiquetas, fundas… : suma de costos fijos por prenda × prendas buenas. */
+  fijos: { porUnidad: number; valor: number };
   total: number;
   /** Prendas buenas (más las que faltan por llegar, mientras el lote siga abierto). */
   unidades: number;
@@ -94,6 +99,8 @@ export function costoCorte(args: {
   jornadas: { horas: number; tarifa_hora: number }[];
   insumos: { costo: number | null }[];
   estampado: number;
+  /** Suma de prod_costos_fijos: lo que lleva CADA prenda en etiquetas, fundas… */
+  costoFijoPorUnidad?: number;
 }): CostoCorte {
   const tela = costoTela(args.corte, args.pedido, args.cortesDelPedido);
 
@@ -128,11 +135,15 @@ export function costoCorte(args: {
   };
 
   const estampado = r2(Number(args.estampado) || 0);
-  const total = r2(tela.valor + maquila.esperado + corte.valor + insumos.valor + estampado);
   const unidades = buenas + pendientes;
+  const porUnidad = Number(args.costoFijoPorUnidad) || 0;
+  // Las fallas y las no entregadas no llevan etiqueta ni funda: solo las buenas
+  // (y, mientras el lote siga en maquila, las que faltan por llegar).
+  const fijos = { porUnidad, valor: r2(porUnidad * unidades) };
+  const total = r2(tela.valor + maquila.esperado + corte.valor + insumos.valor + estampado + fijos.valor);
 
   return {
-    tela, maquila, corte, insumos, estampado, total, unidades,
+    tela, maquila, corte, insumos, estampado, fijos, total, unidades,
     costoUnitario: unidades > 0 ? r2(total / unidades) : null,
   };
 }

@@ -21,7 +21,10 @@
  * entera se reparte entre las pocas prendas cortadas. Se avisa, no se esconde.
  *
  * Las reglas de cada corte (qué se le paga a la maquila, etc.) son las de
- * costoCorte.ts — aquí solo se suman. NO incluye costos fijos.
+ * costoCorte.ts — aquí solo se suman.
+ *
+ * Costos fijos (etiquetas, fundas…): van POR PRENDA. En "gastado" cuentan solo
+ * las prendas ya entregadas bien; en el estimado, todas las que se esperan.
  */
 
 import { costoCorte, type ColorMaquilaCosto, type CorteCosto } from "./costoCorte";
@@ -43,6 +46,7 @@ export interface ResumenTela {
   corte: { horas: number; valor: number };
   insumos: { valor: number; sinCosto: number };
   estampado: number;
+  fijos: { porUnidad: number; gastado: number; estimado: number };
   gastado: number;
   estimadoFinal: number;
   unidades: number | null;
@@ -59,6 +63,8 @@ export function resumenTela(args: {
   /** Prendas que se estima que salen de la tela entera (null si no hay prenda o consumo). */
   unidadesEstimadas: number | null;
   cortes: CorteResumen[];
+  /** Suma de prod_costos_fijos: lo que lleva CADA prenda en etiquetas, fundas… */
+  costoFijoPorUnidad?: number;
 }): ResumenTela {
   const tela = {
     total: r2(Number(args.pedido.total_pagar)),
@@ -100,13 +106,21 @@ export function resumenTela(args: {
     estampado += k.estampado;
   }
 
-  // La tela entra UNA vez y entera: está comprada aunque no se haya cortado toda.
-  const comunes = tela.total + corte.valor + insumos.valor + estampado;
-  const gastado = r2(comunes + maquila.aPagar);
-  const estimadoFinal = r2(comunes + maquila.esperado);
-
   const hayCortes = args.cortes.length > 0;
   const unidades = hayCortes ? maquila.buenas + maquila.pendientes : args.unidadesEstimadas;
+
+  const porUnidad = Number(args.costoFijoPorUnidad) || 0;
+  const fijos = {
+    porUnidad,
+    // Gastado: solo lo que ya llegó bien. Estimado: todo lo que se espera.
+    gastado: r2(porUnidad * maquila.buenas),
+    estimado: r2(porUnidad * (unidades ?? 0)),
+  };
+
+  // La tela entra UNA vez y entera: está comprada aunque no se haya cortado toda.
+  const comunes = tela.total + corte.valor + insumos.valor + estampado;
+  const gastado = r2(comunes + maquila.aPagar + fijos.gastado);
+  const estimadoFinal = r2(comunes + maquila.esperado + fijos.estimado);
 
   return {
     tela,
@@ -116,6 +130,7 @@ export function resumenTela(args: {
     corte: { horas: corte.horas, valor: r2(corte.valor) },
     insumos: { valor: r2(insumos.valor), sinCosto: insumos.sinCosto },
     estampado: r2(estampado),
+    fijos,
     gastado,
     estimadoFinal,
     unidades,

@@ -75,3 +75,42 @@ describe("costoCorte", () => {
     expect(r.costoUnitario).toBeNull();
   });
 });
+
+describe("costoCorte — costos fijos por prenda (etiquetas, fundas…)", () => {
+  it("se cuentan por prenda buena; fallas y faltantes no llevan etiqueta ni funda", () => {
+    const r = costoCorte({
+      corte: { id: "a", total_unidades: 100, metros_consumidos: 50 }, // tela $250
+      pedido: { valor_metro: 5, total_pagar: 500 },
+      cortesDelPedido: [{ id: "a", total_unidades: 100, metros_consumidos: 50 }],
+      costoMaquilaUnitario: 1.5,
+      coloresMaquila: [{
+        unidades: 100,
+        entregas: [
+          { tipo: "entrega", unidades: 90 },
+          { tipo: "falla", unidades: 3 },
+          { tipo: "faltante", unidades: 7 },
+        ],
+      }],
+      jornadas: [],
+      insumos: [],
+      estampado: 0,
+      costoFijoPorUnidad: 0.6,
+    });
+    expect(r.fijos).toEqual({ porUnidad: 0.6, valor: 54 }); // 90 × 0.60
+    // 250 tela + 135 maquila + 54 fijos
+    expect(r.total).toBe(439);
+    expect(r.costoUnitario).toBe(4.88);
+  });
+
+  it("sin costo fijo indicado, no suma nada (compatibilidad)", () => {
+    const r = costoCorte({
+      corte: { id: "a", total_unidades: 10, metros_consumidos: 1 },
+      pedido: { valor_metro: 5, total_pagar: 5 },
+      cortesDelPedido: [{ id: "a", total_unidades: 10, metros_consumidos: 1 }],
+      costoMaquilaUnitario: 0,
+      coloresMaquila: [{ unidades: 10, entregas: [] }],
+      jornadas: [], insumos: [], estampado: 0,
+    });
+    expect(r.fijos.valor).toBe(0);
+  });
+});

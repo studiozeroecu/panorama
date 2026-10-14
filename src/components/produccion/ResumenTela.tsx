@@ -73,6 +73,8 @@ function ModalResumen({ pedido, onCerrar }: { pedido: PedidoTela; onCerrar: () =
     pedido,
     unidadesEstimadas: estimarUnidades(prenda, Number(pedido.total_metros)),
     cortes: cortesResumen,
+    // Por prenda, como en Envío y Resumen: la suma de todos los costos fijos.
+    costoFijoPorUnidad: data.costosFijos.reduce((s, f) => s + Number(f.valor), 0),
   });
   const cortadaCompleta =
     cortes.length > 0 && avanceCorte(pedido.total_metros, pedido.colores ?? [], cortes).listo;
@@ -154,6 +156,21 @@ function ModalResumen({ pedido, onCerrar }: { pedido: PedidoTela; onCerrar: () =
         )}
       </Etapa>
 
+      <Etapa icono="🏷️" titulo="Costos fijos" hecha={r.fijos.porUnidad > 0}
+        valor={r.fijos.porUnidad > 0 ? money(r.fijos.estimado) : undefined}>
+        {r.fijos.porUnidad > 0 ? (
+          <>
+            Etiquetas, fundas… · {money(r.fijos.porUnidad)} por prenda
+            {r.unidades != null && ` × ${r.unidades}${r.unidadesEstimadas ? " estimadas" : ""}`}
+            {r.fijos.gastado !== r.fijos.estimado && (
+              <div className="sub" style={{ fontSize: 12 }}>
+                De lo ya entregado bien: {money(r.fijos.gastado)}
+              </div>
+            )}
+          </>
+        ) : "No hay costos fijos cargados (Producción → Costos)."}
+      </Etapa>
+
       {r.estampado > 0 && (
         <Etapa icono="🎨" titulo="Estampado" hecha valor={money(r.estampado)}>
           Lotes enviados a estampar
@@ -168,7 +185,7 @@ function ModalResumen({ pedido, onCerrar }: { pedido: PedidoTela; onCerrar: () =
             se reparte entre las {r.unidades} prendas cortadas. Baja al cortar el resto.
           </div>
         )}
-        <div>No incluye costos fijos (arriendo, etc.): esos van por mes en Resumen.</div>
+        <div>Los costos fijos se toman con su valor de hoy: si cambias uno, cambia también aquí.</div>
       </div>
     </Modal>
   );

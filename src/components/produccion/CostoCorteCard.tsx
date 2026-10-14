@@ -8,8 +8,8 @@ import { costoCorte } from "@/lib/produccion/costoCorte";
 /**
  * Costo de producción de un corte — fase 8p. Solo admin (vive en CorteTab).
  *
- * Suma tela + maquila + horas de corte + insumos + estampado y lo divide entre
- * las prendas buenas. Las reglas están en src/lib/produccion/costoCorte.ts.
+ * Suma tela + maquila + horas de corte + insumos + estampado + costos fijos por
+ * prenda (etiquetas, fundas…) y lo divide entre las prendas buenas. Las reglas están en src/lib/produccion/costoCorte.ts.
  *
  * Aquí también se pone el COSTO de cada insumo: la cortadora anota qué y cuánto
  * se usó, pero el precio lo pone Mateo (la base lo impide para cualquier otro).
@@ -41,6 +41,8 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
     jornadas: corte.jornadas,
     insumos: corte.insumos,
     estampado,
+    // Por prenda, como en Envío y Resumen: la suma de todos los costos fijos.
+    costoFijoPorUnidad: data.costosFijos.reduce((s, f) => s + Number(f.valor), 0),
   });
 
   const maquiladora = maquila
@@ -109,6 +111,12 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
 
             <span>Estampado</span>
             <span className="num">{money(c.estampado)}</span>
+
+            <span>
+              Costos fijos (etiquetas, fundas…)
+              <span className="sub"> · {money(c.fijos.porUnidad)} por prenda × {c.unidades}</span>
+            </span>
+            <span className="num">{money(c.fijos.valor)}</span>
 
             <b>Total producción</b>
             <b className="num">{money(c.total)}</b>

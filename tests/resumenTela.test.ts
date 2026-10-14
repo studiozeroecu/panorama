@@ -70,3 +70,28 @@ describe("resumenTela — se va llenando por etapas", () => {
     expect(r.maquila.esperado).toBe(285);
   });
 });
+
+describe("resumenTela — costos fijos por prenda", () => {
+  it("antes de cortar: costo fijo × prendas estimadas", () => {
+    const r = resumenTela({ pedido: PEDIDO, unidadesEstimadas: 250, cortes: [], costoFijoPorUnidad: 0.4 });
+    expect(r.fijos).toEqual({ porUnidad: 0.4, gastado: 0, estimado: 100 });
+    expect(r.estimadoFinal).toBe(600); // 500 tela + 100 fijos
+    expect(r.costoUnitario).toBe(2.4); // 2.00 tela + 0.40 fijos
+  });
+
+  it("en maquila: lo gastado solo lleva los fijos de lo entregado bien", () => {
+    const r = resumenTela({
+      pedido: PEDIDO, unidadesEstimadas: 250, costoFijoPorUnidad: 0.5,
+      cortes: [{
+        corte: { id: "a", total_unidades: 200, metros_consumidos: null },
+        costoMaquilaUnitario: 1.5,
+        coloresMaquila: [{ unidades: 200, entregas: [{ tipo: "entrega", unidades: 80 }] }],
+        jornadas: [], insumos: [], estampado: 0,
+      }],
+    });
+    expect(r.fijos.gastado).toBe(40); // 80 × 0.50
+    expect(r.fijos.estimado).toBe(100); // 200 × 0.50
+    expect(r.gastado).toBe(660); // 500 + 120 maquila + 40
+    expect(r.estimadoFinal).toBe(900); // 500 + 300 maquila + 100
+  });
+});
