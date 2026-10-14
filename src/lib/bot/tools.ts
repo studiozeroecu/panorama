@@ -1,5 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Anthropic from "@anthropic-ai/sdk";
+import { hoyEcuador } from "@/lib/fechas";
+import { CATEGORIAS_GASTO } from "@/lib/finanzas/categorias";
+import { cargarFinanzas, leerTodo } from "@/lib/finanzas/cargar";
+import { armarAgenda } from "@/lib/finanzas/agenda";
+import { mesDe, quincenaDe, siguiente, sumarDias, type Periodo } from "@/lib/finanzas/periodos";
+import { rangoUuidPorPrefijo } from "@/lib/finanzas/ids";
+import { sumar } from "@/lib/finanzas/formato";
+import { textoAgenda } from "@/lib/finanzas/textos";
 
 /**
  * Herramientas que Claude puede invocar. La IA nunca toca la base
@@ -7,16 +15,8 @@ import type Anthropic from "@anthropic-ai/sdk";
  * y ejecuta cada una. Cualquier parámetro inválido se rechaza aquí.
  */
 
-export const CATEGORIAS = [
-  "maquila",
-  "estampado",
-  "corte",
-  "arriendo",
-  "servicios",
-  "transporte",
-  "personal",
-  "otros",
-] as const;
+/** Lista única de Finanzas ("personal" como categoría ahora es "sueldos"). */
+export const CATEGORIAS = CATEGORIAS_GASTO;
 
 export const toolDefinitions: Anthropic.Tool[] = [
   {
@@ -29,7 +29,12 @@ export const toolDefinitions: Anthropic.Tool[] = [
         tipo: { type: "string", enum: ["gasto", "ingreso"], description: "gasto = salida de dinero; ingreso = entrada" },
         monto: { type: "number", description: "Monto en dólares, positivo" },
         concepto: { type: "string", description: "Descripción corta de qué fue el movimiento" },
-        categoria: { type: "string", enum: [...CATEGORIAS], description: "Categoría del gasto; usa 'otros' si ninguna aplica" },
+        categoria: { type: "string", enum: [...CATEGORIAS], description: "Categoría del gasto; usa 'otros' si ninguna aplica. Sueldos de empleados = 'sueldos'" },
+        ambito: {
+          type: "string",
+          enum: ["empresa", "personal"],
+          description: "empresa (default) = gasto del negocio; personal = gasto personal del dueño, no entra a la rentabilidad",
+        },
         fecha: { type: "string", description: "Fecha YYYY-MM-DD; omitir si es hoy" },
       },
       required: ["tipo", "monto", "concepto", "categoria"],
@@ -38,13 +43,14 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "consultar_movimientos",
     description:
-      "Lista y suma los pagos/gastos e ingresos registrados en un rango de fechas, opcionalmente filtrado por categoría. Úsala para '¿cuánto he gastado este mes?', '¿qué pagué esta semana?'.",
+      "Lista y suma los pagos/gastos e ingresos registrados en un rango de fechas, opcionalmente filtrado por categoría. Por defecto SOLO cuenta lo de la empresa; lo personal solo si el usuario lo pide (incluir_personal). Úsala para '¿cuánto he gastado este mes?', '¿qué pagué esta semana?'.",
     input_schema: {
       type: "object",
       properties: {
         desde: { type: "string", description: "Fecha YYYY-MM-DD inicio del rango" },
         hasta: { type: "string", description: "Fecha YYYY-MM-DD fin del rango" },
         categoria: { type: "string", enum: [...CATEGORIAS] },
+        incluir_personal: { type: "boolean", description: "true solo si el usuario pide incluir gastos personales" },
       },
       required: ["desde", "hasta"],
     },
@@ -86,6 +92,8 @@ export const toolDefinitions: Anthropic.Tool[] = [
         numero: { type: "string", description: "Número del cheque" },
         fecha_cobro: { type: "string", description: "Fecha YYYY-MM-DD en que se cobra o vence" },
         notas: { type: "string" },
+        categoria: { type: "string", enum: [...CATEGORIAS], description: "Solo por_pagar: categoría del gasto cuando se pague" },
+        ambito: { type: "string", enum: ["empresa", "personal"], description: "Solo por_pagar; default empresa" },
       },
       required: ["tipo", "monto", "beneficiario"],
     },
@@ -93,12 +101,12 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "consultar_cheques",
     description:
-      "Lista cheques registrados. Úsala para '¿qué tengo que pagar esta semana?', '¿qué cheques vencen pronto?', '¿cuánto me deben?'.",
+      "Lista cheques y pagos programados registrados (con su id corto). Úsala para '¿qué cheques vencen pronto?', '¿cuánto me deben en cheques?' y para encontrar el id antes de actualizar_cheque. Para '¿qué tengo que pagar esta semana/quincena?' usa flujo_semana.",
     input_schema: {
       type: "object",
       properties: {
         tipo: { type: "string", enum: ["por_cobrar", "por_pagar"] },
-        estado: { type: "string", enum: ["pendiente", "cobrado", "rebotado", "anulado"], description: "Default: pendiente" },
+        estado: { type: "string", enum: ["pendiente", "pagado", "cobrado", "rebotado", "anulado"], description: "Default: pendiente" },
         dias: { type: "number", description: "Solo cheques cuya fecha de cobro cae dentro de N días desde hoy" },
       },
     },
@@ -106,12 +114,13 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "actualizar_cheque",
     description:
-      "Cambia el estado de un cheque existente (ej. 'el cheque de la maquila ya se cobró', 'rebotó el cheque 1234'). Identifícalo por número, beneficiario o monto usando antes consultar_cheques si hay ambigüedad.",
+      "Cambia el estado de un cheque o pago programado (ej. 'ya pagué el cheque 902', 'rebotó el cheque 1234'). Si es un pago POR PAGAR y se marca pagado (o 'cobrado'), registra el gasto automáticamente. Identifícalo antes con consultar_cheques y usa su id.",
     input_schema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "ID del cheque (obtenido de consultar_cheques)" },
-        estado: { type: "string", enum: ["pendiente", "cobrado", "rebotado", "anulado"] },
+        id: { type: "string", description: "ID del cheque (el id corto de consultar_cheques sirve)" },
+        estado: { type: "string", enum: ["pendiente", "pagado", "cobrado", "rebotado", "anulado"] },
+        fecha: { type: "string", description: "Solo al pagar: fecha YYYY-MM-DD del pago; omitir si es hoy" },
       },
       required: ["id", "estado"],
     },
@@ -138,11 +147,16 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "flujo_semana",
     description:
-      "Qué hay que pagar y cobrar en los próximos días: cuentas por pagar, facturas por cobrar y cheques, ordenados por vencimiento con totales. Úsala para '¿qué tengo que pagar esta semana?'.",
+      "Qué hay que pagar (y cobrar) por quincena, por mes o en los próximos N días: pagos programados con fecha, vencidos, cheques rebotados aparte, posibles (flexibles, no se suman) y deudas sin fecha (no se suman al periodo). Úsala para '¿qué tengo que pagar esta semana / quincena / mes?'.",
     input_schema: {
       type: "object",
       properties: {
-        dias: { type: "number", description: "Horizonte en días (default 7)" },
+        periodo: {
+          type: "string",
+          enum: ["quincena", "proxima_quincena", "mes", "proximo_mes"],
+          description: "Quincena = 1-15 o 16-fin de mes. Si se da, manda sobre 'dias'.",
+        },
+        dias: { type: "number", description: "Horizonte en días desde hoy (default 7) si no se da periodo" },
       },
     },
   },
@@ -206,51 +220,69 @@ export async function executeTool(
         const categoria = CATEGORIAS.includes(input.categoria as never)
           ? (input.categoria as string)
           : "otros";
-        const fecha = isDate(input.fecha) ? input.fecha : new Date().toISOString().slice(0, 10);
+        const ambito = input.ambito === "personal" ? "personal" : "empresa";
+        const fecha = isDate(input.fecha) ? input.fecha : hoyEcuador();
         const { error } = await supabase.from("movimientos").insert({
           tipo,
           monto,
           concepto: String(input.concepto ?? "").slice(0, 300),
           categoria,
+          ambito,
           fecha,
           origen: "telegram",
         });
         if (error) return `Error al guardar: ${error.message}`;
-        return `Registrado: ${tipo} de ${money(monto)} en "${categoria}" (${input.concepto}), fecha ${fecha}.`;
+        return `Registrado: ${tipo} de ${money(monto)} en "${categoria}" (${input.concepto}), ámbito ${ambito}, fecha ${fecha}.`;
       }
 
       case "consultar_movimientos": {
         if (!isDate(input.desde) || !isDate(input.hasta)) {
           return "Error: desde y hasta deben ser fechas YYYY-MM-DD.";
         }
-        let q = supabase
-          .from("movimientos")
-          .select("fecha, tipo, monto, concepto, categoria")
-          .gte("fecha", input.desde)
-          .lte("fecha", input.hasta)
-          .order("fecha", { ascending: false })
-          .limit(100);
-        if (CATEGORIAS.includes(input.categoria as never)) {
-          q = q.eq("categoria", input.categoria as string);
-        }
-        const { data, error } = await q;
-        if (error) return `Error: ${error.message}`;
-        if (!data?.length) return "No hay movimientos registrados en ese rango.";
+        const desde = input.desde;
+        const hasta = input.hasta;
+        const incluirPersonal = input.incluir_personal === true;
+        const categoria = CATEGORIAS.includes(input.categoria as never) ? (input.categoria as string) : null;
+        type Fila = { fecha: string; tipo: string; monto: number; concepto: string; categoria: string; ambito: string; cuenta_en_rentabilidad: boolean };
+        // por páginas: los totales cuentan TODAS las filas, no solo las primeras
+        const data = await leerTodo<Fila>("los movimientos", (a, b) => {
+          let q = supabase
+            .from("v_movimientos")
+            .select("id, fecha, tipo, monto, concepto, categoria, ambito, cuenta_en_rentabilidad")
+            .gte("fecha", desde)
+            .lte("fecha", hasta)
+            .order("fecha", { ascending: false })
+            .order("id")
+            .range(a, b);
+          if (!incluirPersonal) q = q.eq("ambito", "empresa");
+          if (categoria) q = q.eq("categoria", categoria);
+          return q;
+        });
+        const alcance = incluirPersonal ? "empresa + personal" : "solo empresa";
+        if (!data.length) return `No hay movimientos registrados en ese rango (${alcance}).`;
         const gastos = data.filter((m) => m.tipo === "gasto");
         const ingresos = data.filter((m) => m.tipo === "ingreso");
-        const totalG = gastos.reduce((s, m) => s + Number(m.monto), 0);
-        const totalI = ingresos.reduce((s, m) => s + Number(m.monto), 0);
-        const porCat = new Map<string, number>();
-        for (const g of gastos) porCat.set(g.categoria, (porCat.get(g.categoria) ?? 0) + Number(g.monto));
+        const totalG = sumar(gastos.map((m) => Number(m.monto)));
+        const totalI = sumar(ingresos.map((m) => Number(m.monto)));
+        const totalRent = sumar(gastos.filter((m) => m.cuenta_en_rentabilidad).map((m) => Number(m.monto)));
+        const porCat = new Map<string, number[]>();
+        for (const g of gastos) porCat.set(g.categoria, [...(porCat.get(g.categoria) ?? []), Number(g.monto)]);
         const catLines = [...porCat.entries()]
+          .map(([c, ms]) => [c, sumar(ms)] as const)
           .sort((a, b) => b[1] - a[1])
           .map(([c, t]) => `  ${c}: ${money(t)}`)
           .join("\n");
         const items = data
           .slice(0, 20)
-          .map((m) => `${m.fecha} · ${m.tipo} · ${money(Number(m.monto))} · ${m.categoria} · ${m.concepto}`)
+          .map((m) => `${m.fecha} · ${m.tipo} · ${money(Number(m.monto))} · ${m.categoria}${m.ambito === "personal" ? " · personal" : ""} · ${m.concepto}`)
           .join("\n");
-        return `Movimientos ${input.desde} a ${input.hasta}:\nTotal gastos: ${money(totalG)} (${gastos.length})\nTotal ingresos: ${money(totalI)} (${ingresos.length})\nGastos por categoría:\n${catLines || "  —"}\nÚltimos:\n${items}`;
+        return (
+          `Movimientos ${desde} a ${hasta} (${alcance}):\n` +
+          `Total gastos: ${money(totalG)} (${gastos.length}) — de ellos cuentan para rentabilidad ${money(totalRent)}\n` +
+          `Total ingresos: ${money(totalI)} (${ingresos.length})\n` +
+          `Gastos por categoría:\n${catLines || "  —"}\n` +
+          `Últimos${data.length > 20 ? ` 20 de ${data.length}` : ""}:\n${items}`
+        );
       }
 
       case "resumen_ventas": {
@@ -324,61 +356,103 @@ export async function executeTool(
           numero: String(input.numero ?? "").slice(0, 50),
           fecha_cobro: isDate(input.fecha_cobro) ? input.fecha_cobro : null,
           notas: String(input.notas ?? "").slice(0, 500),
+          // categoría y ámbito solo aplican a lo que YO pago (se usan al registrar el gasto)
+          ...(tipo === "por_pagar"
+            ? {
+                categoria: CATEGORIAS.includes(input.categoria as never) ? (input.categoria as string) : "otros",
+                ambito: input.ambito === "personal" ? "personal" : "empresa",
+              }
+            : {}),
         });
         if (error) return `Error al guardar: ${error.message}`;
         return `Cheque ${tipo === "por_pagar" ? "por pagar" : "por cobrar"} registrado: ${money(monto)} a ${input.beneficiario}${isDate(input.fecha_cobro) ? `, se cobra el ${input.fecha_cobro}` : ""}.`;
       }
 
       case "consultar_cheques": {
-        const estado = ["pendiente", "cobrado", "rebotado", "anulado"].includes(String(input.estado))
-          ? String(input.estado)
-          : "pendiente";
-        let q = supabase
-          .from("cheques")
-          .select("id, tipo, monto, beneficiario, banco, numero, fecha_cobro, estado")
-          .eq("estado", estado)
-          .order("fecha_cobro", { ascending: true, nullsFirst: false })
-          .limit(30);
-        if (input.tipo === "por_cobrar" || input.tipo === "por_pagar") {
-          q = q.eq("tipo", input.tipo);
-        }
-        if (Number(input.dias) > 0) {
-          const hasta = new Date(Date.now() + Number(input.dias) * 86400000).toISOString().slice(0, 10);
-          q = q.lte("fecha_cobro", hasta);
-        }
-        const { data, error } = await q;
-        if (error) return `Error: ${error.message}`;
-        if (!data?.length) return `No hay cheques en estado "${estado}" con ese filtro.`;
-        const totalPagar = data.filter((c) => c.tipo === "por_pagar").reduce((s, c) => s + Number(c.monto), 0);
-        const totalCobrar = data.filter((c) => c.tipo === "por_cobrar").reduce((s, c) => s + Number(c.monto), 0);
+        const estados = ["pendiente", "pagado", "cobrado", "rebotado", "anulado"];
+        const estado = estados.includes(String(input.estado)) ? String(input.estado) : "pendiente";
+        // "pagado" y "cobrado" son lo mismo para un pago hecho (el código viejo usaba "cobrado")
+        const estadosBuscar = estado === "pagado" || estado === "cobrado" ? ["pagado", "cobrado"] : [estado];
+        const tipoFiltro = input.tipo === "por_cobrar" || input.tipo === "por_pagar" ? input.tipo : null;
+        const hastaDias = Number(input.dias) > 0 ? sumarDias(hoyEcuador(), Math.round(Number(input.dias))) : null;
+        type Fila = {
+          id: string; tipo: string; monto: number; beneficiario: string; numero: string; fecha_cobro: string | null;
+          estado: string; deuda_proveedor: string | null; ambito_efectivo: string; reprogramado: boolean; fecha_original: string | null;
+        };
+        // por páginas: los totales cuentan TODOS los cheques del filtro
+        const data = await leerTodo<Fila>("los cheques", (a, b) => {
+          let q = supabase
+            .from("v_cheques")
+            .select("id, tipo, monto, beneficiario, numero, fecha_cobro, estado, deuda_proveedor, ambito_efectivo, reprogramado, fecha_original")
+            .in("estado", estadosBuscar)
+            .order("fecha_cobro", { ascending: true, nullsFirst: false })
+            .order("id")
+            .range(a, b);
+          if (tipoFiltro) q = q.eq("tipo", tipoFiltro);
+          if (hastaDias) q = q.lte("fecha_cobro", hastaDias);
+          return q;
+        });
+        if (!data.length) return `No hay cheques en estado "${estado}" con ese filtro.`;
+        const totalPagar = sumar(data.filter((c) => c.tipo === "por_pagar").map((c) => Number(c.monto)));
+        const totalCobrar = sumar(data.filter((c) => c.tipo === "por_cobrar").map((c) => Number(c.monto)));
         const lines = data
+          .slice(0, 30)
           .map(
             (c) =>
-              `[id:${String(c.id).slice(0, 8)}] ${c.tipo === "por_pagar" ? "PAGAR" : "COBRAR"} ${money(Number(c.monto))} · ${c.beneficiario}${c.numero ? ` · #${c.numero}` : ""}${c.fecha_cobro ? ` · cobro: ${c.fecha_cobro}` : ""}`
+              `[id:${String(c.id).slice(0, 8)}] ${c.tipo === "por_pagar" ? "PAGAR" : "COBRAR"} ${money(Number(c.monto))} · ${c.deuda_proveedor || c.beneficiario}${c.numero ? ` · #${c.numero}` : ""}${c.fecha_cobro ? ` · fecha: ${c.fecha_cobro}` : ""}${c.reprogramado ? ` (antes ${c.fecha_original})` : ""}${c.ambito_efectivo === "personal" ? " · personal" : ""}`
           )
           .join("\n");
-        return `Cheques (${estado}): total por pagar ${money(totalPagar)}, total por cobrar ${money(totalCobrar)}\n${lines}\n(Para actualizar_cheque usa el id entre corchetes; es un prefijo válido.)`;
+        return (
+          `Cheques (${estado}): total por pagar ${money(totalPagar)}, total por cobrar ${money(totalCobrar)} (${data.length})\n${lines}` +
+          `${data.length > 30 ? `\n… y ${data.length - 30} más` : ""}\n(Para actualizar_cheque usa el id entre corchetes; es un prefijo válido.)`
+        );
       }
 
       case "actualizar_cheque": {
         const estado = String(input.estado);
-        if (!["pendiente", "cobrado", "rebotado", "anulado"].includes(estado)) {
+        if (!["pendiente", "pagado", "cobrado", "rebotado", "anulado"].includes(estado)) {
           return "Error: estado inválido.";
         }
-        const idPrefix = String(input.id ?? "").trim();
-        if (idPrefix.length < 6) return "Error: id de cheque inválido.";
-        // acepta prefijo de id (los listados muestran los primeros 8 caracteres)
+        // acepta prefijo de id (los listados muestran los primeros 8 caracteres).
+        // La base no permite "like" sobre un uuid: se busca por rango.
+        const rango = rangoUuidPorPrefijo(String(input.id ?? ""));
+        if (!rango) return "Error: id de cheque inválido (usa el id entre corchetes de consultar_cheques).";
         const { data: matches, error: findErr } = await supabase
-          .from("cheques")
-          .select("id, monto, beneficiario")
-          .like("id", `${idPrefix}%`)
+          .from("v_cheques")
+          .select("id, tipo, monto, beneficiario, deuda_proveedor, estado")
+          .gte("id", rango.desde)
+          .lte("id", rango.hasta)
           .limit(2);
         if (findErr) return `Error: ${findErr.message}`;
         if (!matches?.length) return "No encontré un cheque con ese id.";
         if (matches.length > 1) return "El id es ambiguo; usa más caracteres.";
-        const { error } = await supabase.from("cheques").update({ estado }).eq("id", matches[0].id);
-        if (error) return `Error: ${error.message}`;
-        return `Cheque de ${money(Number(matches[0].monto))} a ${matches[0].beneficiario} marcado como "${estado}".`;
+        const c = matches[0];
+        const quien = c.deuda_proveedor || c.beneficiario;
+        const yaPagado = c.estado === "pagado" || (c.tipo === "por_pagar" && c.estado === "cobrado");
+
+        // Pagar algo que YO debo: todo o nada, con su gasto (función de la base)
+        if (c.tipo === "por_pagar" && (estado === "pagado" || estado === "cobrado")) {
+          const fecha = isDate(input.fecha) ? input.fecha : hoyEcuador();
+          const { data: r, error } = await supabase.rpc("pagar_cuota", {
+            p_cheque_id: c.id,
+            p_fecha: fecha,
+            p_origen: "telegram",
+          });
+          if (error) return `No se pudo marcar como pagado: ${error.message}`;
+          if ((r as { resultado?: string } | null)?.resultado === "ya_pagado") {
+            return `El pago de ${money(Number(c.monto))} a ${quien} ya estaba pagado; no registré nada nuevo.`;
+          }
+          return `Pagado: ${money(Number(c.monto))} a ${quien} el ${fecha}. Quedó registrado como gasto.`;
+        }
+        if (yaPagado) {
+          return `Ese pago a ${quien} ya está pagado y tiene su gasto registrado; no lo cambio desde aquí (deshacer pagos llegará más adelante).`;
+        }
+        // rebotado / anulado / pendiente, o cobrar un cheque que me deben
+        const { error } = await supabase.from("cheques").update({ estado }).eq("id", c.id);
+        if (error) return `No se pudo cambiar el estado: ${error.message}`;
+        return `Cheque de ${money(Number(c.monto))} (${quien}) marcado como "${estado}".${
+          estado === "rebotado" ? " Queda en la sección roja hasta que se reprograme o se cambie el cheque." : ""
+        }`;
       }
 
       case "registrar_estampado_dtf": {
@@ -423,56 +497,53 @@ export async function executeTool(
       }
 
       case "flujo_semana": {
-        const dias = Math.min(Math.max(Number(input.dias) || 7, 1), 60);
-        const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
-        const hasta = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
-        const [cxp, cxc, chq] = await Promise.all([
-          supabase
-            .from("cuentas_por_pagar")
-            .select("proveedor, concepto, monto, fecha_vencimiento")
-            .eq("estado", "pendiente")
-            .or(`fecha_vencimiento.lte.${hasta},fecha_vencimiento.is.null`),
+        // Misma lógica que la web: armarAgenda (src/lib/finanzas/agenda.ts)
+        const hoy = hoyEcuador();
+        let periodo: Periodo;
+        if (input.periodo === "quincena") periodo = quincenaDe(hoy);
+        else if (input.periodo === "proxima_quincena") periodo = siguiente(quincenaDe(hoy));
+        else if (input.periodo === "mes") periodo = mesDe(hoy);
+        else if (input.periodo === "proximo_mes") periodo = siguiente(mesDe(hoy));
+        else {
+          const dias = Math.min(Math.max(Math.round(Number(input.dias)) || 7, 1), 60);
+          periodo = { tipo: "quincena", desde: hoy, hasta: sumarDias(hoy, dias - 1), etiqueta: `próximos ${dias} días` };
+        }
+        const datos = await cargarFinanzas(supabase, periodo);
+        const texto = textoAgenda(armarAgenda(datos, periodo, { hoy }));
+
+        // Por cobrar (versión simple hasta la fase 5: aún no son dinero seguro)
+        const [cxc, chq] = await Promise.all([
           supabase
             .from("cuentas_por_cobrar")
             .select("cliente, concepto, monto, fecha_vencimiento")
             .eq("estado", "pendiente")
-            .lte("fecha_vencimiento", hasta),
+            .lte("fecha_vencimiento", periodo.hasta)
+            .order("fecha_vencimiento"),
           supabase
             .from("cheques")
-            .select("tipo, monto, beneficiario, fecha_cobro")
+            .select("monto, beneficiario, fecha_cobro")
+            .eq("tipo", "por_cobrar")
             .eq("estado", "pendiente")
-            .lte("fecha_cobro", hasta),
+            .lte("fecha_cobro", periodo.hasta)
+            .order("fecha_cobro"),
         ]);
-        if (cxp.error) return `Error: ${cxp.error.message}`;
-        type Item = { fecha: string | null; texto: string; monto: number };
-        const pagar: Item[] = [
-          ...(cxp.data ?? []).map((x) => ({
-            fecha: x.fecha_vencimiento,
-            texto: `${x.proveedor}${x.concepto ? ` (${x.concepto})` : ""}`,
-            monto: Number(x.monto),
-          })),
-          ...(chq.data ?? [])
-            .filter((c) => c.tipo === "por_pagar")
-            .map((c) => ({ fecha: c.fecha_cobro, texto: `cheque a ${c.beneficiario}`, monto: Number(c.monto) })),
-        ].sort((a, b) => (a.fecha ?? "9999").localeCompare(b.fecha ?? "9999"));
-        const cobrar: Item[] = [
+        if (cxc.error || chq.error) {
+          return `${texto}\n\nPOR COBRAR: no se pudo cargar (${cxc.error?.message ?? chq.error?.message}).`;
+        }
+        const cobrar = [
           ...(cxc.data ?? []).map((x) => ({
-            fecha: x.fecha_vencimiento,
+            fecha: x.fecha_vencimiento as string,
             texto: `${x.cliente}${x.concepto ? ` (${x.concepto})` : ""}`,
             monto: Number(x.monto),
           })),
-          ...(chq.data ?? [])
-            .filter((c) => c.tipo === "por_cobrar")
-            .map((c) => ({ fecha: c.fecha_cobro, texto: `cheque de ${c.beneficiario}`, monto: Number(c.monto) })),
-        ].sort((a, b) => (a.fecha ?? "9999").localeCompare(b.fecha ?? "9999"));
-        const fmt = (i: Item) =>
-          `${i.fecha ?? "sin fecha"}${i.fecha && i.fecha < hoy ? " (VENCIDO)" : ""}: ${i.texto} — ${money(i.monto)}`;
-        const totPagar = pagar.reduce((s, i) => s + i.monto, 0);
-        const totCobrar = cobrar.reduce((s, i) => s + i.monto, 0);
+          ...(chq.data ?? []).map((c) => ({ fecha: c.fecha_cobro as string, texto: `cheque de ${c.beneficiario}`, monto: Number(c.monto) })),
+        ].sort((a, b) => a.fecha.localeCompare(b.fecha));
+        const lineasCobrar = cobrar
+          .map((i) => `- ${i.fecha}${i.fecha < hoy ? " (VENCIDO)" : ""}: ${i.texto} — ${money(i.monto)}`)
+          .join("\n");
         return (
-          `Próximos ${dias} días (hoy ${hoy}):\n` +
-          `A PAGAR — total ${money(totPagar)}:\n${pagar.length ? pagar.map(fmt).join("\n") : "nada"}\n\n` +
-          `A COBRAR — total ${money(totCobrar)}:\n${cobrar.length ? cobrar.map(fmt).join("\n") : "nada"}`
+          `${texto}\n\nPOR COBRAR hasta ${periodo.hasta} (facturas y cheques pendientes; no es dinero hasta que se cobre): ` +
+          `${money(sumar(cobrar.map((i) => i.monto)))}${cobrar.length ? `\n${lineasCobrar}` : " — nada"}`
         );
       }
 

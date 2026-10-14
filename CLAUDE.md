@@ -261,7 +261,7 @@ gasto nuevo**. Cuándo y cómo se reconoce el sueldo como gasto se decide en la 
 ## Pendiente por fase (no está en SQL-1)
 
 - **1B:** hecha y aprobada (pantallas Quincena · Mes · Deudas).
-- **1C:** código listo, **pendiente de aprobación y de publicar**.
+- **1C:** hecha y aprobada; se publica junto con la 1B (merge de `finanzas` a `main`).
   - `tools.ts`: categorías, ámbito, fechas, totales sin tope, `actualizar_cheque` por
     rango + `pagar_cuota`, `flujo_semana` con la agenda.
   - `webhook`: toma atómica del botón, "Marcar todos como pagados" con `pagar_cuota`,

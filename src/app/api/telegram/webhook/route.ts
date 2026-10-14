@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createSnapshot, type ExistingSnapshot } from "@/lib/snapshots";
 import { handleText, extractCheque, extractGuia, corregirGuia, type GuiaExtraccion } from "@/lib/bot/claude";
 import { parsePeriodo } from "@/lib/bot/periodo";
+import { hoyEcuador } from "@/lib/fechas";
+import { sumarDias } from "@/lib/finanzas/periodos";
 import {
   sendMessage,
   downloadFile,
@@ -566,9 +568,20 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     await editMessageText(chatId, messageId, "Esta acción ya fue resuelta o expiró.");
     return;
   }
-  // "Ver detalle" no consume la acción: los botones siguen vivos
+  // "Ver detalle" no consume la acción: los botones siguen vivos.
+  // El resto la "toma" en UN solo paso (solo si seguía sin resolver): si dos
+  // toques llegan a la vez, solo uno la ejecuta.
   if (!(prefix === "urg" && action === "detalle")) {
-    await supabase.from("bot_pending_actions").update({ resolved: true }).eq("id", pendingId);
+    const { data: tomada } = await supabase
+      .from("bot_pending_actions")
+      .update({ resolved: true })
+      .eq("id", pendingId)
+      .eq("resolved", false)
+      .select("id");
+    if (!tomada?.length) {
+      await editMessageText(chatId, messageId, "Esta acción ya fue resuelta o expiró.");
+      return;
+    }
   }
 
   // --- lote DTF ---
@@ -609,12 +622,16 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
 
   // --- urgencias de pago (botones del cron diario) ---
   if (prefix === "urg" && pending.kind === "urgencias") {
-    const p = pending.payload as { cheque_ids: string[]; cxp_ids: string[] };
+    // cheque_ids: pagos pendientes avisados (se pueden pagar)
+    // rebotado_ids: rebotados avisados (solo se silencian; no se pagan desde aquí)
+    // cxp_ids: alertas viejas (antes de Finanzas v2); ya no se generan
+    const p = pending.payload as { cheque_ids?: string[]; rebotado_ids?: string[]; cxp_ids?: string[] };
     if (action === "posponer") {
       // silencio real: 30 días sin volver a avisar de estos ítems
-      const hasta = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-      if (p.cheque_ids?.length) {
-        await supabase.from("cheques").update({ alertado_hasta: hasta }).in("id", p.cheque_ids);
+      const hasta = sumarDias(hoyEcuador(), 30);
+      const ids = [...(p.cheque_ids ?? []), ...(p.rebotado_ids ?? [])];
+      if (ids.length) {
+        await supabase.from("cheques").update({ alertado_hasta: hasta }).in("id", ids);
       }
       if (p.cxp_ids?.length) {
         await supabase.from("cuentas_por_pagar").update({ alertado_hasta: hasta }).in("id", p.cxp_ids);
@@ -633,40 +650,31 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       return;
     }
     if (action === "pagar") {
-      const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
+      // Cada pago con la función de la base: marca pagado + registra su gasto
+      // (también los personales, con ámbito personal), todo o nada, sin duplicar.
+      const hoy = hoyEcuador();
       let pagados = 0;
-      if (p.cheque_ids?.length) {
-        const { error } = await supabase.from("cheques").update({ estado: "cobrado" }).in("id", p.cheque_ids);
-        if (!error) pagados += p.cheque_ids.length;
+      let yaEstaban = 0;
+      const fallos: string[] = [];
+      for (const id of p.cheque_ids ?? []) {
+        const { data: r, error } = await supabase.rpc("pagar_cuota", {
+          p_cheque_id: id,
+          p_fecha: hoy,
+          p_origen: "telegram",
+        });
+        if (error) fallos.push(error.message);
+        else if ((r as { resultado?: string } | null)?.resultado === "ya_pagado") yaEstaban++;
+        else pagados++;
       }
-      if (p.cxp_ids?.length) {
-        const { data: cuentas } = await supabase
-          .from("cuentas_por_pagar")
-          .select("id, proveedor, concepto, monto, categoria, ambito")
-          .in("id", p.cxp_ids)
-          .eq("estado", "pendiente");
-        await supabase
-          .from("cuentas_por_pagar")
-          .update({ estado: "pagado", fecha_pago: hoy })
-          .in("id", p.cxp_ids);
-        for (const c of cuentas ?? []) {
-          if ((c as { ambito?: string }).ambito === "personal") continue; // personal no entra al negocio
-          await supabase.from("movimientos").insert({
-            tipo: "gasto",
-            monto: Number(c.monto),
-            concepto: `${c.proveedor}${c.concepto ? ` — ${c.concepto}` : ""} (urgencia pagada desde el bot)`,
-            categoria: c.categoria ?? "otros",
-            fecha: hoy,
-            origen: "telegram",
-          });
-        }
-        pagados += (cuentas ?? []).length;
-      }
-      await editMessageText(
-        chatId,
-        messageId,
-        `✅ ${pagados} pago${pagados !== 1 ? "s" : ""} marcado${pagados !== 1 ? "s" : ""} como resuelto${pagados !== 1 ? "s" : ""} (los gastos de empresa quedaron registrados). ¿Algo más?`
-      );
+      const lineas = [
+        `✅ ${pagados} pago${pagados !== 1 ? "s" : ""} marcado${pagados !== 1 ? "s" : ""} como pagado${pagados !== 1 ? "s" : ""} hoy, con su gasto registrado.`,
+        yaEstaban ? `${yaEstaban} ya estaba${yaEstaban !== 1 ? "n" : ""} pagado${yaEstaban !== 1 ? "s" : ""}; no se duplicó nada.` : "",
+        fallos.length ? `⚠️ ${fallos.length} ${fallos.length !== 1 ? "no se pudieron" : "no se pudo"} marcar: ${esc(fallos.join("; "))}` : "",
+        p.rebotado_ids?.length ? "Los cheques rebotados no se marcan desde aquí: hay que reprogramarlos o cambiarlos." : "",
+        p.cxp_ids?.length && !p.cheque_ids?.length ? "Esta alerta es de la versión anterior; márcalos en /finanzas." : "",
+        "¿Algo más?",
+      ].filter(Boolean);
+      await editMessageText(chatId, messageId, lineas.join("\n"));
       return;
     }
     return;
