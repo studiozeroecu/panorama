@@ -18,6 +18,19 @@ export function fmtFecha(iso: string | null | undefined): string {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+/**
+ * Suma días de calendario a una fecha ISO (negativo para restar); devuelve ISO.
+ * Para ventanas tipo "últimos 30 días", partiendo siempre de hoyEcuador():
+ * `new Date(Date.now() - 30 * 86400000)` calcula en UTC, y entre las 19:00 y
+ * medianoche en Ecuador el corte cae un día tarde.
+ */
+export function sumarDias(iso: string, dias: number): string {
+  // mediodía UTC: inmune a desplazamientos de zona al iterar días
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
 /** Suma días laborables (lun-vie) a una fecha ISO; devuelve ISO. */
 export function sumarDiasLaborables(iso: string, dias: number): string {
   // mediodía UTC: inmune a desplazamientos de zona al iterar días

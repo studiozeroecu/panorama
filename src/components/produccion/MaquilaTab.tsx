@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function MaquilaTab() {
   const { data, supabase, reload, toast } = useProd();
+  // Fase 7: el color se identifica por su fila (color.id), no por su posición en
+  // un array — que era frágil en cuanto el orden cambiaba.
   const [fechaModal, setFechaModal] = useState<{
-    maquila: Maquila;
-    colorIdx: number;
+    color: ColorMaquila;
     tipo: "enviado" | "entregado";
   } | null>(null);
   const [fecha, setFecha] = useState(hoyEcuador());
@@ -24,17 +26,22 @@ export default function MaquilaTab() {
     else await reload();
   }
 
+  /**
+   * Fase 7: actualiza SOLO la fila del color. Antes había que reescribir el array
+   * jsonb entero, así que dos cambios a la vez se pisaban. El trigger
+   * trg_sync_maquila_colores mantiene el jsonb de respaldo al día por su cuenta.
+   */
   async function confirmarFecha() {
     if (!fechaModal || !fecha) return;
-    const { maquila, colorIdx, tipo } = fechaModal;
-    const colores = maquila.colores.map((c, i) =>
-      i !== colorIdx
-        ? c
-        : tipo === "enviado"
-          ? { ...c, estado: "enviado" as const, fecha_envio: fecha }
-          : { ...c, estado: "entregado" as const, fecha_entrega: fecha }
-    );
-    const { error } = await supabase.from("prod_maquilas").update({ colores }).eq("id", maquila.id);
+    const { color, tipo } = fechaModal;
+    const cambios =
+      tipo === "enviado"
+        ? { estado: "enviado", fecha_envio: fecha }
+        : { estado: "entregado", fecha_entrega: fecha };
+    const { error } = await supabase
+      .from("prod_maquila_colores")
+      .update(cambios)
+      .eq("id", color.id);
     if (error) return toast(error.message, "error");
     toast(tipo === "enviado" ? "Marcado como enviado" : "Marcado como entregado — listo en Envío");
     setFechaModal(null);
@@ -57,7 +64,7 @@ export default function MaquilaTab() {
       <div className="prod-card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h4>{pedido?.nombre_tela ?? "(pedido eliminado)"}{prenda ? ` — ${prenda.nombre}` : ""}</h4>
+            <h4><NombreTela pedido={pedido} />{prenda ? ` — ${prenda.nombre}` : ""}</h4>
             <div className="prod-meta">
               Cortado: {corte ? fmtFecha(corte.fecha) : "—"} · {m.total_unidades} unidades · {m.colores.length} color{m.colores.length !== 1 ? "es" : ""}
             </div>
@@ -71,7 +78,12 @@ export default function MaquilaTab() {
             <select className="pinput" value={m.maquiladora_id ?? ""}
               onChange={(e) => guardarCampo(m, { maquiladora_id: e.target.value || null })}>
               <option value="">— Sin asignar —</option>
-              {data.maquiladoras.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+              {/* Fase 8e: se ELIGE, pero este select está enlazado a un valor ya
+                  guardado — si la asignada está archivada hay que seguir mostrándola,
+                  o el desplegable saldría en blanco y un cambio accidental la borraría. */}
+              {data.maquiladoras
+                .filter((x) => !x.archivada_en || x.id === m.maquiladora_id)
+                .map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
           </div>
           <div style={{ flex: 1, minWidth: 140 }}>
@@ -99,8 +111,8 @@ export default function MaquilaTab() {
               </tr>
             </thead>
             <tbody>
-              {m.colores.map((c: ColorMaquila, ci) => (
-                <tr key={ci}>
+              {m.colores.map((c: ColorMaquila) => (
+                <tr key={c.id}>
                   <td>
                     <b style={{ fontSize: 13 }}>{c.color}</b>
                     <div style={{ marginTop: 3 }}><Tallas tallas={c.tallas} /></div>
@@ -114,24 +126,37 @@ export default function MaquilaTab() {
                       {c.fecha_envio && <>Env: {fmtFecha(c.fecha_envio)} </>}
                       {c.fecha_entrega && <>· Rec: {fmtFecha(c.fecha_entrega)}</>}
                     </div>
+                    {/* Fase 8o: entregas parciales (las registra la cortadora). */}
+                    {c.estado !== "entregado" && c.entregas.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
+                        Parcial: {c.entregas.filter((e) => e.tipo === "entrega").reduce((s, e) => s + e.unidades, 0)} de {c.unidades} entregadas
+                        {c.entregas.some((e) => e.tipo !== "entrega") &&
+                          ` · ${c.entregas.filter((e) => e.tipo !== "entrega").reduce((s, e) => s + e.unidades, 0)} dadas de baja`}
+                      </div>
+                    )}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     {c.estado === "pendiente" && (
                       <button className="btn" style={{ fontSize: 12 }}
-                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ maquila: m, colorIdx: ci, tipo: "enviado" }); }}>
+                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ color: c, tipo: "enviado" }); }}>
                         Marcar enviado
                       </button>
                     )}
                     {c.estado === "enviado" && (
+                      // Fase 8o: marcar entregado crea (por trigger) la entrega de lo
+                      // que faltaba, así que con parciales previas cierra el resto.
                       <button className="btn primary" style={{ fontSize: 12 }}
-                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ maquila: m, colorIdx: ci, tipo: "entregado" }); }}>
-                        Marcar entregado
+                        onClick={() => { setFecha(hoyEcuador()); setFechaModal({ color: c, tipo: "entregado" }); }}>
+                        {c.entregas.length > 0 ? "Entregado el resto" : "Marcar entregado"}
                       </button>
                     )}
                     {c.estado === "entregado" && (
                       c.procesado
                         ? <span className="sub" style={{ fontSize: 11.5 }}>Procesado en Envío</span>
                         : <span style={{ fontSize: 11.5, color: "var(--good)" }}>Listo para Envío →</span>
+                    )}
+                    {c.estado === "enviado" && c.entregas.some((e) => !e.procesado) && (
+                      <div style={{ fontSize: 11.5, color: "var(--good)", marginTop: 4 }}>Parcial lista para Envío →</div>
                     )}
                   </td>
                 </tr>
@@ -183,8 +208,7 @@ export default function MaquilaTab() {
         }
       >
         <p className="sub" style={{ marginTop: 0 }}>
-          Color: <b>{fechaModal?.maquila.colores[fechaModal.colorIdx]?.color}</b> ·{" "}
-          {fechaModal?.maquila.colores[fechaModal.colorIdx]?.unidades} unidades
+          Color: <b>{fechaModal?.color.color}</b> · {fechaModal?.color.unidades} unidades
         </p>
         <Campo label={fechaModal?.tipo === "enviado" ? "Fecha de envío a maquila" : "Fecha de entrega de maquila"} requerido>
           <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />

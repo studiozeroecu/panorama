@@ -2,9 +2,12 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, type PedidoTela } from "@/lib/produccion/types";
-import { hoyEcuador, fmtFecha, sumarDiasLaborables, diasHasta } from "@/lib/fechas";
+import { estimarUnidades } from "@/lib/produccion/estimacion";
+import { hoyEcuador, fmtFecha, sumarDiasLaborables, diasHasta, sumarDias } from "@/lib/fechas";
+import { validarAnchoCm, detalleAnchoRecibido, type ResultadoRecepcion } from "@/lib/produccion/recepcion";
 
 export default function LlegadaTab() {
   const { data, supabase, reload, toast } = useProd();
@@ -12,8 +15,17 @@ export default function LlegadaTab() {
   const [fecha, setFecha] = useState(hoyEcuador());
   const [ancho, setAncho] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const pendientes = data.pedidos.filter((p) => p.estado === "pendiente" || p.estado === "en_camino");
+  // Fase 8l: lo que confirmó la cortadora desaparece de "pendientes" sin que
+  // Mateo lo haya tocado. Se lista aparte un par de semanas para que lo vea.
+  // Corregir el ancho se hace en Pedidos → Editar.
+  const desde = sumarDias(hoyEcuador(), -14);
+  const deLaCortadora = data.pedidos.filter(
+    (p) => p.recibido_por_rol === "cortadora" && p.estado === "entregado" &&
+      (p.fecha_entrega_real ?? "") >= desde
+  );
 
   function abrirEntrega(p: PedidoTela) {
     setEntregar(p);
@@ -23,16 +35,26 @@ export default function LlegadaTab() {
   }
 
   async function confirmar() {
-    if (!entregar) return;
-    const a = parseFloat(ancho);
+    if (!entregar || ocupado) return;
     if (!fecha) return setErr("Ingresa la fecha de entrega.");
-    if (!(a > 0)) return setErr("Ingresa el ancho real (> 0).");
-    const { error } = await supabase
-      .from("prod_pedidos_tela")
-      .update({ estado: "entregado", fecha_entrega_real: fecha, ancho_real: a })
-      .eq("id", entregar.id);
+    const v = validarAnchoCm(ancho);
+    if ("error" in v) return setErr(v.error);
+    // Fase 8l: el mismo camino que la cortadora (fn_recibir_tela), para que
+    // `recibido_por_rol` quede siempre escrito y las validaciones sean las mismas.
+    setOcupado(true);
+    const { data: res, error } = await supabase.rpc("fn_recibir_tela", {
+      p_pedido_id: entregar.id,
+      p_ancho_real: v.cm,
+      p_fecha: fecha,
+    });
+    setOcupado(false);
     if (error) return setErr(error.message);
-    toast(`"${entregar.nombre_tela}" marcada como entregada`);
+    const r = res as ResultadoRecepcion;
+    toast(
+      r.ya_recibido
+        ? `"${entregar.nombre_tela}" ya estaba recibida${r.recibido_por_rol === "cortadora" ? " por la cortadora" : ""}. No se cambió nada.`
+        : `"${entregar.nombre_tela}" marcada como entregada`
+    );
     setEntregar(null);
     await reload();
   }
@@ -50,12 +72,32 @@ export default function LlegadaTab() {
         <h2>Llegada de telas <span className="sub" style={{ fontWeight: 400 }}>· confirma entregas y registra el ancho real</span></h2>
       </div>
 
+      {deLaCortadora.length > 0 && (
+        <div className="prod-card" style={{ borderColor: "var(--accent)" }}>
+          <h4 style={{ marginTop: 0 }}>Recibidas por la cortadora · últimos 14 días</h4>
+          {deLaCortadora.map((p) => (
+            <div key={p.id} style={{ fontSize: 13, marginTop: 6 }}>
+              <b>{p.nombre_tela}</b>{" "}
+              <span className="sub">
+                · {fmtFecha(p.fecha_entrega_real)} · {detalleAnchoRecibido(p) ?? "sin ancho"}
+              </span>
+            </div>
+          ))}
+          <p className="sub" style={{ fontSize: 11.5, marginBottom: 0 }}>
+            Para corregir el ancho: Pedidos → ✏️ Editar.
+          </p>
+        </div>
+      )}
+
       {!pendientes.length ? (
         <Vacio titulo="Sin pedidos pendientes de entrega" hint='Los pedidos "Pendiente" o "En camino" aparecen aquí' />
       ) : (
         pendientes.map((p) => {
           const prov = data.proveedores.find((x) => x.id === p.proveedor_id);
           const prenda = data.prendas.find((x) => x.id === p.prenda_id);
+          // Qué va a rendir el pedido, visible mientras la tela todavía viene en
+          // camino. Ojo: `estimada`, aquí abajo, es la FECHA de entrega — no esto.
+          const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
           let estimada = "—";
           let countdown: React.ReactNode = null;
           if (prov && p.fecha_pedido) {
@@ -75,11 +117,17 @@ export default function LlegadaTab() {
             <div className="prod-card" key={p.id}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h4>{p.nombre_tela}</h4>
+                  <h4><NombreTela pedido={p} /></h4>
                   <div className="prod-meta">
                     {prov?.empresa ?? "Sin proveedor"}
                     {prenda ? ` · Para: ${prenda.nombre}` : ""} · {Number(p.total_metros).toFixed(1)} m
                   </div>
+                  {prenda && unidadesEstimadas != null && (
+                    <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
+                      Consumo por unidad: {prenda.consumo_metros} m · con{" "}
+                      {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
+                    </div>
+                  )}
                 </div>
                 <Badge color={p.estado === "en_camino" ? "azul" : "ambar"}>
                   {p.estado === "en_camino" ? "En camino" : "Pendiente"}
@@ -126,7 +174,9 @@ export default function LlegadaTab() {
         pie={
           <>
             <button className="btn" onClick={() => setEntregar(null)}>Cancelar</button>
-            <button className="btn primary" onClick={confirmar}>Confirmar entrega</button>
+            <button className="btn primary" disabled={ocupado} onClick={confirmar}>
+              {ocupado ? "Guardando…" : "Confirmar entrega"}
+            </button>
           </>
         }
       >
@@ -139,7 +189,7 @@ export default function LlegadaTab() {
             <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
           </Campo>
           <Campo label="Ancho real de tela (cm)" requerido>
-            <input className="pinput" type="number" min="1" step="0.5" value={ancho}
+            <input className="pinput" type="number" inputMode="decimal" min="10" max="400" step="0.5" value={ancho}
               onChange={(e) => setAncho(e.target.value)} />
           </Campo>
         </Fila>

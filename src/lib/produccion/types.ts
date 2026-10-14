@@ -1,13 +1,21 @@
 export interface Prenda {
   id: string;
   nombre: string;
+  /** Metros LINEALES por unidad. Solo vale para el ancho con el que se midió. */
   consumo_metros: number;
+  /**
+   * Fase 8h: metros CUADRADOS por unidad. Dato medido aparte, independiente de
+   * `consumo_metros` — no se deriva uno del otro. null = sin medir todavía.
+   */
+  consumo_m2: number | null;
   costo_maquila: number;
   precio_venta_local: number;
   precio_venta_online: number;
   lleva_estampado: boolean;
   tallas: string[];
   notas: string;
+  /** Fase 8e: null = activa. Archivada no se ofrece al elegir, pero su historial sigue enlazado. */
+  archivada_en: string | null;
 }
 
 export interface Proveedor {
@@ -16,6 +24,7 @@ export interface Proveedor {
   contacto_nombre: string;
   contacto: string;
   dias_entrega: number;
+  archivada_en: string | null;
 }
 
 export interface CostoFijo {
@@ -27,12 +36,19 @@ export interface CostoFijo {
 export interface Catalogo {
   id: string;
   nombre: string;
+  archivada_en: string | null;
 }
 
+// Fase 7: los colores viven en tablas propias (prod_pedido_colores,
+// prod_corte_colores + prod_corte_color_tallas, prod_maquila_colores).
+// useProduccion los aplana a estas formas — `tallas` sigue siendo un
+// Record<talla, unidades> para que los componentes no cambien.
 export interface ColorPedido {
+  id: string;
   color: string;
   metros: number;
-  kilos?: number;
+  kilos: number | null;
+  orden: number;
 }
 
 export type EstadoPedido = "pendiente" | "en_camino" | "entregado";
@@ -53,13 +69,24 @@ export interface PedidoTela {
   total_pagar: number;
   estado: EstadoPedido;
   fecha_entrega_real: string | null;
+  /** Fase 8j · PLAN: unidades por talla de UNA capa. Lo define el admin, lo lee la cortadora. */
+  corrida_base: Record<string, number> | null;
+  /** Fase 8l: quién confirmó la llegada. null = anterior a la 8l, no se sabe. */
+  recibido_por_rol: "admin" | "cortadora" | null;
+  /** Fase 8l: FOTO del ancho medido al recibir. `ancho_real` puede corregirse después; este no. */
+  ancho_recibido: number | null;
+  /** Fase 8o: qué hacer con la tela al volver de maquila. SOLO informativo: Envío decide. */
+  destino_indicado: "locales" | "estampado" | null;
 }
 
 export interface ColorCorte {
+  id: string;
+  pedido_color_id: string | null;
   color: string;
   tallas: Record<string, number>;
   unidades: number;
   metros_usados: number | null;
+  orden: number;
 }
 
 export interface Corte {
@@ -71,11 +98,27 @@ export interface Corte {
   total_unidades: number;
   metros_consumidos: number | null;
   observaciones: string;
+  /** Fase 8j · FOTO de la corrida con la que se cortó. No se vuelve a tocar. */
+  corrida_base: Record<string, number> | null;
+  /** Fase 8p: insumos anotados por la cortadora; `costo` lo pone el admin (null = sin costo). */
+  insumos: InsumoCorte[];
+  /** Fase 8o/8p: horas de la cortadora, con la tarifa CONGELADA de cada jornada. */
+  jornadas: { horas: number; tarifa_hora: number }[];
+}
+
+export interface InsumoCorte {
+  id: string;
+  descripcion: string;
+  cantidad: number;
+  costo: number | null;
 }
 
 export type EstadoColorMaquila = "pendiente" | "enviado" | "entregado";
 
 export interface ColorMaquila {
+  id: string;                 // prod_maquila_colores.id — la fila que se actualiza
+  corte_color_id: string;
+  // color / tallas / unidades NO se guardan aquí: vienen por join del corte
   color: string;
   tallas: Record<string, number>;
   unidades: number;
@@ -83,6 +126,20 @@ export interface ColorMaquila {
   fecha_envio: string | null;
   fecha_entrega: string | null;
   procesado: boolean; // ya se envió a estampado/online/locales desde Envío
+  /** Fase 8o: lo que la maquiladora fue devolviendo. Envío procesa CADA entrega. */
+  entregas: EntregaMaquila[];
+}
+
+/** Fase 8o: una entrega (completa o parcial) de un color en maquila. */
+export interface EntregaMaquila {
+  id: string;
+  fecha: string;
+  tallas: Record<string, number>;
+  unidades: number;
+  procesado: boolean;
+  /** Fase 8p: entrega = llegó bien · falla / faltante = baja justificada, no se paga ni va a Envío. */
+  tipo: "entrega" | "falla" | "faltante";
+  motivo: string;
 }
 
 export interface Maquila {

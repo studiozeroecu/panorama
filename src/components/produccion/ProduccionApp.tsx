@@ -46,7 +46,8 @@ function Shell() {
   const contadores: Partial<Record<TabId, number>> = {
     llegada: data.pedidos.filter((p) => p.estado !== "entregado").length,
     envio: data.maquilas.reduce(
-      (s, m) => s + m.colores.filter((c) => c.estado === "entregado" && !c.procesado).length,
+      // Fase 8o: lo pendiente en Envío son ENTREGAS sin procesar, completas o parciales.
+      (s, m) => s + m.colores.reduce((n, c) => n + c.entregas.filter((e) => !e.procesado).length, 0),
       0
     ),
     estampados: data.lotesEstampado.filter((l) => l.estado !== "retornado").length,

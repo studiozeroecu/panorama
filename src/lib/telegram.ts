@@ -70,3 +70,51 @@ export async function downloadFile(fileId: string): Promise<Buffer | null> {
 export async function setChatAction(chatId: string | number, action = "typing") {
   return call("sendChatAction", { chat_id: chatId, action });
 }
+
+/** Tope de la Bot API para una foto. */
+export const MAX_FOTO = 10 * 1024 * 1024;
+
+/** Telegram corta el pie de foto a 1024 caracteres. */
+const MAX_CAPTION = 1024;
+
+/**
+ * Envía una foto con el binario en multipart.
+ *
+ * El token entra por parámetro, a diferencia del resto del archivo: las fichas
+ * de estampado van a un bot DISTINTO del principal, y `BASE()` tiene
+ * `TELEGRAM_BOT_TOKEN` incrustado — reutilizarlo mandaría la ficha al chat
+ * equivocado sin dar ningún error.
+ *
+ * Devuelve el fallo en vez de solo registrarlo en consola, también a
+ * diferencia del resto: aquí hay alguien esperando delante de la pantalla.
+ */
+export async function sendPhoto(
+  token: string,
+  chatId: string | number,
+  foto: Blob,
+  nombreArchivo: string,
+  caption?: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  if (caption) form.append("caption", caption.slice(0, MAX_CAPTION));
+  form.append("photo", foto, nombreArchivo);
+
+  try {
+    // SIN headers: fetch pone el Content-Type con el boundary del multipart.
+    // Fijarlo a mano rompe la petición.
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: "POST",
+      body: form,
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      console.error("Telegram sendPhoto error:", json.description);
+      return { ok: false, error: String(json.description ?? "Telegram rechazó la imagen.") };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error("Telegram sendPhoto failed:", e);
+    return { ok: false, error: "No se pudo contactar con Telegram." };
+  }
+}

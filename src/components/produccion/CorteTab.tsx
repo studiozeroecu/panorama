@@ -1,21 +1,30 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
-import { ordenarTallas, type PedidoTela, type ColorCorte } from "@/lib/produccion/types";
+import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
+import { estimarUnidades } from "@/lib/produccion/estimacion";
+import CorridaCorteModal from "./CorridaCorteModal";
+import CostoCorteCard from "./CostoCorteCard";
+import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
   const { data, supabase, reload, toast } = useProd();
   const [pedidoSel, setPedidoSel] = useState<PedidoTela | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [idemId, setIdemId] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
   const [maquiladoraId, setMaquiladoraId] = useState("");
   const [obs, setObs] = useState("");
   // matriz[color][talla] = string; metros[color] = string
   const [matriz, setMatriz] = useState<Record<string, Record<string, string>>>({});
   const [metrosUsados, setMetrosUsados] = useState<Record<string, string>>({});
+  const [corrida, setCorrida] = useState(false);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -33,6 +42,10 @@ export default function CorteTab() {
   }
 
   function abrirCorte(p: PedidoTela) {
+    // Fase 8b: el id de idempotencia nace AL ABRIR el modal, no al pulsar Guardar.
+    // Si naciera en el handler del clic, cada intento traería un id distinto y la
+    // deduplicación del servidor no serviría de nada. Una apertura = un intento.
+    setIdemId(nuevoId());
     setPedidoSel(p);
     setErr(null);
     setFecha(hoyEcuador());
@@ -48,72 +61,55 @@ export default function CorteTab() {
     return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
   };
 
+  /**
+   * Fase 7: una sola llamada a fn_registrar_corte, que escribe corte + maquila +
+   * colores + tallas en una transacción. Antes eran dos inserts sueltos: si el
+   * segundo fallaba, el corte quedaba huérfano y reintentar lo duplicaba.
+   * Las reglas de negocio (mínimo una unidad, saldo de tela, color sin nombre)
+   * viven ahora en la función; aquí no se repiten.
+   */
   async function guardarCorte() {
     if (!pedidoSel) return;
-    if (!fecha) return setErr("La fecha de corte es requerida.");
+    setErr(null);
     const tallas = tallasDe(pedidoSel);
-    const prenda = prendaDe(pedidoSel);
 
-    const colores: ColorCorte[] = (pedidoSel.colores ?? []).map((c) => {
-      const fila = matriz[c.color] ?? {};
-      const tallasObj: Record<string, number> = {};
-      for (const t of tallas) tallasObj[t] = parseInt(fila[t] ?? "0", 10) || 0;
-      const unidades = Object.values(tallasObj).reduce((s, v) => s + v, 0);
-      const mUsados = parseFloat(metrosUsados[c.color] ?? "");
-      return {
-        color: c.color,
-        tallas: tallasObj,
-        unidades,
-        metros_usados: isNaN(mUsados) ? null : mUsados,
-      };
-    }).filter((c) => c.unidades > 0 || (c.metros_usados ?? 0) > 0);
-
-    const totalUnidades = colores.reduce((s, c) => s + c.unidades, 0);
-    if (totalUnidades === 0) return setErr("Ingresa al menos una unidad cortada.");
-
-    const totalMetros = colores.reduce((s, c) => s + (c.metros_usados ?? 0), 0);
-    const conMetros = colores.some((c) => c.metros_usados != null);
-    const saldo = saldoDe(pedidoSel);
-    if (conMetros && totalMetros > saldo + 0.001) {
-      return setErr(
-        `Los metros usados (${totalMetros.toFixed(1)} m) superan el saldo de tela del pedido (${saldo.toFixed(1)} m).`
-      );
-    }
-
-    const { data: corte, error } = await supabase
-      .from("prod_cortes")
-      .insert({
-        pedido_id: pedidoSel.id,
-        fecha,
-        maquiladora_id: maquiladoraId || null,
-        colores,
-        total_unidades: totalUnidades,
-        metros_consumidos: conMetros ? +totalMetros.toFixed(2) : null,
-        observaciones: obs.trim(),
+    const colores = (pedidoSel.colores ?? [])
+      .map((c) => {
+        const fila = matriz[c.color] ?? {};
+        const tallasObj: Record<string, number> = {};
+        for (const t of tallas) {
+          const n = parseInt(fila[t] ?? "0", 10) || 0;
+          if (n > 0) tallasObj[t] = n;
+        }
+        const mUsados = parseFloat(metrosUsados[c.color] ?? "");
+        return {
+          color: c.color,
+          tallas: tallasObj,
+          metros_usados: isNaN(mUsados) ? null : mUsados,
+        };
       })
-      .select("id")
-      .single();
-    if (error || !corte) return setErr(error?.message ?? "Error al guardar");
+      .filter((c) => Object.keys(c.tallas).length > 0 || (c.metros_usados ?? 0) > 0);
 
-    // maquila automática (igual que la app original)
-    const { error: maqErr } = await supabase.from("prod_maquilas").insert({
-      corte_id: corte.id,
-      maquiladora_id: maquiladoraId || null,
-      costo_unitario: prenda?.costo_maquila ?? 0,
-      colores: colores.map((c) => ({
-        color: c.color,
-        tallas: c.tallas,
-        unidades: c.unidades,
-        estado: "pendiente",
-        fecha_envio: null,
-        fecha_entrega: null,
-        procesado: false,
-      })),
-      total_unidades: totalUnidades,
+    setOcupado(true);
+    const { data: res, error } = await supabase.rpc("fn_registrar_corte", {
+      p_pedido_id: pedidoSel.id,
+      p_fecha: fecha || null,
+      p_maquiladora_id: maquiladoraId || null,
+      p_observaciones: obs.trim(),
+      p_costo_maquila: prendaDe(pedidoSel)?.costo_maquila ?? 0,
+      p_colores: colores,
+      p_idem_id: idemId || null,
     });
-    if (maqErr) return setErr(`Corte guardado pero falló la maquila: ${maqErr.message}`);
+    setOcupado(false);
+    if (error) return setErr(error.message);
 
-    toast(`Corte registrado · ${totalUnidades} unidades`);
+    const r = (res ?? {}) as { ya_registrado?: boolean; unidades?: number };
+    // Un reintento no es un fallo: el corte ya existe, que es lo que se quería.
+    toast(
+      r.ya_registrado
+        ? "Este corte ya estaba registrado."
+        : `Corte registrado · ${r.unidades ?? totalModal} unidades`
+    );
     setPedidoSel(null);
     await reload();
   }
@@ -124,66 +120,112 @@ export default function CorteTab() {
     0
   );
 
+  /**
+   * Fase 8p: mismo criterio que la pantalla de la cortadora
+   * (src/lib/produccion/avanceCorte.ts). Una tela está cortada cuando todos sus
+   * colores salieron en algún corte, o cuando hay metros anotados y el saldo
+   * es <= 0.5. Solo con el saldo, una tela cortada sin anotar metros se quedaba
+   * aquí para siempre.
+   */
+  const estaCortada = (p: PedidoTela) =>
+    avanceCorte(p.total_metros, p.colores ?? [], data.cortes.filter((c) => c.pedido_id === p.id)).listo;
+  const porCortar = entregados.filter((p) => !estaCortada(p));
+  const yaCortadas = entregados.filter(estaCortada);
+
+  const tarjeta = (p: PedidoTela) => {
+    const saldo = saldoDe(p);
+    const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
+    const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
+    const prenda = prendaDe(p);
+    // Sobre total_metros y NO sobre el saldo: la tela de un pedido se dedica
+    // entera a su propósito, así que antes de cortar interesa cuánto rinde el
+    // pedido completo. Por eso este número y el badge de saldo no coinciden
+    // en cuanto hay un corte previo.
+    const unidadesEstimadas = estimarUnidades(prenda, Number(p.total_metros));
+    return (
+      <div className="prod-card" key={p.id}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h4><NombreTela pedido={p} /></h4>
+            <div className="prod-meta">
+              {Number(p.total_metros).toFixed(1)} m comprados
+              {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <Badge color={saldo > 0.5 ? "verde" : "gris"}>
+                Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
+              </Badge>
+              {cortesDelPedido.length > 0 && (
+                <Badge color="azul">{cortesDelPedido.length} corte{cortesDelPedido.length !== 1 ? "s" : ""}</Badge>
+              )}
+            </div>
+            {prenda && unidadesEstimadas != null && (
+              <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--accent)" }}>
+                Consumo por unidad: {prenda.consumo_metros} m · con{" "}
+                {Number(p.total_metros).toFixed(1)} m saldrían ≈ <b>{unidadesEstimadas} unidades</b>
+              </div>
+            )}
+          </div>
+          <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => abrirCorte(p)}>
+            {cortesDelPedido.length ? "+ Nuevo corte" : "Registrar corte"}
+          </button>
+        </div>
+
+        {cortesDelPedido.length > 0 && (
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+            {cortesDelPedido.map((c) => (
+              <div key={c.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                <span className="sub">{fmtFecha(c.fecha)}</span>
+                {" · "}
+                <b>{c.total_unidades} und.</b>
+                {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
+                <div style={{ marginTop: 3 }}>
+                  {(c.colores ?? []).map((col) => (
+                    <span key={col.color} style={{ marginRight: 10 }}>
+                      <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
+                      <Tallas tallas={col.tallas} />
+                    </span>
+                  ))}
+                </div>
+                <CostoCorteCard corte={c} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <section>
       <div className="section-head">
         <h2>Corte <span className="sub" style={{ fontWeight: 400 }}>· unidades por color y talla, con control de tela</span></h2>
+        {/* A nivel de pantalla y no por tarjeta: el documento combina varias telas. */}
+        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
+          📄 Corrida de corte
+        </button>
       </div>
+      <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
 
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />
       ) : (
-        entregados.map((p) => {
-          const saldo = saldoDe(p);
-          const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === p.id);
-          const sinRegistroMetros = cortesDelPedido.some((c) => c.metros_consumidos == null);
-          const prenda = prendaDe(p);
-          return (
-            <div className="prod-card" key={p.id}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <h4>{p.nombre_tela}</h4>
-                  <div className="prod-meta">
-                    {Number(p.total_metros).toFixed(1)} m comprados
-                    {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <Badge color={saldo > 0.5 ? "verde" : "gris"}>
-                      Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
-                    </Badge>
-                    {cortesDelPedido.length > 0 && (
-                      <Badge color="azul">{cortesDelPedido.length} corte{cortesDelPedido.length !== 1 ? "s" : ""}</Badge>
-                    )}
-                  </div>
-                </div>
-                <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => abrirCorte(p)}>
-                  {cortesDelPedido.length ? "+ Nuevo corte" : "Registrar corte"}
-                </button>
-              </div>
-
-              {cortesDelPedido.length > 0 && (
-                <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-                  {cortesDelPedido.map((c) => (
-                    <div key={c.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                      <span className="sub">{fmtFecha(c.fecha)}</span>
-                      {" · "}
-                      <b>{c.total_unidades} und.</b>
-                      {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
-                      <div style={{ marginTop: 3 }}>
-                        {(c.colores ?? []).map((col) => (
-                          <span key={col.color} style={{ marginRight: 10 }}>
-                            <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
-                            <Tallas tallas={col.tallas} />
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })
+        <>
+          {!porCortar.length && (
+            <Vacio titulo="Todo lo entregado ya está cortado" hint="Las telas cortadas están abajo, en «Ya cortadas»." />
+          )}
+          {porCortar.map(tarjeta)}
+          {yaCortadas.length > 0 && (
+            // Fase 8p: antes las cortadas seguían en la lista para siempre, como si
+            // faltara cortarlas. Se guardan aquí, plegadas, con su costo.
+            <details style={{ marginTop: 18 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                Ya cortadas ({yaCortadas.length})
+              </summary>
+              <div style={{ marginTop: 10 }}>{yaCortadas.map(tarjeta)}</div>
+            </details>
+          )}
+        </>
       )}
 
       <Modal
@@ -197,7 +239,9 @@ export default function CorteTab() {
               Total: <b>{totalModal}</b> unidades
             </span>
             <button className="btn" onClick={() => setPedidoSel(null)}>Cancelar</button>
-            <button className="btn primary" onClick={guardarCorte}>Guardar corte</button>
+            <button className="btn primary" disabled={ocupado} onClick={guardarCorte}>
+              {ocupado ? "Guardando…" : "Guardar corte"}
+            </button>
           </>
         }
       >
@@ -253,7 +297,9 @@ export default function CorteTab() {
               <Campo label="Maquiladora">
                 <select className="pinput" value={maquiladoraId} onChange={(e) => setMaquiladoraId(e.target.value)}>
                   <option value="">— Después —</option>
-                  {data.maquiladoras.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+                  {/* Fase 8e: aquí se ELIGE, así que las archivadas no se ofrecen. */}
+                  {data.maquiladoras.filter((m) => !m.archivada_en)
+                    .map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
                 </select>
               </Campo>
             </Fila>
