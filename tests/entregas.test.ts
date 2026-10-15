@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pendientesPorTalla, sumaTallas, etapaMaquila } from "@/lib/produccion/entregas";
+import { pendientesPorTalla, sumaTallas, etapaMaquila, entregadoPorTalla } from "@/lib/produccion/entregas";
 
 const CORTADO = { S: 5, M: 5, L: 2 };
 
@@ -34,5 +34,16 @@ describe("etapaMaquila", () => {
     expect(etapaMaquila("enviado", [])).toBe("en_maquila");
     expect(etapaMaquila("enviado", [{ tallas: { S: 1 }, unidades: 1 }])).toBe("parcial");
     expect(etapaMaquila("entregado", [{ tallas: { S: 1 }, unidades: 1 }])).toBe("entregado");
+  });
+});
+
+describe("entregadoPorTalla (mínimo al corregir un corte)", () => {
+  it("suma entregas y bajas por talla", () => {
+    expect(
+      entregadoPorTalla([
+        { tallas: { S: 3 }, unidades: 3 },
+        { tallas: { S: 1, M: "2" as unknown as number }, unidades: 3 },
+      ])
+    ).toEqual({ S: 4, M: 2 });
   });
 });

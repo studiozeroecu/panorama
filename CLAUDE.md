@@ -58,7 +58,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8l_cortadora_recibe_tela.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8n_cortadora_crea_maquiladora.sql` ✅ **aplicada el 2026-10-06** →
 `schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
-`schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06**
+`schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06** →
+`schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -366,6 +367,26 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-15 — producción — `schema_fase8q_corregir_corte.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
+
+- **Función nueva:** `fn_corregir_corte(p_corte_id, p_colores jsonb) → jsonb`, solo admin
+  (SECURITY INVOKER, como las RPC de la fase 7). Corrige las tallas de un corte ya registrado.
+- ⚠️ **Por qué una función:** las cantidades de un corte viven en CINCO sitios —
+  `prod_corte_color_tallas`, `prod_corte_colores.unidades`, `prod_cortes.total_unidades`,
+  `prod_maquilas.total_unidades` y los dos jsonb de respaldo— y tocar uno a mano descuadra el resto
+  en silencio. La función los reescribe todos en una transacción.
+- ⚠️ **La regla:** ninguna talla puede quedar **por debajo de lo ya entregado o justificado** en
+  maquila (fases 8o/8p): esas prendas existen. También **reajusta el estado del lote**: si sube una
+  talla de un color `entregado`, vuelve a `enviado` y deja de estar procesado; si baja hasta lo
+  entregado, queda `entregado`.
+- **Fuera de alcance:** agregar o quitar colores, y tocar metros o capas. Sí se puede agregar una
+  talla nueva dentro de un color existente.
+- **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
+  CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
+- **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
 
 ### 2026-10-05 — producción — `schema_fase8p_bajas_y_costos.sql` ✅ EJECUTADA (2026-10-06)
 

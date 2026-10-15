@@ -9,6 +9,8 @@ import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
 import CorridaCorteModal from "./CorridaCorteModal";
 import CostoCorteCard from "./CostoCorteCard";
+import CorregirCorteModal from "./CorregirCorteModal";
+import type { Corte } from "@/lib/produccion/types";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
@@ -25,6 +27,8 @@ export default function CorteTab() {
   const [matriz, setMatriz] = useState<Record<string, Record<string, string>>>({});
   const [metrosUsados, setMetrosUsados] = useState<Record<string, string>>({});
   const [corrida, setCorrida] = useState(false);
+  // Fase 8q: el corte cuyas cantidades se están corrigiendo.
+  const [corrigiendo, setCorrigiendo] = useState<Corte | null>(null);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -187,6 +191,8 @@ export default function CorteTab() {
                     </span>
                   ))}
                 </div>
+                <button className="btn" style={{ padding: "2px 9px", fontSize: 11.5, marginTop: 5 }}
+                  onClick={() => setCorrigiendo(c)}>✏️ Corregir cantidades</button>
                 <CostoCorteCard corte={c} />
               </div>
             ))}
@@ -206,6 +212,7 @@ export default function CorteTab() {
         </button>
       </div>
       <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
+      {corrigiendo && <CorregirCorteModal corte={corrigiendo} onCerrar={() => setCorrigiendo(null)} />}
 
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />

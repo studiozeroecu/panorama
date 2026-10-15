@@ -55,3 +55,15 @@ export const TEXTO_ETAPA: Record<EtapaMaquila, string> = {
   parcial: "Entrega parcial",
   entregado: "Entregado",
 };
+
+/**
+ * Lo ya entregado o justificado (entregas + bajas), por talla. Es el mínimo al
+ * que puede bajar una talla del corte (fase 8q): esas prendas ya existen.
+ */
+export function entregadoPorTalla(entregas: EntregaBreve[]): Tallas {
+  const out: Tallas = {};
+  for (const e of entregas) {
+    for (const [t, n] of Object.entries(e.tallas ?? {})) out[t] = (out[t] ?? 0) + Number(n);
+  }
+  return out;
+}
