@@ -60,6 +60,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06** →
 `finanzas_v2_sql1_ampliar.sql` ✅ **aplicada en octubre 2026 (antes del 2026-10-14)** — finanzas →
+`finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
@@ -199,7 +200,9 @@ created tables"*, confunde esas asignaciones con un `SELECT INTO` que crea una t
 `ALTER TABLE v_n ENABLE ROW LEVEL SECURITY` en medio del script y lo rompe con *"unterminated
 dollar-quoted string"* (no se ejecuta nada). La forma segura: `v := (select …)` para asignar,
 `perform … for update` + `found` para bloquear, y generar el id antes del insert
-(`v := gen_random_uuid()`) en vez de `returning id into`. Los `.sql` anteriores a la 8l sí lo usan:
+(`v := gen_random_uuid()`) en vez de `returning id into`. ⚠️ **Tampoco en comentarios**
+(2026-10-15, finanzas 5A): un comentario que nombraba la forma prohibida cortó el script igual —
+el editor no distingue comentario de código. Los `.sql` anteriores a la 8l sí lo usan:
 ya están aplicados y **no se vuelven a correr**, así que no hay que tocarlos.
 
 ### Costos (`costos_*`) — FKs internas del área
@@ -228,10 +231,13 @@ el cálculo del resto. `COMISION_VATEX = 0.612`.
 | `cuentas_por_pagar` (deuda) | uuid | `proveedor`, `concepto`, `monto` (>0), `tipo_deuda`, `exigibilidad` (firme\|flexible), `fecha_estimada`, `es_saldo_inicial`, `ambito`, `categoria`, `anulada`, documento opcional. Legado hasta SQL-2: `fecha_vencimiento`, `tipo_pago`, `estado`, `fecha_pago`, `alertado_hasta` | — |
 | `cheques` (= TODOS los pagos programados) | uuid | `tipo`, `medio` (cheque\|transferencia\|efectivo), `monto`, `fecha_cobro` (vigente), `fecha_original` (no se pisa), `fecha_reprogramada`, `estado` (pendiente\|pagado\|cobrado\|rebotado\|anulado), `fecha_pago`, `alertado_hasta` | **`cuenta_por_pagar_id → cuentas_por_pagar.id` restrict — ver abajo**; `cuenta_origen_id → cuentas_dinero.id` restrict |
 | `cheques_reprogramaciones` | uuid | historial de cambios de fecha/número (lo escribe un trigger; la app solo lee) | `cheque_id → cheques.id` restrict |
-| `movimientos` | uuid | `fecha`, `tipo`, `monto`, `concepto`, `categoria`, `origen`, **`ambito`** | `cheque_id → cheques.id` restrict (**único**: un pago = un gasto); `cuenta_por_pagar_id → cuentas_por_pagar.id` restrict |
+| `movimientos` | uuid | `fecha`, `tipo`, `monto`, `concepto`, `categoria`, `origen`, **`ambito`** | `cheque_id → cheques.id` restrict (**único**: un pago = un gasto); `cuenta_por_pagar_id → cuentas_por_pagar.id` restrict; *(5A)* `cobro_id`, `venta_directa_id`, `sueldo_pago_id` → restrict y **únicos** |
 | `cuentas_dinero` | uuid | bancos y efectivo (`nombre` único) | — |
 | `saldos_caja` | uuid | foto del saldo por cuenta y fecha | `cuenta_id → cuentas_dinero.id` restrict |
-| `cuentas_por_cobrar` | uuid | sin cambios (se rediseña en la fase 5, VATEX) | — |
+| `cuentas_por_cobrar` (facturas) | uuid | `cliente`, `es_vatex` (VATEX = UNA cuenta), `cuenta` (generada), `monto`, `prendas`, `ganancia_por_prenda` (congelada por trigger), `fecha_vencimiento` = fecha esperada de cobro, `anulada`. Cobrado/saldo/atraso se calculan en `v_cxc` | — |
+| `cobros` *(fase 5A)* | uuid | abonos a la **cuenta** del cliente (no a una factura); se aplican a la más antigua en `v_cxc` | — (vínculo por `cuenta`) |
+| `ventas_directas` *(fase 5A)* | uuid | en línea y ferias: `fecha`, `canal`, `evento`, `monto`, `prendas`, `ganancia_por_prenda` | — |
+| `sueldo_dueno_pagos` *(fase 5A)* | uuid | lo que el dueño se paga de "Mi sueldo" (VATEX $2,50 y fuera $5 por prenda) | — |
 
 `categoria` (en `movimientos`, `cuentas_por_pagar` y cheques sueltos):
 `maquila, estampado, corte, arriendo, servicios, transporte, sueldos, otros` (+ `personal`, legado, se
@@ -403,6 +409,21 @@ Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
 - **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
   CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
 - **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
+
+### 2026-10-15 — finanzas — `finanzas_fase5a_ingresos.sql` ✅ EJECUTADA (2026-10-15)
+
+Un solo bloque DO, repetible. Verificada con `finanzas_fase5a_ingresos_prueba_en_seco.sql`: 22/22.
+- `cuentas_por_cobrar`: + `es_vatex` (VATEX = una sola cuenta), `numero_factura`, `prendas`,
+  `ganancia_por_prenda` (la pone y congela el trigger `fin_cxc_ganancia`), `es_saldo_inicial`,
+  `anulada`, `cuenta` (generada: `vatex` o el cliente normalizado).
+- Nuevas: `cobros` (abonos a la CUENTA del cliente; se aplican a la factura más antigua en `v_cxc`),
+  `ventas_directas` (en línea y ferias, ingreso directo), `sueldo_dueno_pagos` (lo que el dueño se paga).
+- `movimientos`: + `cobro_id`, `venta_directa_id`, `sueldo_pago_id` (únicos); categoría `ventas`.
+- "Mi sueldo": `fn_ganancia_por_prenda` (VATEX $2,50, fuera $5,00) × prendas = gasto del negocio
+  al ganarse (`v_sueldo_dueno_registros`); sus pagos NO vuelven a contar en rentabilidad.
+- Funciones `registrar_cobro`, `registrar_venta_directa`, `pagar_mi_sueldo`; vistas `v_cxc`,
+  `v_cxc_cuentas`, `v_sueldo_dueno_registros`, `v_sueldo_dueno`; `v_movimientos` gana 3 columnas.
+- Impacto en otras áreas: **ninguno**. No lee ni toca tablas de otras áreas.
 
 ### 2026-10 — finanzas — `finanzas_v2_sql1_ampliar.sql` ✅ EJECUTADA (antes del 2026-10-14)
 
