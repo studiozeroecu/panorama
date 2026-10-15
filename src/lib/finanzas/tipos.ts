@@ -78,6 +78,108 @@ export interface Movimiento {
   cuenta_en_rentabilidad: boolean;
 }
 
+// ------------------------------------------------------------
+// Ingresos (fase 5A): facturas por cobrar, abonos, ventas directas y "Mi sueldo"
+// ------------------------------------------------------------
+
+/** Fila de v_cxc: cobrado, saldo y atraso los calcula la base. */
+export interface FacturaCobrar {
+  id: string;
+  created_at: string;
+  cliente: string;
+  es_vatex: boolean;
+  /** "vatex" o el cliente normalizado: a esta cuenta van los abonos */
+  cuenta: string;
+  numero_factura: string;
+  concepto: string;
+  monto: number;
+  fecha_factura: string;
+  fecha_esperada: string | null;
+  prendas: number;
+  ganancia_por_prenda: number;
+  ganancia_dueno: number;
+  es_saldo_inicial: boolean;
+  anulada: boolean;
+  notas: string;
+  cobrado: number;
+  saldo: number;
+  dias_atraso: number;
+  estado_calculado: "pendiente" | "abonada" | "cobrada" | "anulada";
+}
+
+/** Fila de v_cxc_cuentas: cuánto debe cada cliente (VATEX es una sola). */
+export interface CuentaCobrar {
+  cuenta: string;
+  cliente: string;
+  es_vatex: boolean;
+  total_facturado: number;
+  total_cobrado: number;
+  saldo: number;
+  facturas_abiertas: number;
+  factura_abierta_mas_antigua: string | null;
+  dias_atraso_max: number;
+  prendas: number;
+}
+
+export interface Cobro {
+  id: string;
+  fecha: string;
+  cliente: string;
+  es_vatex: boolean;
+  cuenta: string;
+  monto: number;
+  medio: Medio;
+  notas: string;
+  anulado: boolean;
+}
+
+export interface VentaDirecta {
+  id: string;
+  fecha: string;
+  canal: "en_linea" | "feria";
+  evento: string;
+  monto: number;
+  prendas: number;
+  ganancia_por_prenda: number;
+  notas: string;
+  anulada: boolean;
+}
+
+/** Fila de v_sueldo_dueno_registros: cada ganancia con lo pagado (más antiguo primero). */
+export interface RegistroSueldo {
+  fuente: "factura" | "venta";
+  fuente_id: string;
+  fecha: string;
+  descripcion: string;
+  en_vatex: boolean;
+  prendas: number;
+  ganancia_por_prenda: number;
+  monto: number;
+  pagado: number;
+  saldo: number;
+}
+
+export interface PagoSueldo {
+  id: string;
+  fecha: string;
+  monto: number;
+  medio: Medio;
+  notas: string;
+  anulado: boolean;
+}
+
+/** Todo lo de ingresos, cargado de una vez (cargarIngresos). */
+export interface DatosIngresos {
+  facturas: FacturaCobrar[];
+  cuentas: CuentaCobrar[];
+  cobros: Cobro[];
+  ventas: VentaDirecta[];
+  registrosSueldo: RegistroSueldo[];
+  pagosSueldo: PagoSueldo[];
+  /** v_sueldo_dueno: lo ganado, lo pagado y lo que la empresa me debe */
+  sueldo: { ganado: number; pagado: number; saldo: number };
+}
+
 /** Lo que cargar.ts trae de la base para un periodo. */
 export interface DatosFinanzas {
   deudas: Deuda[];

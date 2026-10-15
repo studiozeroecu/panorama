@@ -5,12 +5,16 @@ import Link from "next/link";
 import VistaPeriodo from "./VistaPeriodo";
 import Deudas from "./Deudas";
 import PorCobrar from "./PorCobrar";
+import VentasDirectas from "./VentasDirectas";
+import MiSueldo from "./MiSueldo";
 
 const TABS = [
   { id: "quincena", label: "Quincena" },
   { id: "mes", label: "Mes" },
   { id: "deudas", label: "Deudas" },
   { id: "cobrar", label: "Por cobrar" },
+  { id: "ventas", label: "Ventas directas" },
+  { id: "sueldo", label: "Mi sueldo" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -54,6 +58,8 @@ export default function FinanzasApp() {
       {tab === "mes" && <VistaPeriodo key="mes" tipo="mes" avisar={avisar} />}
       {tab === "deudas" && <Deudas avisar={avisar} />}
       {tab === "cobrar" && <PorCobrar avisar={avisar} />}
+      {tab === "ventas" && <VentasDirectas avisar={avisar} />}
+      {tab === "sueldo" && <MiSueldo avisar={avisar} />}
 
       {toast && <div className="prod-toast">✓ {toast}</div>}
     </div>

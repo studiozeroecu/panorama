@@ -215,3 +215,32 @@ describe("armarAgenda — otros periodos", () => {
     expect([a.totalPagos, a.totalVencidos, a.totalSinFecha, a.totalRebotados, a.totalAdeudado, a.gastos.total]).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
+
+describe("armarAgenda — atento a lo que se viene (3 días después del periodo)", () => {
+  const base = {
+    deudas: [],
+    chequesPagados: [],
+    movimientos: [],
+    chequesAbiertos: [
+      cheque({ id: "q15", monto: 100, fecha_cobro: "2026-10-15" }),
+      cheque({ id: "d16", monto: 250, fecha_cobro: "2026-10-16" }),
+      cheque({ id: "d18", monto: 70, fecha_cobro: "2026-10-18" }),
+      cheque({ id: "d19", monto: 999, fecha_cobro: "2026-10-19" }),
+      cheque({ id: "reb", monto: 50, fecha_cobro: "2026-10-17", estado: "rebotado" }),
+    ],
+  };
+
+  it("en la quincena 1–15 avisa lo del 16 al 18, sin sumarlo", () => {
+    const a = armarAgenda(base, quincenaDe("2026-10-06"), { hoy: "2026-10-06" });
+    expect(a.pagos.map((p) => p.chequeId)).toEqual(["q15"]);
+    expect(a.totalPagos).toBe(100);
+    expect(a.proximos.map((p) => p.chequeId)).toEqual(["d16", "d18"]);
+    expect(a.totalProximos).toBe(320);
+  });
+
+  it("al fin de mes mira los primeros días del mes siguiente", () => {
+    const fin = { ...base, chequesAbiertos: [cheque({ id: "n02", monto: 40, fecha_cobro: "2026-11-02" })] };
+    expect(armarAgenda(fin, quincenaDe("2026-10-20"), { hoy: "2026-10-20" }).proximos.map((p) => p.chequeId)).toEqual(["n02"]);
+    expect(armarAgenda(fin, mesDe("2026-10-20"), { hoy: "2026-10-20" }).proximos.map((p) => p.chequeId)).toEqual(["n02"]);
+  });
+});

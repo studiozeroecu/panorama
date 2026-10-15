@@ -88,3 +88,99 @@ export function validarCuotas(opts: {
   }
   return null;
 }
+
+// ------------------------------------------------------------
+// Cheques al sábado (pedido del dueño, 2026-10-15)
+// El proveedor no pide fechas exactas, solo "por esas fechas". El dueño
+// prefiere SÁBADO (se deposita el lunes y le da jueves/viernes para pedir el
+// dinero) y que los cheques NO se junten: si un sábado ya tiene cheques, se
+// busca el sábado libre más cercano. Solo se comparte sábado si la suma no
+// pasa del tope. Un cheque solo, aunque pase el tope, está bien.
+// ------------------------------------------------------------
+
+/** 0 = domingo … 6 = sábado, sin zona horaria (mediodía UTC). */
+export function diaSemana(iso: string): number {
+  return new Date(`${iso.slice(0, 10)}T12:00:00Z`).getUTCDay();
+}
+
+/**
+ * Los sábados alrededor de una fecha, del más cercano al más lejano (hasta
+ * `semanas` antes y después). Con empate gana el de después.
+ */
+export function sabadosCercanos(iso: string, semanas = 2): string[] {
+  const hastaSabado = (6 - diaSemana(iso) + 7) % 7; // 0 si ya es sábado
+  const base = sumarDias(iso, hastaSabado);
+  const out: { fecha: string; dist: number }[] = [];
+  for (let k = -semanas - 1; k <= semanas; k++) {
+    out.push({ fecha: sumarDias(base, 7 * k), dist: Math.abs(hastaSabado + 7 * k) });
+  }
+  return out
+    .filter((x) => x.dist <= 7 * semanas + 3)
+    .sort((a, b) => a.dist - b.dist || b.fecha.localeCompare(a.fecha))
+    .map((x) => x.fecha);
+}
+
+export interface CuotaAjustada extends CuotaBorrador {
+  /** la fecha que daba el plazo, antes de pasarla al sábado */
+  fechaPlazo: string;
+  /** algo que el dueño debe saber de esa fecha, o null */
+  aviso: string | null;
+}
+
+/**
+ * Pasa cada cuota al sábado más cercano sin juntarla con otros cheques:
+ *  1. el sábado LIBRE más cercano (ni cheques ya registrados ni de esta deuda);
+ *  2. si no hay libre cerca, el más cercano donde la suma no pase del tope;
+ *  3. si tampoco, el más cercano, con aviso.
+ * Las cuotas quedan siempre en orden (cada una después de la anterior) y
+ * nunca antes de `despuesDe` (la fecha desde la que se cuentan los días: un
+ * cheque no puede ser anterior a la factura).
+ * `ocupado`: cuánto suman ya los cheques pendientes de cada fecha.
+ */
+export function ajustarASabados(
+  cuotas: CuotaBorrador[],
+  opts: { ocupado: Map<string, number>; tope: number; semanas?: number; despuesDe?: string }
+): CuotaAjustada[] {
+  const { ocupado, tope, semanas = 2 } = opts;
+  const asignado = new Map<string, number>();
+  const carga = (f: string) => sumar([ocupado.get(f) ?? 0, asignado.get(f) ?? 0]);
+  let anterior = opts.despuesDe ?? "";
+  const out: CuotaAjustada[] = [];
+
+  for (const c of cuotas) {
+    let candidatos = sabadosCercanos(c.fecha, semanas).filter((s) => s > anterior);
+    if (!candidatos.length) {
+      // todo lo cercano quedó antes de la cuota anterior: el sábado siguiente a ella
+      candidatos = [sumarDias(anterior, ((6 - diaSemana(anterior) + 7) % 7) || 7)];
+    }
+    const elegido =
+      candidatos.find((s) => carga(s) === 0) ??
+      candidatos.find((s) => aCentavos(carga(s) + c.monto) <= aCentavos(tope)) ??
+      candidatos[0];
+
+    const ya = carga(elegido);
+    let aviso: string | null = null;
+    if (ya > 0) {
+      const total = sumar([ya, c.monto]);
+      aviso =
+        `Comparte el sábado con $${ya.toFixed(2)} en cheques (en total $${total.toFixed(2)})` +
+        (aCentavos(total) > aCentavos(tope) ? ` — pasa tu tope de $${tope.toFixed(2)}` : "");
+    }
+    asignado.set(elegido, sumar([asignado.get(elegido) ?? 0, c.monto]));
+    anterior = elegido;
+    out.push({ ...c, fecha: elegido, fechaPlazo: c.fecha, aviso });
+  }
+  return out;
+}
+
+/** Cuánto suman los cheques pendientes de cada fecha (para no juntar cheques). */
+export function chequesPorFecha(
+  cheques: { fecha_cobro: string | null; monto: number; medio: string; estado: string; tipo: string }[]
+): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const c of cheques) {
+    if (c.tipo !== "por_pagar" || c.estado !== "pendiente" || c.medio !== "cheque" || !c.fecha_cobro) continue;
+    m.set(c.fecha_cobro, sumar([m.get(c.fecha_cobro) ?? 0, c.monto]));
+  }
+  return m;
+}

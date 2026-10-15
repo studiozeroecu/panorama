@@ -61,6 +61,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06** →
 `finanzas_v2_sql1_ampliar.sql` ✅ **aplicada en octubre 2026 (antes del 2026-10-14)** — finanzas →
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
+`finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
@@ -409,6 +410,17 @@ Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
 - **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
   CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
 - **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
+
+### 2026-10-15 — finanzas — `finanzas_fase5a2_editar_factura.sql` ✅ EJECUTADA (2026-10-15)
+
+Verificada con `finanzas_fase5a2_editar_factura_prueba_en_seco.sql`: 9/9. Sin tablas ni columnas nuevas.
+- `fn_trg_cxc_ganancia` (trigger `fin_cxc_ganancia` de `cuentas_por_cobrar`) reescrita:
+  "VATEX" escrito a mano ⇒ `es_vatex`; las facturas sin tarifa (creadas antes de la 5A,
+  `ganancia_por_prenda = 0`) la reciben al editarse; y al EDITAR nunca puede quedar una cuenta
+  con más abonado que facturado (bajar monto, anular o cambiar de cliente), con el mismo candado
+  que `registrar_cobro`.
+- Arregla las facturas existentes (VATEX escrito a mano y tarifa en 0).
+- Impacto en otras áreas: **ninguno**.
 
 ### 2026-10-15 — finanzas — `finanzas_fase5a_ingresos.sql` ✅ EJECUTADA (2026-10-15)
 

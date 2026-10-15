@@ -46,6 +46,12 @@ export function textoAgenda(a: Agenda, max = 15): string {
       (a.pagos.length ? `:\n${lista(a.pagos, max)}` : ".")
   );
 
+  if (a.proximos.length) {
+    partes.push(
+      `ATENTO, se viene justo después del periodo (no se suma arriba; avisar para pedir el dinero a tiempo): ` +
+        `${money(a.totalProximos)}:\n${lista(a.proximos, max)}`
+    );
+  }
   if (a.vencidos.length) {
     partes.push(`VENCIDOS de antes, sin pagar: ${money(a.totalVencidos)}:\n${lista(a.vencidos, max)}`);
   }

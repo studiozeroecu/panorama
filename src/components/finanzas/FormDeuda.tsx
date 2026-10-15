@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Modal, Campo, Fila } from "@/components/ui";
-import { hoyEcuador } from "@/lib/fechas";
+import { fmtFecha, hoyEcuador } from "@/lib/fechas";
 import { money, sumar, aCentavos } from "@/lib/finanzas/formato";
 import {
   AMBITOS,
@@ -13,7 +13,14 @@ import {
   MEDIOS,
   TIPOS_DEUDA,
 } from "@/lib/finanzas/categorias";
-import { parsePlazos, repartirCuotas, validarCuotas, type CuotaBorrador } from "@/lib/finanzas/cuotas";
+import {
+  ajustarASabados,
+  diaSemana,
+  parsePlazos,
+  repartirCuotas,
+  validarCuotas,
+  type CuotaBorrador,
+} from "@/lib/finanzas/cuotas";
 import type { Ambito, Exigibilidad, Medio, TipoDeuda } from "@/lib/finanzas/tipos";
 import { mensajeError, nuevoId } from "./comunes";
 
@@ -25,16 +32,24 @@ interface FilaCuota {
   medio: Medio;
   numero: string;
   banco: string;
+  /** la fecha que daba el plazo, si se pasó al sábado */
+  fechaPlazo?: string;
 }
 
-const aFila = (c: CuotaBorrador): FilaCuota => ({
+const aFila = (c: CuotaBorrador & { fechaPlazo?: string }): FilaCuota => ({
   key: nuevoId(),
   fecha: c.fecha,
   monto: c.monto.toFixed(2),
   medio: c.medio,
   numero: c.numero,
   banco: c.banco,
+  fechaPlazo: c.fechaPlazo,
 });
+
+const DIAS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+
+/** Tope sugerido por el dueño para cheques que se juntan el mismo día (puede cambiarlo). */
+const TOPE_CHEQUES_POR_DIA = 900;
 
 /**
  * Nueva deuda con sus pagos programados. Se guarda con crear_deuda: la deuda
@@ -44,11 +59,14 @@ const aFila = (c: CuotaBorrador): FilaCuota => ({
 export default function FormDeuda({
   supabase,
   abierto,
+  ocupado,
   onCerrar,
   onGuardado,
 }: {
   supabase: SupabaseClient;
   abierto: boolean;
+  /** cuánto suman los cheques pendientes ya registrados en cada fecha */
+  ocupado: Map<string, number>;
   onCerrar: () => void;
   onGuardado: (mensaje: string) => void;
 }) {
@@ -76,6 +94,8 @@ export default function FormDeuda({
   const [genMedio, setGenMedio] = useState<Medio>("cheque");
   const [genNumero, setGenNumero] = useState("");
   const [genBanco, setGenBanco] = useState("");
+  const [alSabado, setAlSabado] = useState(true);
+  const [tope, setTope] = useState(String(TOPE_CHEQUES_POR_DIA));
 
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -90,6 +110,7 @@ export default function FormDeuda({
     setDocTipo(""); setDocNumero(""); setDocFecha(""); setNotas("");
     setCuotas([]);
     setPlazos("30/60/90/120"); setFechaBase(hoyEcuador()); setGenMedio("cheque"); setGenNumero(""); setGenBanco("");
+    setAlSabado(true); setTope(String(TOPE_CHEQUES_POR_DIA));
     setGuardando(false); setErr(null);
   }, [abierto]);
 
@@ -112,17 +133,32 @@ export default function FormDeuda({
     if (!dias) return setErr('Escribe los plazos en días, por ejemplo "30/60/90/120".');
     if (!(montoNum > 0)) return setErr("Primero escribe el monto de la deuda.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaBase)) return setErr("Falta la fecha desde la que se cuentan los días.");
+    const topeNum = parseFloat(tope);
+    if (alSabado && genMedio === "cheque" && !(topeNum > 0)) return setErr("Escribe el tope por sábado (por ejemplo 900).");
     setErr(null);
+    const base = repartirCuotas({
+      total: montoNum,
+      plazosDias: dias,
+      fechaBase,
+      medio: genMedio,
+      numeroInicial: genNumero,
+      banco: genBanco.trim(),
+    });
+    // solo los CHEQUES se pasan al sábado y se separan de otros cheques
     setCuotas(
-      repartirCuotas({
-        total: montoNum,
-        plazosDias: dias,
-        fechaBase,
-        medio: genMedio,
-        numeroInicial: genNumero,
-        banco: genBanco.trim(),
-      }).map(aFila)
+      alSabado && genMedio === "cheque"
+        ? ajustarASabados(base, { ocupado, tope: topeNum, despuesDe: fechaBase }).map(aFila)
+        : base.map(aFila)
     );
+  }
+
+  /** Cuánto suman los cheques de ese día: los ya registrados + los otros de esta deuda. */
+  function chequesDelDia(fila: FilaCuota): number {
+    if (fila.medio !== "cheque" || !fila.fecha) return 0;
+    const deEsta = cuotas
+      .filter((c) => c.key !== fila.key && c.medio === "cheque" && c.fecha === fila.fecha)
+      .map((c) => parseFloat(c.monto) || 0);
+    return sumar([ocupado.get(fila.fecha) ?? 0, ...deEsta]);
   }
 
   function cambiarCuota(key: string, campo: keyof FilaCuota, valor: string) {
@@ -300,6 +336,19 @@ export default function FormDeuda({
         <p className="sub" style={{ fontSize: 11.5, margin: 0 }}>
           Reparte el monto en partes iguales; los centavos que sobran van en el último pago.
         </p>
+        {genMedio === "cheque" && (
+          <Fila>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, flex: 2, minWidth: 240, marginTop: 10 }}>
+              <input type="checkbox" checked={alSabado} onChange={(e) => setAlSabado(e.target.checked)} />
+              Pasar cada cheque al sábado más cercano, sin juntarlo con otros cheques
+            </label>
+            {alSabado && (
+              <Campo label="Tope si se juntan en un día ($)">
+                <input className="pinput" type="number" step="1" min="0" value={tope} onChange={(e) => setTope(e.target.value)} />
+              </Campo>
+            )}
+          </Fila>
+        )}
       </div>
 
       {cuotas.length > 0 && (
@@ -318,7 +367,20 @@ export default function FormDeuda({
             <tbody>
               {cuotas.map((c) => (
                 <tr key={c.key}>
-                  <td><input className="pinput" type="date" value={c.fecha} onChange={(e) => cambiarCuota(c.key, "fecha", e.target.value)} /></td>
+                  <td>
+                    <input className="pinput" type="date" value={c.fecha} onChange={(e) => cambiarCuota(c.key, "fecha", e.target.value)} />
+                    {/^\d{4}-\d{2}-\d{2}$/.test(c.fecha) && (
+                      <div className="sub" style={{ fontSize: 11 }}>
+                        {DIAS[diaSemana(c.fecha)]}
+                        {c.fechaPlazo && c.fechaPlazo !== c.fecha && ` · el plazo caía el ${fmtFecha(c.fechaPlazo)}`}
+                      </div>
+                    )}
+                    {chequesDelDia(c) > 0 && (
+                      <div style={{ fontSize: 11, color: aCentavos(chequesDelDia(c) + (parseFloat(c.monto) || 0)) > aCentavos(parseFloat(tope) || TOPE_CHEQUES_POR_DIA) ? "var(--bad)" : "var(--warn)" }}>
+                        Ese día ya hay {money(chequesDelDia(c))} en cheques
+                      </div>
+                    )}
+                  </td>
                   <td><input className="pinput" type="number" step="0.01" min="0" style={{ textAlign: "right", maxWidth: 120 }}
                     value={c.monto} onChange={(e) => cambiarCuota(c.key, "monto", e.target.value)} /></td>
                   <td>
