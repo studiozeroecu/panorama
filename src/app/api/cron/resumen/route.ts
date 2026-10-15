@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { sendMessage } from "@/lib/telegram";
+import { hoyEcuador } from "@/lib/fechas";
+import { cargarFinanzas, ErrorCarga } from "@/lib/finanzas/cargar";
+import { armarAgenda } from "@/lib/finanzas/agenda";
+import { quincenaDe, siguiente, sumarDias } from "@/lib/finanzas/periodos";
+import { money, sumar } from "@/lib/finanzas/formato";
+import { esc, htmlAgenda } from "@/lib/finanzas/textos";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-function money(n: number): string {
-  return "$" + n.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 /**
  * Resumen semanal proactivo (lunes por la mañana). Sin IA — se arma con
@@ -22,9 +24,9 @@ export async function GET(req: NextRequest) {
   if (!chatId) return NextResponse.json({ ok: false, error: "TELEGRAM_ALLOWED_CHAT_ID no configurado" });
 
   const supabase = createServiceClient();
-  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Guayaquil" });
-  const hace7 = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const en7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const hoy = hoyEcuador();
+  const hace7 = sumarDias(hoy, -7);
+  const en7 = sumarDias(hoy, 7);
 
   const secciones: string[] = [`📊 <b>Resumen semanal — Bear &amp; Trend</b> (${hoy})`];
 
@@ -44,52 +46,56 @@ export async function GET(req: NextRequest) {
     secciones.push("🛍 <b>Ventas</b>: aún no hay reportes cargados.");
   }
 
-  // Movimientos de la semana
-  const { data: movs } = await supabase
-    .from("movimientos")
-    .select("tipo, monto, categoria")
-    .gte("fecha", hace7);
-  if (movs?.length) {
-    const gastos = movs.filter((m) => m.tipo === "gasto");
-    const totalG = gastos.reduce((sum, m) => sum + Number(m.monto), 0);
-    const totalI = movs.filter((m) => m.tipo === "ingreso").reduce((sum, m) => sum + Number(m.monto), 0);
-    const porCat = new Map<string, number>();
-    for (const g of gastos) porCat.set(g.categoria, (porCat.get(g.categoria) ?? 0) + Number(g.monto));
+  // Movimientos de la semana: gastos de la EMPRESA (lo personal va aparte)
+  const { data: movs, error: errMovs } = await supabase
+    .from("v_movimientos")
+    .select("tipo, monto, categoria, ambito, cuenta_en_rentabilidad")
+    .gte("fecha", hace7)
+    .lte("fecha", hoy);
+  if (errMovs) {
+    secciones.push("💸 <b>Movimientos de la semana</b>: ⚠ no se pudieron cargar — los totales no son confiables.");
+  } else if (movs?.length) {
+    const gastos = movs.filter((m) => m.tipo === "gasto" && m.ambito === "empresa");
+    const personales = movs.filter((m) => m.tipo === "gasto" && m.ambito === "personal");
+    const totalG = sumar(gastos.map((m) => Number(m.monto)));
+    const totalP = sumar(personales.map((m) => Number(m.monto)));
+    const totalI = sumar(movs.filter((m) => m.tipo === "ingreso").map((m) => Number(m.monto)));
+    const porCat = new Map<string, number[]>();
+    for (const g of gastos) porCat.set(g.categoria, [...(porCat.get(g.categoria) ?? []), Number(g.monto)]);
     const topCats = [...porCat.entries()]
+      .map(([c, ms]) => [c, sumar(ms)] as const)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([c, t]) => `${c} ${money(t)}`)
       .join(" · ");
     secciones.push(
-      `💸 <b>Movimientos de la semana</b>\nGastos: ${money(totalG)}${topCats ? ` (${topCats})` : ""}${totalI > 0 ? `\nIngresos: ${money(totalI)}` : ""}`
+      `💸 <b>Movimientos de la semana</b>\nGastos de la empresa: ${money(totalG)}${topCats ? ` (${topCats})` : ""}` +
+        `${totalP > 0 ? `\nGastos personales (aparte): ${money(totalP)}` : ""}${totalI > 0 ? `\nIngresos: ${money(totalI)}` : ""}`
     );
   } else {
     secciones.push("💸 <b>Movimientos de la semana</b>: sin registros.");
   }
 
-  // Cheques próximos (7 días) — pendientes
-  const { data: cheques } = await supabase
-    .from("cheques")
-    .select("tipo, monto, beneficiario, fecha_cobro")
-    .eq("estado", "pendiente")
-    .not("fecha_cobro", "is", null)
-    .lte("fecha_cobro", en7)
-    .order("fecha_cobro", { ascending: true })
-    .limit(10);
-  if (cheques?.length) {
-    const lines = cheques
-      .map(
-        (c) =>
-          `${c.tipo === "por_pagar" ? "🔴 pagar" : "🟢 cobrar"} ${money(Number(c.monto))} · ${c.beneficiario} · ${c.fecha_cobro}`
-      )
-      .join("\n");
-    secciones.push(`🧾 <b>Cheques próximos (7 días)</b>\n${lines}`);
-  } else {
-    secciones.push("🧾 <b>Cheques próximos (7 días)</b>: ninguno pendiente.");
+  // Pagos: la quincena actual con la misma lógica que la web (armarAgenda)
+  const quincena = quincenaDe(hoy);
+  try {
+    const datos = await cargarFinanzas(supabase, quincena);
+    const agenda = armarAgenda(datos, quincena, { hoy });
+    secciones.push(htmlAgenda(agenda, `Pagos de la quincena ${quincena.etiqueta}`));
+    const proxima = siguiente(quincena);
+    const agendaProx = armarAgenda(datos, proxima, { hoy });
+    secciones.push(
+      `Próxima quincena (${proxima.etiqueta}): ${money(agendaProx.totalPagos)} en ${agendaProx.pagos.length} pago${agendaProx.pagos.length !== 1 ? "s" : ""}.\n` +
+        `Total que se debe hoy (todas las deudas): ${money(agenda.totalAdeudado)}.`
+    );
+  } catch (e) {
+    secciones.push(
+      `📤 <b>Pagos</b>: ⚠ ${esc(e instanceof ErrorCarga ? e.message : "No se pudo cargar Finanzas — los totales no son confiables.")}`
+    );
   }
 
-  // Finanzas: facturas por cobrar vencidas + pagos próximos (7 días)
-  const [cxcR, cxpR] = await Promise.all([
+  // Por cobrar (versión simple hasta la fase 5): facturas vencidas y cheques que me pagan en 7 días
+  const [cxcR, chqCobrar] = await Promise.all([
     supabase
       .from("cuentas_por_cobrar")
       .select("cliente, monto, fecha_vencimiento")
@@ -98,25 +104,25 @@ export async function GET(req: NextRequest) {
       .lt("fecha_vencimiento", hoy)
       .order("fecha_vencimiento"),
     supabase
-      .from("cuentas_por_pagar")
-      .select("proveedor, monto, fecha_vencimiento")
+      .from("cheques")
+      .select("monto, beneficiario, fecha_cobro")
+      .eq("tipo", "por_cobrar")
       .eq("estado", "pendiente")
-      .not("fecha_vencimiento", "is", null)
-      .lte("fecha_vencimiento", en7)
-      .order("fecha_vencimiento"),
+      .not("fecha_cobro", "is", null)
+      .lte("fecha_cobro", en7)
+      .order("fecha_cobro"),
   ]);
   if (cxcR.data?.length) {
-    const total = cxcR.data.reduce((s, x) => s + Number(x.monto), 0);
+    const total = sumar(cxcR.data.map((x) => Number(x.monto)));
     secciones.push(
       `📥 <b>Facturas por cobrar vencidas</b> (${money(total)})\n` +
-        cxcR.data.slice(0, 8).map((x) => `${x.cliente} · ${money(Number(x.monto))} · venció ${x.fecha_vencimiento}`).join("\n")
+        cxcR.data.slice(0, 8).map((x) => `${esc(x.cliente)} · ${money(Number(x.monto))} · venció ${x.fecha_vencimiento}`).join("\n")
     );
   }
-  if (cxpR.data?.length) {
-    const total = cxpR.data.reduce((s, x) => s + Number(x.monto), 0);
+  if (chqCobrar.data?.length) {
     secciones.push(
-      `📤 <b>Pagos próximos (7 días)</b> (${money(total)})\n` +
-        cxpR.data.slice(0, 8).map((x) => `${x.proveedor} · ${money(Number(x.monto))} · ${x.fecha_vencimiento}`).join("\n")
+      `🟢 <b>Cheques por cobrar (7 días)</b>\n` +
+        chqCobrar.data.slice(0, 8).map((c) => `${money(Number(c.monto))} · ${esc(c.beneficiario)} · ${c.fecha_cobro}`).join("\n")
     );
   }
 

@@ -59,6 +59,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8n_cortadora_crea_maquiladora.sql` ✅ **aplicada el 2026-10-06** →
 `schema_fase8o_maquila_entregas.sql` ✅ **aplicada el 2026-10-05** →
 `schema_fase8p_bajas_y_costos.sql` ✅ **aplicada el 2026-10-06** →
+`finanzas_v2_sql1_ampliar.sql` ✅ **aplicada en octubre 2026 (antes del 2026-10-14)** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
@@ -218,22 +219,35 @@ el cálculo del resto. `COMISION_VATEX = 0.612`.
 
 ### Finanzas
 
+> **Finanzas v2 (octubre 2026).** El detalle completo (columnas, reglas, funciones, vistas, fases)
+> está en **`src/lib/finanzas/CLAUDE.md`**. Las tablas de finanzas se vaciaron y empiezan el
+> 2026-10-01 (copia en `respaldo_2026_10_*`). Aquí va el resumen para las demás áreas.
+
 | Tabla | PK | Columnas clave | FKs |
 |---|---|---|---|
-| `movimientos` | uuid | `fecha`, `tipo` (gasto\|ingreso), `monto` (>0), `concepto`, `categoria`, `origen` | — |
-| `cuentas_por_cobrar` | uuid | `cliente`, `concepto`, `monto` (>0), `fecha_factura`, `fecha_vencimiento`, `estado` (pendiente\|cobrado), `fecha_cobro` | — |
-| `cuentas_por_pagar` | uuid | `proveedor`, `concepto`, `monto` (>0), `fecha_vencimiento`, `tipo_pago` (efectivo\|cheque\|transferencia), `categoria`, `estado` (pendiente\|pagado), `fecha_pago`, **`ambito`** (personal\|empresa), **`alertado_hasta`** | — |
-| `cheques` | uuid | `tipo` (por_cobrar\|por_pagar), `monto` (>0), `beneficiario`, `banco`, `numero`, `fecha_emision`, `fecha_cobro`, `estado` (pendiente\|cobrado\|rebotado\|anulado), `foto_path`, **`alertado_hasta`** | **`cuenta_por_pagar_id → cuentas_por_pagar.id` set null — ver abajo** |
+| `cuentas_por_pagar` (deuda) | uuid | `proveedor`, `concepto`, `monto` (>0), `tipo_deuda`, `exigibilidad` (firme\|flexible), `fecha_estimada`, `es_saldo_inicial`, `ambito`, `categoria`, `anulada`, documento opcional. Legado hasta SQL-2: `fecha_vencimiento`, `tipo_pago`, `estado`, `fecha_pago`, `alertado_hasta` | — |
+| `cheques` (= TODOS los pagos programados) | uuid | `tipo`, `medio` (cheque\|transferencia\|efectivo), `monto`, `fecha_cobro` (vigente), `fecha_original` (no se pisa), `fecha_reprogramada`, `estado` (pendiente\|pagado\|cobrado\|rebotado\|anulado), `fecha_pago`, `alertado_hasta` | **`cuenta_por_pagar_id → cuentas_por_pagar.id` restrict — ver abajo**; `cuenta_origen_id → cuentas_dinero.id` restrict |
+| `cheques_reprogramaciones` | uuid | historial de cambios de fecha/número (lo escribe un trigger; la app solo lee) | `cheque_id → cheques.id` restrict |
+| `movimientos` | uuid | `fecha`, `tipo`, `monto`, `concepto`, `categoria`, `origen`, **`ambito`** | `cheque_id → cheques.id` restrict (**único**: un pago = un gasto); `cuenta_por_pagar_id → cuentas_por_pagar.id` restrict |
+| `cuentas_dinero` | uuid | bancos y efectivo (`nombre` único) | — |
+| `saldos_caja` | uuid | foto del saldo por cuenta y fecha | `cuenta_id → cuentas_dinero.id` restrict |
+| `cuentas_por_cobrar` | uuid | sin cambios (se rediseña en la fase 5, VATEX) | — |
 
-`categoria` (en `movimientos` y `cuentas_por_pagar`) usa el mismo enum en ambos lados y en el bot:
-`maquila, estampado, corte, arriendo, servicios, transporte, personal, otros`.
-La lista canónica vive en `CATEGORIAS` de `src/lib/bot/tools.ts` — si cambia, cambia en los 3 sitios.
+`categoria` (en `movimientos`, `cuentas_por_pagar` y cheques sueltos):
+`maquila, estampado, corte, arriendo, servicios, transporte, sueldos, otros` (+ `personal`, legado, se
+quita en SQL-2). La lista canónica vive en **`CATEGORIAS_GASTO` de `src/lib/finanzas/categorias.ts`**;
+`CATEGORIAS` de `src/lib/bot/tools.ts` la reexporta.
 
-Reglas de negocio que no están en el schema:
-- "vencido" **no se guarda**: es `estado = 'pendiente'` + fecha pasada.
-- Marcar pagada una cuenta de **empresa** inserta el gasto en `movimientos`; una **personal**, no.
-- `alertado_hasta` silencia el ítem en el cron de urgencias (7 días tras avisar, 30 con el botón 🔕).
-  Si la columna no existe, el cron no envía nada — mejor silencio que spam.
+Reglas de negocio:
+- **Pagar es todo o nada**: `pagar_cuota` / `abonar_deuda` (funciones de la base) marcan el pago y crean
+  el gasto ligado. Nunca "update + insert" desde el código. Los pagos personales también crean gasto,
+  con `ambito = 'personal'`; los totales de gastos son **solo empresa** salvo pedido explícito.
+- La base revisa sola que los pagos de una deuda no pasen del total y que en una deuda firme con pagos
+  pendientes sumen exacto (trigger diferido).
+- "Qué hay que pagar" se calcula **en un solo lugar**: `armarAgenda` de `src/lib/finanzas/agenda.ts`
+  (web, bot, alerta diaria y resumen del lunes).
+- `alertado_hasta` (ahora en `cheques`) silencia el ítem en el cron de urgencias (7 días tras avisar,
+  30 con el botón 🔕).
 
 ### Logística y roles
 
@@ -260,11 +274,13 @@ oscuros nunca comparten metro de film (`src/lib/dtf/calculo.ts`).
 ### 🔴 La única FK que cruza áreas
 
 ```
-cheques.cuenta_por_pagar_id  →  cuentas_por_pagar.id   (on delete set null)
+cheques.cuenta_por_pagar_id  →  cuentas_por_pagar.id   (on delete restrict — desde Finanzas v2)
 ```
 
 Es el **único** punto donde una tabla referencia por foreign key real a otra de un área distinta
 (cheques, nacida con el bot en fase 2 → finanzas, fase 5). Todas las demás FKs son internas de su área.
+Desde Finanzas v2 es `restrict`: **no se puede borrar una deuda que tiene pagos** (se anula). El bot
+sigue registrando cheques sueltos (sin deuda) y debe pagar con `pagar_cuota`, no con un update.
 
 **Si tocas `cuentas_por_pagar` o `cheques`, revisa el otro lado y anótalo en el registro de cambios.**
 
@@ -387,6 +403,28 @@ Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
 - **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
   CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
 - **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
+
+### 2026-10 — finanzas — `finanzas_v2_sql1_ampliar.sql` ✅ EJECUTADA (antes del 2026-10-14)
+
+Un solo bloque DO (todo o nada, repetible), probado con `finanzas_v2_sql1_prueba_en_seco.sql`.
+Solo amplía; nada se borró ni renombró. Detalle en `src/lib/finanzas/CLAUDE.md`.
+- `cuentas_por_pagar`: + `tipo_deuda`, `exigibilidad`, `fecha_estimada`, `es_saldo_inicial`,
+  `monto_original`, `cuota_mensual`, `saldo_al`, `documento_tipo`, `documento_numero`, `anulada`;
+  `fecha_factura` pasa a opcional; categoría `sueldos` aceptada.
+- `cheques`: + `medio`, `fecha_pago`, `categoria`, `ambito`, `cuenta_origen_id`, `fecha_original`,
+  `fecha_reprogramada`, `tipo_reprogramacion`, `nota_reprogramacion`; estado `pagado`;
+  **`cuenta_por_pagar_id` pasa de `set null` a `restrict`**; triggers `fin_cheques_fechas` (historial) y
+  `fin_validar_cuotas` (suma exacta, diferido).
+- `movimientos`: + `ambito`, `cheque_id` (único), `cuenta_por_pagar_id`; categoría `sueldos`.
+- Nuevas: `cuentas_dinero`, `saldos_caja`, `cheques_reprogramaciones` (RLS admin; historial solo lectura).
+- Nuevas funciones `crear_deuda`, `pagar_cuota`, `abonar_deuda`, `reprogramar_cheque`, `fn_hoy_ecuador`
+  (sin permiso para anon/public) y vistas `v_deudas`, `v_cheques`, `v_movimientos`, `v_caja_actual`
+  (security_invoker).
+- Fechas por defecto de `movimientos.fecha`, `cuentas_por_pagar.fecha_factura` y
+  `cuentas_por_cobrar.fecha_factura` en hora de Ecuador.
+- Impacto en otras áreas: **bot** — sus herramientas de finanzas (`tools.ts`), el webhook (botones de
+  urgencias) y los crons se actualizaron en la rama `finanzas` (fase 1C); la rama `bot` debe partir de
+  `main` después de este merge. Ninguna otra área afectada.
 
 ### 2026-10-05 — producción — `schema_fase8p_bajas_y_costos.sql` ✅ EJECUTADA (2026-10-06)
 
