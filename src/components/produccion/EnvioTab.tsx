@@ -6,6 +6,7 @@ import NombreTela from "./ResumenTela";
 import { Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, ordenarTallas, type Maquila, type ColorMaquila, type EntregaMaquila } from "@/lib/produccion/types";
 import { fmtFecha, diasHasta } from "@/lib/fechas";
+import { etiquetaFila } from "@/lib/produccion/conjuntos";
 import { LOCALES, type Guia } from "@/lib/locales";
 import { useEffect } from "react";
 
@@ -74,7 +75,9 @@ function LoteCard({ lote }: { lote: Lote }) {
   const [ocupado, setOcupado] = useState(false);
 
   const cfPorUnidad = data.costosFijos.reduce((s, c) => s + Number(c.valor), 0);
-  const costoUnitario = Number(maquila.costo_unitario) + cfPorUnidad;
+  // Fase 8r: una parte de un conjunto paga la maquila a su propio precio.
+  const costoUnitario =
+    (col.costo_unitario != null ? Number(col.costo_unitario) : Number(maquila.costo_unitario)) + cfPorUnidad;
   const precioLocal = prenda ? Number(prenda.precio_venta_local) : 0;
 
   const unidadesEstampar = disenos.reduce((s, d) => s + (parseInt(d.unidades, 10) || 0), 0);
@@ -140,7 +143,7 @@ function LoteCard({ lote }: { lote: Lote }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h4>
-            <NombreTela pedido={pedido} /> <Badge color="azul">{col.color}</Badge>
+            <NombreTela pedido={pedido} /> <Badge color="azul">{etiquetaFila(col.color, col.parte, prenda)}</Badge>
             {parcial && <Badge color="ambar">Entrega parcial</Badge>}
           </h4>
           <div className="prod-meta">

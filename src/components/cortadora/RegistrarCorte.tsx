@@ -9,6 +9,15 @@ import type { Maquiladora } from "./CortadoraApp";
 import MaquilaDelCorte from "./MaquilaDelCorte";
 import { validarHoras, fmtHoras, guardarHorasCorte } from "@/lib/produccion/horas";
 import CampoHoras from "./CampoHoras";
+import type { Parte } from "@/lib/produccion/conjuntos";
+
+/** Fase 8r: una parte de un conjunto, como la necesita este formulario. */
+export interface ParteCorte {
+  parte: Parte;
+  nombre: string;
+  /** Costo de maquila de la parte en Prendas. null = sin costo cargado. */
+  costo: number | null;
+}
 
 /**
  * Registro de un corte por la cortadora — fase 8k.
@@ -51,6 +60,7 @@ export default function RegistrarCorte({
   tallas,
   maquiladoras,
   costoMaquila,
+  partes,
   onMaquiladoraCreada,
   onListo,
   onCancelar,
@@ -64,6 +74,12 @@ export default function RegistrarCorte({
   maquiladoras: Maquiladora[];
   /** De la prenda del pedido. null = sin prenda o sin costo cargado. */
   costoMaquila: number | null;
+  /**
+   * Fase 8r: si la prenda es un conjunto, sus dos partes. Cada color se corta
+   * en DOS filas (superior e inferior), cada una con sus capas y sus tallas —
+   * el rollo se parte por la mitad y no salen las mismas de cada parte.
+   */
+  partes?: ParteCorte[] | null;
   onMaquiladoraCreada: (m: Maquiladora) => void;
   onListo: (mensaje: string) => void;
   onCancelar: () => void;
@@ -75,6 +91,25 @@ export default function RegistrarCorte({
   const [maquiladoraId, setMaquiladoraId] = useState("");
   // Arranca con el de la prenda (como CorteTab); ella lo puede cambiar.
   const [precio, setPrecio] = useState(costoMaquila != null ? String(costoMaquila) : "");
+  // Fase 8r: en un conjunto cada parte paga la maquila a su precio.
+  const [preciosParte, setPreciosParte] = useState<Record<string, string>>(() =>
+    Object.fromEntries((partes ?? []).map((x) => [x.parte, x.costo != null ? String(x.costo) : ""]))
+  );
+  const esConjunto = !!partes?.length;
+
+  /** Las filas del formulario: una por color, o dos (una por parte) en un conjunto. */
+  const filasCorte = useMemo(
+    () =>
+      esConjunto
+        ? colores.flatMap((c) =>
+            partes!.map((x) => ({
+              ...c, parte: x.parte as Parte | null,
+              clave: `${c.color}|${x.parte}`, etiqueta: `${c.color} · ${x.nombre}`,
+            }))
+          )
+        : colores.map((c) => ({ ...c, parte: null as Parte | null, clave: c.color, etiqueta: c.color })),
+    [colores, partes, esConjunto]
+  );
   const [horas, setHoras] = useState("");
   const [minutos, setMinutos] = useState("0");
   const [err, setErr] = useState<string | null>(null);
@@ -92,11 +127,11 @@ export default function RegistrarCorte({
   /** Solo los colores con capas: el resto no entra en este corte. */
   const activos = useMemo(
     () =>
-      colores
-        .map((c) => ({ color: c.color, capas: parseInt(fila(c.color).capas, 10) || 0 }))
+      filasCorte
+        .map((c) => ({ ...c, capas: parseInt(fila(c.clave).capas, 10) || 0 }))
         .filter((c) => c.capas > 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [colores, filas]
+    [filasCorte, filas]
   );
 
   /** Cantidades reales de un color: el ajuste si lo hay, si no lo sugerido. */
@@ -121,7 +156,9 @@ export default function RegistrarCorte({
     () =>
       compararCorte(
         corridaBase,
-        activos.map((a) => ({ color: a.color, capas: a.capas, real: realDe(a.color, a.capas) }))
+        // La etiqueta ("Negro · Blusa") identifica cada fila: el aviso de
+        // descuadre es por fila, y en un conjunto cada parte es un tendido aparte.
+        activos.map((a) => ({ color: a.etiqueta, capas: a.capas, real: realDe(a.clave, a.capas) }))
       ),
     [corridaBase, activos, realDe]
   );
@@ -130,12 +167,23 @@ export default function RegistrarCorte({
     setErr(null);
     if (!activos.length) return setErr("Pon las capas de al menos un color.");
 
+    // Fase 8r: el precio de maquila de cada parte, validado como el precio único.
+    const precioDeParte: Record<string, number | null> = {};
+    for (const x of partes ?? []) {
+      const t = (preciosParte[x.parte] ?? "").trim();
+      const n = t ? Number(t.replace(",", ".")) : null;
+      if (n != null && (!Number.isFinite(n) || n < 0))
+        return setErr(`El precio de maquila de ${x.nombre} tiene que ser un número (o déjalo en blanco).`);
+      precioDeParte[x.parte] = n;
+    }
+
     const payload = activos.map((a) => {
-      const m = parseFloat(fila(a.color).metros);
+      const m = parseFloat(fila(a.clave).metros);
       return {
         color: a.color,
+        ...(a.parte ? { parte: a.parte, costo_maquila: precioDeParte[a.parte] ?? null } : {}),
         capas: a.capas,
-        tallas: realDe(a.color, a.capas),
+        tallas: realDe(a.clave, a.capas),
         metros_usados: isNaN(m) ? null : m,
       };
     });
@@ -208,19 +256,28 @@ export default function RegistrarCorte({
         </p>
       )}
 
-      {colores.map((c) => {
-        const f = fila(c.color);
+      {esConjunto && (
+        <p style={{ fontSize: 12.5, color: "var(--accent)", margin: "0 0 10px" }}>
+          Esta tela es de un conjunto: cada color va en dos filas, una por parte. Pon las capas
+          de cada parte por separado (no tienen por qué ser iguales).
+        </p>
+      )}
+
+      {filasCorte.map((c) => {
+        const f = fila(c.clave);
         const nCapas = parseInt(f.capas, 10) || 0;
         const sug = esperadoPorTalla(corridaBase, nCapas);
-        const d = comparacion.porColor.find((x) => x.color === c.color);
+        const d = comparacion.porColor.find((x) => x.color === c.etiqueta);
 
         return (
-          <section key={c.color} style={BLOQUE}>
+          <section key={c.clave} style={BLOQUE}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <b style={{ flex: 1, fontSize: 15 }}>{c.color}</b>
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                {Number(c.metros).toFixed(1)} m
-              </span>
+              <b style={{ flex: 1, fontSize: 15 }}>{c.etiqueta}</b>
+              {c.parte !== "inferior" && (
+                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                  {Number(c.metros).toFixed(1)} m
+                </span>
+              )}
             </div>
 
             <div style={{ display: "flex", gap: 9, marginTop: 8 }}>
@@ -229,7 +286,7 @@ export default function RegistrarCorte({
                 <input
                   className="pinput" style={{ textAlign: "center", fontSize: 16 }}
                   type="number" inputMode="numeric" min={0} placeholder="0"
-                  value={f.capas} onChange={(e) => poner(c.color, { capas: e.target.value })}
+                  value={f.capas} onChange={(e) => poner(c.clave, { capas: e.target.value })}
                 />
               </div>
               <div style={{ flex: 1 }}>
@@ -237,7 +294,7 @@ export default function RegistrarCorte({
                 <input
                   className="pinput" style={{ textAlign: "center" }}
                   type="number" inputMode="decimal" step="0.1" min={0} placeholder="Opcional"
-                  value={f.metros} onChange={(e) => poner(c.color, { metros: e.target.value })}
+                  value={f.metros} onChange={(e) => poner(c.clave, { metros: e.target.value })}
                 />
               </div>
             </div>
@@ -256,7 +313,7 @@ export default function RegistrarCorte({
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {tallas.map((t) => {
                     const s = sug[t] ?? 0;
-                    const real = realDe(c.color, nCapas)[t] ?? 0;
+                    const real = realDe(c.clave, nCapas)[t] ?? 0;
                     const dif = real - s;
                     return (
                       <div key={t} style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -267,7 +324,7 @@ export default function RegistrarCorte({
                           type="number" inputMode="numeric" min={0}
                           placeholder={s ? String(s) : "0"}
                           value={f.ajustes[t] ?? ""}
-                          onChange={(e) => ponerTalla(c.color, t, e.target.value)}
+                          onChange={(e) => ponerTalla(c.clave, t, e.target.value)}
                         />
                         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
                           {s > 0 && `sugerido ${s}`}
@@ -324,6 +381,9 @@ export default function RegistrarCorte({
         onPrecio={setPrecio}
         precioDeLaPrenda={costoMaquila}
         onCreada={onMaquiladoraCreada}
+        partes={partes ?? null}
+        preciosParte={preciosParte}
+        onPrecioParte={(parte, v) => setPreciosParte((p) => ({ ...p, [parte]: v }))}
       />
 
       <div style={{ marginTop: 12, fontSize: 15 }}>

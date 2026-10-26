@@ -88,6 +88,7 @@ interface FilaCorte {
     | {
         id: string;
         pedido_color_id: string | null;
+        parte: "superior" | "inferior" | null;
         color: string;
         unidades: number | string;
         metros_usados: number | string | null;
@@ -111,7 +112,11 @@ interface FilaMaquila {
         fecha_envio: string | null;
         fecha_entrega: string | null;
         procesado: boolean;
-        corte_color: { color: string; unidades: number; orden: number; tallas: FilaTalla[] | null } | null;
+        costo_unitario: number | string | null;
+        corte_color: {
+          color: string; parte: "superior" | "inferior" | null; unidades: number; orden: number;
+          tallas: FilaTalla[] | null;
+        } | null;
         entregas:
           | {
               id: string; fecha: string; tallas: Record<string, number>; unidades: number; procesado: boolean;
@@ -185,7 +190,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       prendas, proveedores, costosFijos, maquiladoras, talleres,
       pedidos, cortes, maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, productos,
     ] = await Promise.all([
-      supabase.from("prod_prendas").select("*").order("nombre"),
+      // Fase 8r: las partes de cada conjunto vienen anidadas. Se siguen cargando
+      // todas las prendas, archivadas incluidas (regla de la fase 8e).
+      supabase.from("prod_prendas").select("*, partes:prod_prenda_partes (*)").order("nombre"),
       supabase.from("prod_proveedores").select("*").order("empresa"),
       supabase.from("prod_costos_fijos").select("*").order("nombre"),
       supabase.from("prod_maquiladoras").select("*").order("nombre"),
@@ -207,7 +214,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           `id, pedido_id, fecha, maquiladora_id, total_unidades, metros_consumidos,
            observaciones, corrida_base,
            colores:prod_corte_colores (
-             id, pedido_color_id, color, unidades, metros_usados, orden,
+             id, pedido_color_id, color, parte, unidades, metros_usados, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
            ),
            insumos:prod_corte_insumos (id, descripcion, cantidad, costo),
@@ -219,9 +226,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .select(
           `id, corte_id, maquiladora_id, costo_unitario, total_unidades,
            colores:prod_maquila_colores (
-             id, corte_color_id, estado, fecha_envio, fecha_entrega, procesado,
+             id, corte_color_id, estado, fecha_envio, fecha_entrega, procesado, costo_unitario,
              corte_color:prod_corte_colores (
-               color, unidades, orden,
+               color, parte, unidades, orden,
                tallas:prod_corte_color_tallas (talla, unidades)
              ),
              entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado, tipo, motivo)
@@ -308,6 +315,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           id: c.id,
           pedido_color_id: c.pedido_color_id,
           color: c.color,
+          parte: c.parte ?? null,
           unidades: Number(c.unidades),
           metros_usados: c.metros_usados == null ? null : Number(c.metros_usados),
           orden: c.orden,
@@ -327,6 +335,8 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           id: c.id,
           corte_color_id: c.corte_color_id,
           color: c.corte_color?.color ?? "",
+          parte: c.corte_color?.parte ?? null,
+          costo_unitario: c.costo_unitario == null ? null : Number(c.costo_unitario),
           unidades: Number(c.corte_color?.unidades ?? 0),
           tallas: aTallas(c.corte_color?.tallas),
           estado: c.estado,
@@ -340,7 +350,18 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
     }));
 
     setData({
-      prendas: (prendas.data ?? []) as Prenda[],
+      // Fase 8r: PostgREST da los numeric como texto; las partes se normalizan aquí.
+      prendas: ((prendas.data ?? []) as Prenda[]).map((p) => ({
+        ...p,
+        es_conjunto: !!p.es_conjunto,
+        partes: (p.partes ?? []).map((x) => ({
+          ...x,
+          consumo_metros: x.consumo_metros == null ? null : Number(x.consumo_metros),
+          costo_maquila: Number(x.costo_maquila),
+          precio_venta_local: Number(x.precio_venta_local),
+          precio_venta_online: Number(x.precio_venta_online),
+        })),
+      })),
       proveedores: (proveedores.data ?? []) as Proveedor[],
       costosFijos: (costosFijos.data ?? []) as CostoFijo[],
       maquiladoras: (maquiladoras.data ?? []) as Catalogo[],

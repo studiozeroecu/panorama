@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useProd } from "./useProduccion";
+import { costoMaquilaLote } from "@/lib/produccion/conjuntos";
 import { money } from "@/lib/produccion/types";
 import { mesActual, enMes } from "@/lib/fechas";
 
@@ -29,7 +30,8 @@ export default function ResumenTab() {
   const corteIds = new Set(cortesMes.map((c) => c.id));
   const costoMaquila = data.maquilas
     .filter((m) => corteIds.has(m.corte_id))
-    .reduce((s, m) => s + Number(m.costo_unitario) * m.total_unidades, 0);
+    // Fase 8r: fila por fila, así cada parte de un conjunto cuenta con su precio.
+    .reduce((s, m) => s + costoMaquilaLote(m), 0);
 
   const cfPorUnidad = data.costosFijos.reduce((s, c) => s + Number(c.valor), 0);
   const costoFijos = cfPorUnidad * unidadesCortadas;

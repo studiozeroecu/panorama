@@ -6,6 +6,7 @@ import NombreTela from "./ResumenTela";
 import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
+import { etiquetaFila, costoMaquilaLote } from "@/lib/produccion/conjuntos";
 
 export default function MaquilaTab() {
   const { data, supabase, reload, toast } = useProd();
@@ -114,7 +115,7 @@ export default function MaquilaTab() {
               {m.colores.map((c: ColorMaquila) => (
                 <tr key={c.id}>
                   <td>
-                    <b style={{ fontSize: 13 }}>{c.color}</b>
+                    <b style={{ fontSize: 13 }}>{etiquetaFila(c.color, c.parte, prenda)}</b>
                     <div style={{ marginTop: 3 }}><Tallas tallas={c.tallas} /></div>
                   </td>
                   <td className="num" style={{ textAlign: "center" }}>{c.unidades}</td>
@@ -166,7 +167,7 @@ export default function MaquilaTab() {
         </div>
         {Number(m.costo_unitario) > 0 && (
           <div className="sub" style={{ fontSize: 12, marginTop: 8, textAlign: "right" }}>
-            Costo total maquila: <b>{money(Number(m.costo_unitario) * m.total_unidades)}</b>
+            Costo total maquila: <b>{money(costoMaquilaLote(m))}</b>
           </div>
         )}
       </div>

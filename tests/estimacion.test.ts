@@ -20,6 +20,8 @@ function prenda(consumo_metros: number): Prenda {
     tallas: ["S", "M"],
     notas: "",
     archivada_en: null,
+    es_conjunto: false,
+    partes: [],
   };
 }
 

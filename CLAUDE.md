@@ -62,7 +62,8 @@ versionadas. Orden real de ejecución:
 `finanzas_v2_sql1_ampliar.sql` ✅ **aplicada en octubre 2026 (antes del 2026-10-14)** — finanzas →
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
-`schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8r_conjuntos.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -390,6 +391,44 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-26 — producción — `schema_fase8r_conjuntos.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8r.sql` (8 comprobaciones). ⚠️ **Aplicar y desplegar
+juntos:** el código pide `prod_prendas.es_conjunto`, `prod_prenda_partes`, `prod_corte_colores.parte`
+y `prod_maquila_colores.costo_unitario`; sin la fase, `/produccion` y `/cortadora` no cargan.
+
+- **Conjuntos (sets) de dos partes.** Un conjunto sale de UNA tela y UN tendido (el rollo se parte
+  por la mitad), pero no salen las mismas de cada parte. Antes había que registrar dos cortes de la
+  misma tela. Decisiones del dueño (2026-10-26): se MARCA en la prenda, no por el nombre; siempre dos
+  partes (superior / inferior); cada una con su consumo, su maquila y su precio suelto; el precio de
+  la prenda conjunto es el del SET; un set es siempre de la misma talla.
+- **`prod_prendas.es_conjunto`** + tabla **`prod_prenda_partes`** (RLS admin + lectura cortadora).
+  ⚠️ En un conjunto, `prod_prendas.consumo_metros` y `costo_maquila` se guardan como la **SUMA** de
+  las partes — un derivado a propósito: la estimación de Pedidos/Corte lee `consumo_metros` y así
+  estima SETS sin saber de conjuntos. Lo escribe solo `PrendasTab`.
+- **`prod_corte_colores.parte`** (superior | inferior | null): en un corte de conjunto cada
+  (color, parte) es una fila propia, así que maquila, entregas parciales, bajas, Envío y
+  `fn_corregir_corte` funcionan por parte **sin cambios**. El índice único pasa de (corte, color) a
+  **(corte, color, parte)** (`uq_corte_colores_nombre_parte`); para prendas solas se comporta igual.
+- **`prod_maquila_colores.costo_unitario`**: precio de maquila de esa parte (null = el de la maquila).
+  Los costos (`costoCorte`, `ResumenTela`, Resumen mensual vía `costoMaquilaLote`, margen de Envío)
+  lo usan fila por fila.
+- **`fn_registrar_corte`: misma firma (8 parámetros), `create or replace`.** `parte` y
+  `costo_maquila` viajan dentro de cada elemento de `p_colores`. Valida: conjunto ⇒ cada fila con su
+  parte; prenda sola ⇒ ninguna; no repetir (color, parte). Reescrita sin asignaciones de destino.
+- **`fn_sync_maquila_colores`** (7b) compara color **y parte** al espejar al jsonb; antes, con dos
+  partes del mismo color, las pisaba a las dos.
+- **`fn_procesar_entrega_maquila`** (8o), copiada literal por script con un cambio: una parte entra
+  al stock como **"Conjunto — Blusa"**, así la superior y la inferior no se suman en la misma fila.
+- **Costos por parte** (`src/lib/produccion/conjuntos.ts` y `costoCorte.partes`, con tests): la tela
+  se reparte por prendas × consumo de cada parte; horas, insumos y estampado por prendas; la maquila,
+  cada una la suya. Costo del set = una de cada. Sets posibles = mínimo por color y talla (no se
+  guarda).
+- **Pantallas:** Prendas (marca y partes), Corte y cortadora (dos filas por color, precio de maquila
+  por parte), y la parte junto al color en Maquila, Envío, Corregir corte y la cortadora.
+- **Pendiente (fases siguientes):** venta de sets y stock armado de sets.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-15 — producción — `schema_fase8q_corregir_corte.sql` ⏳ PENDIENTE DE APLICAR
 

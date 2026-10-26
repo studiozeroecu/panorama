@@ -59,7 +59,10 @@ function ModalResumen({ pedido, onCerrar }: { pedido: PedidoTela; onCerrar: () =
     return {
       corte: c,
       costoMaquilaUnitario: maquila ? Number(maquila.costo_unitario) : 0,
-      coloresMaquila: (maquila?.colores ?? []).map((col) => ({ unidades: col.unidades, entregas: col.entregas })),
+      // Fase 8r: cada parte de un conjunto con su precio de maquila.
+      coloresMaquila: (maquila?.colores ?? []).map((col) => ({
+        unidades: col.unidades, entregas: col.entregas, costoUnitario: col.costo_unitario, parte: col.parte,
+      })),
       jornadas: c.jornadas,
       insumos: c.insumos,
       estampado: maquila

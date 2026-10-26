@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { money, type Corte } from "@/lib/produccion/types";
 import { costoCorte } from "@/lib/produccion/costoCorte";
+import { etiquetaFila, nombreParte, setsPosibles } from "@/lib/produccion/conjuntos";
 
 /**
  * Costo de producción de un corte — fase 8p. Solo admin (vive en CorteTab).
@@ -23,6 +24,9 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
   if (!pedido) return null;
 
   const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === pedido.id);
+  const prenda = data.prendas.find((x) => x.id === pedido.prenda_id);
+  const consumoParte = (parte: "superior" | "inferior") =>
+    prenda?.partes.find((x) => x.parte === parte)?.consumo_metros ?? null;
   const estampado = maquila
     ? data.lotesEstampado
         .filter((l) => l.maquila_id === maquila.id)
@@ -37,19 +41,41 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
     coloresMaquila: (maquila?.colores ?? []).map((col) => ({
       unidades: col.unidades,
       entregas: col.entregas,
+      // Fase 8r: cada parte de un conjunto con su precio de maquila.
+      costoUnitario: col.costo_unitario,
+      parte: col.parte,
     })),
     jornadas: corte.jornadas,
     insumos: corte.insumos,
     estampado,
     // Por prenda, como en Envío y Resumen: la suma de todos los costos fijos.
     costoFijoPorUnidad: data.costosFijos.reduce((s, f) => s + Number(f.valor), 0),
+    consumoPartes: { superior: consumoParte("superior"), inferior: consumoParte("inferior") },
   });
+
+  // Fase 8r: sets que salen de lo cortado — siempre de la misma talla, por color.
+  const sets = c.partes
+    ? [...new Set(corte.colores.map((x) => x.color))].reduce(
+        (acc, color) => {
+          const de = (parte: "superior" | "inferior") =>
+            corte.colores.find((x) => x.color === color && x.parte === parte)?.tallas ?? {};
+          const r = setsPosibles(de("superior"), de("inferior"));
+          const suma = (t: Record<string, number>) => Object.values(t).reduce((s, n) => s + n, 0);
+          return {
+            sets: acc.sets + r.sets,
+            sueltasSup: acc.sueltasSup + suma(r.sobranSuperior),
+            sueltasInf: acc.sueltasInf + suma(r.sobranInferior),
+          };
+        },
+        { sets: 0, sueltasSup: 0, sueltasInf: 0 }
+      )
+    : null;
 
   const maquiladora = maquila
     ? data.maquiladoras.find((x) => x.id === maquila.maquiladora_id)?.nombre
     : undefined;
   const bajas = (maquila?.colores ?? []).flatMap((col) =>
-    col.entregas.filter((e) => e.tipo !== "entrega").map((e) => ({ ...e, color: col.color }))
+    col.entregas.filter((e) => e.tipo !== "entrega").map((e) => ({ ...e, color: etiquetaFila(col.color, col.parte, prenda) }))
   );
 
   async function guardarCostoInsumo(id: string, texto: string) {
@@ -82,6 +108,32 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
           {abierto ? "Ocultar detalle" : "Ver detalle"}
         </button>
       </div>
+
+      {c.partes && (
+        // Fase 8r: el costo de cada parte y el del set (una de cada).
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, marginTop: 4 }}>
+          <span>
+            {nombreParte(prenda, "superior")}:{" "}
+            <b>{c.partes.superior.costoUnitario != null ? money(c.partes.superior.costoUnitario) : "—"}</b>
+            <span className="sub"> c/u ({c.partes.superior.unidades})</span>
+          </span>
+          <span>
+            {nombreParte(prenda, "inferior")}:{" "}
+            <b>{c.partes.inferior.costoUnitario != null ? money(c.partes.inferior.costoUnitario) : "—"}</b>
+            <span className="sub"> c/u ({c.partes.inferior.unidades})</span>
+          </span>
+          <span>
+            Set: <b style={{ color: "var(--accent)" }}>{c.partes.costoSet != null ? money(c.partes.costoSet) : "—"}</b>
+          </span>
+          {sets && (
+            <span className="sub">
+              Salen {sets.sets} sets
+              {sets.sueltasSup > 0 && ` + ${sets.sueltasSup} ${nombreParte(prenda, "superior").toLowerCase()} sueltas`}
+              {sets.sueltasInf > 0 && ` + ${sets.sueltasInf} ${nombreParte(prenda, "inferior").toLowerCase()} sueltas`}
+            </span>
+          )}
+        </div>
+      )}
 
       {abierto && (
         <div className="card" style={{ padding: 12, marginTop: 8, fontSize: 12.5 }}>

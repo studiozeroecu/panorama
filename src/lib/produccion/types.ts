@@ -1,3 +1,5 @@
+import type { Parte } from "./conjuntos";
+
 export interface Prenda {
   id: string;
   nombre: string;
@@ -16,6 +18,22 @@ export interface Prenda {
   notas: string;
   /** Fase 8e: null = activa. Archivada no se ofrece al elegir, pero su historial sigue enlazado. */
   archivada_en: string | null;
+  /** Fase 8r: conjunto de dos partes. Sus precios de venta son los del SET. */
+  es_conjunto: boolean;
+  /** Fase 8r: la parte superior y la inferior (vacío en una prenda sola). */
+  partes: PartePrenda[];
+}
+
+/** Fase 8r: una parte de un conjunto, con su consumo, su maquila y su precio suelto. */
+export interface PartePrenda {
+  id: string;
+  prenda_id: string;
+  parte: Parte;
+  nombre: string;
+  consumo_metros: number | null;
+  costo_maquila: number;
+  precio_venta_local: number;
+  precio_venta_online: number;
 }
 
 export interface Proveedor {
@@ -83,6 +101,8 @@ export interface ColorCorte {
   id: string;
   pedido_color_id: string | null;
   color: string;
+  /** Fase 8r: superior / inferior en un corte de conjunto; null en una prenda sola. */
+  parte: Parte | null;
   tallas: Record<string, number>;
   unidades: number;
   metros_usados: number | null;
@@ -120,6 +140,10 @@ export interface ColorMaquila {
   corte_color_id: string;
   // color / tallas / unidades NO se guardan aquí: vienen por join del corte
   color: string;
+  /** Fase 8r: la parte del conjunto (viene del corte). */
+  parte: Parte | null;
+  /** Fase 8r: precio de maquila de ESTA fila; null = el de la maquila. */
+  costo_unitario: number | null;
   tallas: Record<string, number>;
   unidades: number;
   estado: EstadoColorMaquila;

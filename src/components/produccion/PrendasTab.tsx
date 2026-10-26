@@ -4,6 +4,20 @@ import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type Prenda } from "@/lib/produccion/types";
+import { PARTES, NOMBRE_PARTE_GENERICO, type Parte } from "@/lib/produccion/conjuntos";
+import { nuevoId } from "@/lib/id";
+
+/** Fase 8r: lo que se teclea de cada parte de un conjunto. */
+interface FormParte {
+  nombre: string;
+  consumo_metros: string;
+  costo_maquila: string;
+  precio_venta_local: string;
+  precio_venta_online: string;
+}
+const PARTE_VACIA: FormParte = {
+  nombre: "", consumo_metros: "", costo_maquila: "", precio_venta_local: "", precio_venta_online: "",
+};
 
 const FORM_VACIO = {
   nombre: "",
@@ -15,6 +29,9 @@ const FORM_VACIO = {
   lleva_estampado: false,
   tallas: [] as string[],
   notas: "",
+  /** Fase 8r: se MARCA, no se deduce del nombre. */
+  es_conjunto: false,
+  partes: { superior: { ...PARTE_VACIA }, inferior: { ...PARTE_VACIA } } as Record<Parte, FormParte>,
 };
 
 export default function PrendasTab() {
@@ -41,6 +58,19 @@ export default function PrendasTab() {
         lleva_estampado: p.lleva_estampado,
         tallas: p.tallas ?? [],
         notas: p.notas ?? "",
+        es_conjunto: p.es_conjunto,
+        partes: Object.fromEntries(
+          PARTES.map((parte) => {
+            const x = p.partes.find((y) => y.parte === parte);
+            return [parte, x ? {
+              nombre: x.nombre,
+              consumo_metros: x.consumo_metros == null ? "" : String(x.consumo_metros),
+              costo_maquila: String(x.costo_maquila),
+              precio_venta_local: String(x.precio_venta_local),
+              precio_venta_online: String(x.precio_venta_online),
+            } : { ...PARTE_VACIA }];
+          })
+        ) as Record<Parte, FormParte>,
       });
     } else {
       setEditId(null);
@@ -50,14 +80,44 @@ export default function PrendasTab() {
   }
 
   async function guardar() {
-    const consumo = parseFloat(form.consumo_metros);
-    const costo = parseFloat(form.costo_maquila);
+    // Fase 8r: en un conjunto el consumo y la maquila de la prenda son la SUMA de
+    // sus dos partes. Se guardan así a propósito (no es un derivado gratuito): la
+    // estimación de unidades de Pedidos y Corte lee consumo_metros de la prenda, y
+    // así estima SETS sin tener que saber de conjuntos.
+    const partes = form.es_conjunto
+      ? PARTES.map((parte) => {
+          const x = form.partes[parte];
+          return {
+            parte,
+            nombre: x.nombre.trim(),
+            consumo_metros: parseFloat(x.consumo_metros),
+            costo_maquila: parseFloat(x.costo_maquila),
+            precio_venta_local: parseFloat(x.precio_venta_local),
+            precio_venta_online: parseFloat(x.precio_venta_online),
+          };
+        })
+      : [];
+    for (const x of partes) {
+      const cual = NOMBRE_PARTE_GENERICO[x.parte].toLowerCase();
+      if (!x.nombre) return setErr(`Ponle nombre a la ${cual} (ej. Blusa, Pantalón).`);
+      if (!(x.consumo_metros > 0)) return setErr(`El consumo de tela de la ${cual} debe ser mayor a 0.`);
+      if (!(x.costo_maquila > 0)) return setErr(`El costo de maquila de la ${cual} debe ser mayor a 0.`);
+      if (!(x.precio_venta_local > 0) || !(x.precio_venta_online > 0))
+        return setErr(`Los precios sueltos de la ${cual} deben ser mayores a 0.`);
+    }
+    const consumo = form.es_conjunto
+      ? partes.reduce((s, x) => s + x.consumo_metros, 0)
+      : parseFloat(form.consumo_metros);
+    const costo = form.es_conjunto
+      ? partes.reduce((s, x) => s + x.costo_maquila, 0)
+      : parseFloat(form.costo_maquila);
     const pl = parseFloat(form.precio_venta_local);
     const po = parseFloat(form.precio_venta_online);
     if (!form.nombre.trim()) return setErr("El nombre es requerido.");
     if (!(consumo > 0)) return setErr("El consumo de tela debe ser mayor a 0.");
     if (!(costo > 0)) return setErr("El costo de maquila debe ser mayor a 0.");
-    if (!(pl > 0) || !(po > 0)) return setErr("Los precios deben ser mayores a 0.");
+    if (!(pl > 0) || !(po > 0))
+      return setErr(form.es_conjunto ? "Los precios del set deben ser mayores a 0." : "Los precios deben ser mayores a 0.");
     if (!form.tallas.length) return setErr("Selecciona al menos una talla.");
     // Opcional, pero si se escribe algo tiene que ser > 0: el check de la base
     // solo admite null o positivo, para que un 0 no se confunda con "sin medir".
@@ -75,11 +135,29 @@ export default function PrendasTab() {
       lleva_estampado: form.lleva_estampado,
       tallas: form.tallas,
       notas: form.notas.trim(),
+      es_conjunto: form.es_conjunto,
     };
+    // El id nace aquí para poder guardar las partes de una prenda nueva.
+    const id = editId ?? nuevoId();
     const { error } = editId
-      ? await supabase.from("prod_prendas").update(fila).eq("id", editId)
-      : await supabase.from("prod_prendas").insert(fila);
+      ? await supabase.from("prod_prendas").update(fila).eq("id", id)
+      : await supabase.from("prod_prendas").insert({ ...fila, id });
     if (error) return setErr(error.message);
+
+    if (partes.length) {
+      // Si al marcarla como sola se quitan las partes, NO se borran: los cortes
+      // de conjunto que ya existan siguen sabiendo cómo se llamaba cada parte.
+      const { error: e2 } = await supabase
+        .from("prod_prenda_partes")
+        .upsert(partes.map((x) => ({ ...x, prenda_id: id })), { onConflict: "prenda_id,parte" });
+      if (e2) {
+        return setErr(
+          e2.message.includes("prod_prenda_partes") || e2.message.includes("schema cache")
+            ? "La prenda se guardó, pero faltan las partes: aplica la fase 8r en la base y vuelve a guardar."
+            : `La prenda se guardó, pero no las partes: ${e2.message}`
+        );
+      }
+    }
     toast(editId ? "Prenda actualizada" : "Prenda guardada");
     setAbierto(false);
     await reload();
@@ -141,7 +219,16 @@ export default function PrendasTab() {
                 <tr key={p.id} style={p.archivada_en ? { opacity: 0.55 } : undefined}>
                   <td>
                     <strong>{p.nombre}</strong>
+                    {p.es_conjunto && <Badge color="azul">Conjunto</Badge>}
                     {p.archivada_en && <Badge>Archivada</Badge>}
+                    {p.es_conjunto && p.partes.length > 0 && (
+                      <div className="sub" style={{ fontSize: 11.5 }}>
+                        {[...p.partes]
+                          .sort((a, b) => PARTES.indexOf(a.parte) - PARTES.indexOf(b.parte))
+                          .map((x) => `${x.nombre}: ${x.consumo_metros ?? "—"} m · maquila ${money(x.costo_maquila)} · suelta ${money(x.precio_venta_online)}`)
+                          .join("  ·  ")}
+                      </div>
+                    )}
                     {p.notas && <div className="sub" style={{ fontSize: 11.5 }}>{p.notas}</div>}
                   </td>
                   <td className="num">{p.consumo_metros} m</td>
@@ -183,7 +270,56 @@ export default function PrendasTab() {
           <input className="pinput" value={form.nombre} placeholder="Ej: Camiseta básica"
             onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
         </Campo>
-        <Fila>
+        <Campo label="Tipo de prenda" requerido>
+          <div style={{ display: "flex", gap: 8 }}>
+            {([[false, "Prenda sola"], [true, "Conjunto / set (2 partes)"]] as const).map(([v, t]) => (
+              <button key={t} type="button" className={form.es_conjunto === v ? "btn primary" : "btn"}
+                onClick={() => setForm({ ...form, es_conjunto: v })}>{t}</button>
+            ))}
+          </div>
+          {form.es_conjunto && (
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+              Sale de una sola tela y un solo corte, pero cada parte lleva su consumo, su maquila y su
+              precio suelto. Los precios de abajo son los del SET completo.
+            </span>
+          )}
+        </Campo>
+        {form.es_conjunto && PARTES.map((parte) => {
+          const x = form.partes[parte];
+          const poner = (k: keyof FormParte, v: string) =>
+            setForm({ ...form, partes: { ...form.partes, [parte]: { ...x, [k]: v } } });
+          return (
+            <div key={parte} className="card" style={{ padding: 12, marginBottom: 10 }}>
+              <div className="label" style={{ fontSize: 10.5, marginBottom: 6 }}>{NOMBRE_PARTE_GENERICO[parte]}</div>
+              <Fila>
+                <Campo label="Nombre" requerido>
+                  <input className="pinput" value={x.nombre}
+                    placeholder={parte === "superior" ? "Ej: Blusa" : "Ej: Pantalón"}
+                    onChange={(e) => poner("nombre", e.target.value)} />
+                </Campo>
+                <Campo label="Consumo de tela (m/unidad)" requerido>
+                  <input className="pinput" type="number" step="0.01" min="0" value={x.consumo_metros}
+                    onChange={(e) => poner("consumo_metros", e.target.value)} />
+                </Campo>
+                <Campo label="Costo maquila ($/unidad)" requerido>
+                  <input className="pinput" type="number" step="0.01" min="0" value={x.costo_maquila}
+                    onChange={(e) => poner("costo_maquila", e.target.value)} />
+                </Campo>
+              </Fila>
+              <Fila>
+                <Campo label="Precio suelta local" requerido>
+                  <input className="pinput" type="number" step="0.01" min="0" value={x.precio_venta_local}
+                    onChange={(e) => poner("precio_venta_local", e.target.value)} />
+                </Campo>
+                <Campo label="Precio suelta online" requerido>
+                  <input className="pinput" type="number" step="0.01" min="0" value={x.precio_venta_online}
+                    onChange={(e) => poner("precio_venta_online", e.target.value)} />
+                </Campo>
+              </Fila>
+            </div>
+          );
+        })}
+        {!form.es_conjunto && <Fila>
           <Campo label="Consumo de tela (m/unidad)" requerido>
             <input className="pinput" type="number" step="0.01" min="0" value={form.consumo_metros}
               onChange={(e) => setForm({ ...form, consumo_metros: e.target.value })} />
@@ -201,13 +337,13 @@ export default function PrendasTab() {
             <input className="pinput" type="number" step="0.01" min="0" value={form.costo_maquila}
               onChange={(e) => setForm({ ...form, costo_maquila: e.target.value })} />
           </Campo>
-        </Fila>
+        </Fila>}
         <Fila>
-          <Campo label="Precio venta local" requerido>
+          <Campo label={form.es_conjunto ? "Precio del SET local" : "Precio venta local"} requerido>
             <input className="pinput" type="number" step="0.01" min="0" value={form.precio_venta_local}
               onChange={(e) => setForm({ ...form, precio_venta_local: e.target.value })} />
           </Campo>
-          <Campo label="Precio venta online" requerido>
+          <Campo label={form.es_conjunto ? "Precio del SET online" : "Precio venta online"} requerido>
             <input className="pinput" type="number" step="0.01" min="0" value={form.precio_venta_online}
               onChange={(e) => setForm({ ...form, precio_venta_online: e.target.value })} />
           </Campo>

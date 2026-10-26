@@ -5,6 +5,7 @@ import { useProd } from "./useProduccion";
 import { Modal } from "@/components/ui";
 import { ordenarTallas, type Corte } from "@/lib/produccion/types";
 import { entregadoPorTalla } from "@/lib/produccion/entregas";
+import { etiquetaFila } from "@/lib/produccion/conjuntos";
 
 /**
  * Corregir las cantidades de un corte ya registrado — fase 8q. Solo admin.
@@ -64,9 +65,9 @@ export default function CorregirCorteModal({
       for (const talla of tallas) {
         const texto = (valores[c.id]?.[talla] ?? "").trim();
         const n = texto === "" ? 0 : Number(texto);
-        if (!Number.isInteger(n) || n < 0) return setErr(`${c.color}, talla ${talla}: pon un número entero.`);
+        if (!Number.isInteger(n) || n < 0) return setErr(`${etiquetaFila(c.color, c.parte, prenda)}, talla ${talla}: pon un número entero.`);
         if (n < (min[talla] ?? 0))
-          return setErr(`${c.color}, talla ${talla}: no puede quedar en ${n}, la maquila ya entregó ${min[talla]}.`);
+          return setErr(`${etiquetaFila(c.color, c.parte, prenda)}, talla ${talla}: no puede quedar en ${n}, la maquila ya entregó ${min[talla]}.`);
         if (n > 0) t[talla] = n;
       }
       payload.push({ corte_color_id: c.id, tallas: t });
@@ -126,7 +127,7 @@ export default function CorregirCorteModal({
               const min = minimos(c.id);
               return (
                 <tr key={c.id}>
-                  <td><b>{c.color}</b></td>
+                  <td><b>{etiquetaFila(c.color, c.parte, prenda)}</b></td>
                   {tallas.map((t) => (
                     <td key={t} style={{ textAlign: "center" }}>
                       <input

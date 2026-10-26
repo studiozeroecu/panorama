@@ -13,6 +13,8 @@ import ExtrasCorte from "./ExtrasCorte";
 import MaquilasCortadora, { TEXTO_DESTINO, type MaquilaC } from "./MaquilasCortadora";
 import { costoHoras, fmtHoras } from "@/lib/produccion/horas";
 import RecibirTela from "./RecibirTela";
+import type { ParteCorte } from "./RegistrarCorte";
+import { PARTES, nombreParte, etiquetaFila, type Parte } from "@/lib/produccion/conjuntos";
 
 /**
  * Pantalla de la cortadora — fase 8i, modo SOLO LECTURA.
@@ -64,6 +66,8 @@ interface TallaCorte {
 interface ColorCorte {
   pedido_color_id: string | null;
   color: string;
+  /** Fase 8r: superior / inferior en un corte de conjunto. */
+  parte: Parte | null;
   unidades: number;
   orden: number;
   tallas: TallaCorte[] | null;
@@ -90,6 +94,9 @@ interface Prenda {
   tallas: string[] | null;
   /** PostgREST devuelve los numeric como texto. null/0 = sin costo cargado. */
   costo_maquila: number | string | null;
+  /** Fase 8r: conjunto de dos partes. */
+  es_conjunto?: boolean;
+  partes?: { parte: Parte; nombre: string; costo_maquila: number | string | null }[] | null;
 }
 
 export interface Maquiladora {
@@ -130,13 +137,15 @@ export default function CortadoraApp() {
         .select(
           `id, pedido_id, fecha, total_unidades, metros_consumidos,
            colores:prod_corte_colores (
-             pedido_color_id, color, unidades, orden,
+             pedido_color_id, color, parte, unidades, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
            ),
            horas:prod_jornada_cortes (jornada:prod_jornadas (horas, tarifa_hora))`
         )
         .order("fecha", { ascending: false }),
-      supabase.from("prod_prendas").select("id, nombre, tallas, costo_maquila"),
+      supabase.from("prod_prendas").select(
+        "id, nombre, tallas, costo_maquila, es_conjunto, partes:prod_prenda_partes (parte, nombre, costo_maquila)"
+      ),
       // Fase 8e: se cargan TODAS, archivadas incluidas; el filtro va solo en el
       // <select> donde se elige (RegistrarCorte).
       supabase.from("prod_maquiladoras").select("id, nombre, archivada_en").order("nombre"),
@@ -147,7 +156,7 @@ export default function CortadoraApp() {
           `id, corte_id, maquiladora_id,
            colores:prod_maquila_colores (
              id, estado, fecha_envio, fecha_entrega,
-             corte_color:prod_corte_colores (color, orden, tallas:prod_corte_color_tallas (talla, unidades)),
+             corte_color:prod_corte_colores (color, parte, orden, tallas:prod_corte_color_tallas (talla, unidades)),
              entregas:prod_maquila_entregas (id, fecha, tallas, unidades, tipo, motivo)
            )`
         )
@@ -184,7 +193,15 @@ export default function CortadoraApp() {
 
     setPedidos((pedR.data ?? []) as unknown as Pedido[]);
     setCortes((corR.data ?? []) as unknown as Corte[]);
-    setMaquilas(aMaquilas(lotesR.data));
+    // Fase 8r: el nombre de cada parte sale de la prenda de la tela del corte.
+    const prendasR = (prendaR.data ?? []) as Prenda[];
+    const pedidosR = (pedR.data ?? []) as unknown as Pedido[];
+    const cortesR = (corR.data ?? []) as unknown as Corte[];
+    setMaquilas(aMaquilas(lotesR.data, (corteId, parte) => {
+      const corte = cortesR.find((c) => c.id === corteId);
+      const pedido = pedidosR.find((x) => x.id === corte?.pedido_id);
+      return nombreParte(prendasR.find((x) => x.id === pedido?.prenda_id), parte);
+    }));
     setPrendas((prendaR.data ?? []) as Prenda[]);
     setMaquiladoras((maqR.data ?? []) as Maquiladora[]);
     if (!fallo) setError(null);
@@ -209,6 +226,16 @@ export default function CortadoraApp() {
   }, [pedidos, cortes]);
 
   const prendaDe = (p: Pedido) => prendas.find((x) => x.id === p.prenda_id)?.nombre;
+  /** Fase 8r: las partes del conjunto de la tela, o null si es una prenda sola. */
+  const partesDe = (p: Pedido): ParteCorte[] | null => {
+    const pr = prendas.find((x) => x.id === p.prenda_id);
+    if (!pr?.es_conjunto) return null;
+    return PARTES.map((parte) => {
+      const x = pr.partes?.find((y) => y.parte === parte);
+      const costo = Number(x?.costo_maquila);
+      return { parte, nombre: nombreParte(pr, parte), costo: costo > 0 ? costo : null };
+    });
+  };
   /** Costo de maquila de la prenda del pedido, como en CorteTab. null = no hay
    *  prenda o la prenda no tiene costo cargado: NO se inventa uno. */
   const costoMaquilaDe = (p: Pedido): number | null => {
@@ -358,6 +385,7 @@ export default function CortadoraApp() {
               tallas={tallasDe(p)}
               maquiladoras={maquiladoras}
               costoMaquila={costoMaquilaDe(p)}
+              partes={partesDe(p)}
               onMaquiladoraCreada={agregarMaquiladora}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
@@ -382,6 +410,7 @@ export default function CortadoraApp() {
               tallas={tallasDe(p)}
               maquiladoras={maquiladoras}
               costoMaquila={costoMaquilaDe(p)}
+              partes={partesDe(p)}
               onMaquiladoraCreada={agregarMaquiladora}
               registrando={registrando === p.id}
               onRegistrar={() => setRegistrando(p.id)}
@@ -474,6 +503,7 @@ function TarjetaTela({
   tallas,
   maquiladoras,
   costoMaquila,
+  partes,
   onMaquiladoraCreada,
   registrando,
   onRegistrar,
@@ -489,6 +519,7 @@ function TarjetaTela({
   tallas: string[];
   maquiladoras: Maquiladora[];
   costoMaquila: number | null;
+  partes: ParteCorte[] | null;
   onMaquiladoraCreada: (m: Maquiladora) => void;
   registrando: boolean;
   onRegistrar: () => void;
@@ -590,6 +621,7 @@ function TarjetaTela({
           tallas={tallas}
           maquiladoras={maquiladoras}
           costoMaquila={costoMaquila}
+          partes={partes}
           onMaquiladoraCreada={onMaquiladoraCreada}
           onListo={onListo}
           onCancelar={onCancelar}
@@ -617,7 +649,9 @@ function TarjetaTela({
                 .sort((a, b) => a.orden - b.orden)
                 .map((col) => (
                   <div key={col.color} style={{ marginTop: 4 }}>
-                    <span style={{ fontSize: 13 }}>{col.color}</span>{" "}
+                    <span style={{ fontSize: 13 }}>
+                      {etiquetaFila(col.color, col.parte, partes ? { partes } : null)}
+                    </span>{" "}
                     <Tallas tallas={tallasDeColor(col)} />
                   </div>
                 ))}
@@ -660,13 +694,16 @@ function textoHoras(horas: HorasCorte[] | null | undefined): string {
 }
 
 /** Las filas de PostgREST → la forma de MaquilasCortadora. */
-function aMaquilas(data: unknown): MaquilaC[] {
+function aMaquilas(data: unknown, nombreDeParte: (corteId: string, parte: Parte) => string): MaquilaC[] {
   type Fila = {
     id: string; corte_id: string; maquiladora_id: string | null;
     colores: {
       id: string; estado: "pendiente" | "enviado" | "entregado";
       fecha_envio: string | null; fecha_entrega: string | null;
-      corte_color: { color: string; orden: number; tallas: { talla: string; unidades: number }[] | null } | null;
+      corte_color: {
+        color: string; parte: Parte | null; orden: number;
+        tallas: { talla: string; unidades: number }[] | null;
+      } | null;
       entregas: {
         id: string; fecha: string; tallas: Record<string, number>; unidades: number;
         tipo: "entrega" | "falla" | "faltante"; motivo: string;
@@ -685,7 +722,10 @@ function aMaquilas(data: unknown): MaquilaC[] {
         estado: c.estado,
         fecha_envio: c.fecha_envio,
         fecha_entrega: c.fecha_entrega,
-        color: c.corte_color?.color ?? "",
+        // Fase 8r: en un conjunto cada fila es una parte ("Negro · Blusa").
+        color: c.corte_color?.parte
+          ? `${c.corte_color.color} · ${nombreDeParte(m.corte_id, c.corte_color.parte)}`
+          : c.corte_color?.color ?? "",
         orden: c.corte_color?.orden ?? 0,
         tallas,
         entregas: (c.entregas ?? []).map((e) => ({ ...e, unidades: Number(e.unidades) })),

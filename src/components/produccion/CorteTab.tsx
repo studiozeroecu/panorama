@@ -12,6 +12,7 @@ import CostoCorteCard from "./CostoCorteCard";
 import CorregirCorteModal from "./CorregirCorteModal";
 import type { Corte } from "@/lib/produccion/types";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
+import { PARTES, nombreParte, etiquetaFila, type Parte } from "@/lib/produccion/conjuntos";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
@@ -60,6 +61,20 @@ export default function CorteTab() {
   }
 
   const prendaDe = (p: PedidoTela | null) => data.prendas.find((x) => x.id === p?.prenda_id);
+
+  /**
+   * Fase 8r: las filas del formulario. Una por color en una prenda sola; DOS por
+   * color (superior e inferior) si la prenda de la tela es un conjunto. La clave
+   * de cada fila es la que usan la matriz de tallas y los metros.
+   */
+  const filasDe = (p: PedidoTela | null) => {
+    const prenda = prendaDe(p);
+    return (p?.colores ?? []).flatMap((c) =>
+      prenda?.es_conjunto
+        ? PARTES.map((parte: Parte) => ({ clave: `${c.color}|${parte}`, color: c.color, metros: c.metros, parte }))
+        : [{ clave: c.color, color: c.color, metros: c.metros, parte: null as Parte | null }]
+    );
+  };
   const tallasDe = (p: PedidoTela | null) => {
     const pr = prendaDe(p);
     return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
@@ -77,17 +92,22 @@ export default function CorteTab() {
     setErr(null);
     const tallas = tallasDe(pedidoSel);
 
-    const colores = (pedidoSel.colores ?? [])
-      .map((c) => {
-        const fila = matriz[c.color] ?? {};
+    const prenda = prendaDe(pedidoSel);
+    const colores = filasDe(pedidoSel)
+      .map((f) => {
+        const fila = matriz[f.clave] ?? {};
         const tallasObj: Record<string, number> = {};
         for (const t of tallas) {
           const n = parseInt(fila[t] ?? "0", 10) || 0;
           if (n > 0) tallasObj[t] = n;
         }
-        const mUsados = parseFloat(metrosUsados[c.color] ?? "");
+        const mUsados = parseFloat(metrosUsados[f.clave] ?? "");
         return {
-          color: c.color,
+          color: f.color,
+          // Fase 8r: en un conjunto cada fila dice su parte y paga la maquila a
+          // su propio precio (el de la parte en Prendas).
+          parte: f.parte,
+          costo_maquila: f.parte ? prenda?.partes.find((x) => x.parte === f.parte)?.costo_maquila ?? null : null,
           tallas: tallasObj,
           metros_usados: isNaN(mUsados) ? null : mUsados,
         };
@@ -185,8 +205,8 @@ export default function CorteTab() {
                 {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
                 <div style={{ marginTop: 3 }}>
                   {(c.colores ?? []).map((col) => (
-                    <span key={col.color} style={{ marginRight: 10 }}>
-                      <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
+                    <span key={col.id} style={{ marginRight: 10 }}>
+                      <b style={{ fontSize: 12 }}>{etiquetaFila(col.color, col.parte, prenda)}</b>{" "}
                       <Tallas tallas={col.tallas} />
                     </span>
                   ))}
@@ -269,18 +289,30 @@ export default function CorteTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(pedidoSel.colores ?? []).map((c) => {
-                    const fila = matriz[c.color] ?? {};
+                  {filasDe(pedidoSel).map((c) => {
+                    const fila = matriz[c.clave] ?? {};
                     const unidades = tallas.reduce((s, t) => s + (parseInt(fila[t] ?? "0", 10) || 0), 0);
                     return (
-                      <tr key={c.color}>
-                        <td style={{ fontWeight: 500 }}>{c.color}<div className="sub" style={{ fontSize: 11 }}>{Number(c.metros).toFixed(1)} m pedidos</div></td>
+                      <tr key={c.clave}>
+                        <td style={{ fontWeight: 500 }}>
+                          {c.parte ? (
+                            <>
+                              {c.color}
+                              <div style={{ fontSize: 12, color: "var(--accent)" }}>
+                                {nombreParte(prendaDe(pedidoSel), c.parte)}
+                              </div>
+                            </>
+                          ) : c.color}
+                          {c.parte !== "inferior" && (
+                            <div className="sub" style={{ fontSize: 11 }}>{Number(c.metros).toFixed(1)} m pedidos</div>
+                          )}
+                        </td>
                         {tallas.map((t) => (
                           <td key={t} style={{ textAlign: "center" }}>
                             <input className="pinput" type="number" min="0" step="1" placeholder="0"
                               value={fila[t] ?? ""}
                               onChange={(e) =>
-                                setMatriz({ ...matriz, [c.color]: { ...fila, [t]: e.target.value } })
+                                setMatriz({ ...matriz, [c.clave]: { ...fila, [t]: e.target.value } })
                               } />
                           </td>
                         ))}
@@ -288,8 +320,8 @@ export default function CorteTab() {
                         <td style={{ textAlign: "right" }}>
                           <input className="pinput" type="number" min="0" step="0.1" placeholder="m"
                             style={{ width: 78, textAlign: "center", padding: "5px 4px" }}
-                            value={metrosUsados[c.color] ?? ""}
-                            onChange={(e) => setMetrosUsados({ ...metrosUsados, [c.color]: e.target.value })} />
+                            value={metrosUsados[c.clave] ?? ""}
+                            onChange={(e) => setMetrosUsados({ ...metrosUsados, [c.clave]: e.target.value })} />
                         </td>
                       </tr>
                     );
