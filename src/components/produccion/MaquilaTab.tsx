@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useProd } from "./useProduccion";
 import NombreTela from "./ResumenTela";
+import AccionesLote from "./AccionesLote";
 import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
@@ -72,6 +73,14 @@ export default function MaquilaTab() {
           </div>
           {terminada ? <Badge color="verde">Terminado</Badge> : <span className="sub" style={{ fontSize: 12 }}>{entregados}/{m.colores.length} entregados</span>}
         </div>
+
+        {/* Todo el lote de una vez: enviado o recibido completo. */}
+        {!terminada && (
+          <div style={{ marginTop: 8 }}>
+            <AccionesLote supabase={supabase} colores={m.colores}
+              onListo={async (msg) => { toast(msg); await reload(); }} />
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 12, margin: "12px 0", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 180 }}>

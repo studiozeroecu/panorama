@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge, Vacio, Tallas } from "@/components/ui";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import { nuevoId } from "@/lib/id";
+import AccionesLote from "@/components/produccion/AccionesLote";
 import { ordenarTallas } from "@/lib/produccion/types";
 import {
   pendientesPorTalla, sumaTallas, etapaMaquila, TEXTO_ETAPA, type EtapaMaquila,
@@ -149,6 +150,8 @@ function TarjetaMaquila({
           👉 Indicación de Mateo: <b>{TEXTO_DESTINO[destino]}</b>
         </p>
       )}
+      {/* Todo el lote de una vez: enviado o recibido completo. */}
+      <AccionesLote supabase={supabase} colores={maquila.colores} onListo={onListo} grande />
       {[...maquila.colores]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => (
