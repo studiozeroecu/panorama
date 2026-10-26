@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { fmtFecha, hoyEcuador } from "@/lib/fechas";
 import { money } from "@/lib/finanzas/formato";
-import { armarAgenda, type ItemPago, type ItemPosible } from "@/lib/finanzas/agenda";
+import { armarAgenda, DIAS_ATENTO, type ItemPago, type ItemPosible } from "@/lib/finanzas/agenda";
 import { anterior, periodoDe, quincenasDelMes, siguiente, type Periodo } from "@/lib/finanzas/periodos";
 import { Badge } from "@/components/ui";
 import { BannerError, EtiquetaAmbito, EtiquetaExigibilidad, useDatosFinanzas } from "./comunes";
@@ -116,6 +116,18 @@ export default function VistaPeriodo({
             <ListaPagos items={agenda.pagos} onPagar={setPagando} posibles={agenda.posibles} />
           ) : (
             <div className="card empty">Nada programado en este periodo.</div>
+          )}
+
+          {agenda.proximos.length > 0 && (
+            <div className="card" style={{ borderColor: "var(--warn)", marginTop: 16, padding: "10px 16px" }}>
+              <div className="label" style={{ color: "var(--warn)", marginBottom: 4 }}>
+                ⚠ Atento: se viene en los {DIAS_ATENTO} días siguientes — {money(agenda.totalProximos)}
+              </div>
+              <p className="sub" style={{ fontSize: 12, margin: "0 0 8px" }}>
+                Ya es del periodo siguiente (no se suma aquí), pero si necesitas pedir el dinero a VATEX, es ahora.
+              </p>
+              <ListaPagos items={agenda.proximos} onPagar={setPagando} />
+            </div>
           )}
 
           {agenda.vencidos.length > 0 && (

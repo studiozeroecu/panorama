@@ -69,11 +69,13 @@ coinciden, manda la base: avisar y corregir este documento.
 | `movimientos` | Finanzas, **compartida con el bot** | Gastos e ingresos reales |
 | `cuentas_dinero` | Finanzas | Bancos y efectivo |
 | `saldos_caja` | Finanzas | Foto del saldo de cada cuenta con fecha |
-| `cuentas_por_cobrar` | Finanzas | Por cobrar (se rediseña en la fase 5, VATEX) |
+| `cuentas_por_cobrar` | Finanzas | Facturas por cobrar (VATEX como una cuenta, otros clientes) |
+| `cobros`, `ventas_directas`, `sueldo_dueno_pagos` | Finanzas | Abonos recibidos, ventas en línea/ferias, pagos de "Mi sueldo" (fase 5A) |
 
-Finanzas también **lee** sin escribir: `snapshots` (ventas, fase 5),
-`prod_ventas_online` (producción, fase 5), `user_roles` vía `fn_es_admin()`. Usa
-`bot_pending_actions` (tipo `urgencias`) en la alerta diaria.
+**Finanzas NO lee tablas de otras áreas** (decisión del dueño, 2026-10-15: "no juntemos
+áreas"). Prendas, ventas y montos de VATEX, ferias y ventas en línea se escriben a mano en
+Finanzas; no se toman de `snapshots` ni de `prod_ventas_online`. Solo usa `user_roles` vía
+`fn_es_admin()` y `bot_pending_actions` (tipo `urgencias`) en la alerta diaria.
 
 **Vínculos entre tablas (FK):**
 
@@ -156,10 +158,28 @@ Columnas de antes (`fecha` (por defecto hoy en Ecuador), `tipo` gasto/ingreso, `
 `fecha`, `cuenta_id`, `monto` (puede ser negativo), `notas`. Una foto por cuenta y por
 fecha. **La app no mantiene el saldo sola.**
 
-### `cuentas_por_cobrar`
+### Ingresos (fase 5A, `finanzas_fase5a_ingresos.sql`, aplicada 2026-10-15)
 
-Sin cambios de columnas en SQL-1. Solo `fecha_factura` pasa a tener por defecto la fecha
-de hoy en Ecuador. Se rediseña en la fase 5 (liquidaciones de VATEX).
+- **`cuentas_por_cobrar`** (facturas): + `es_vatex` (VATEX es **una sola cuenta**; el
+  trigger `fin_cxc_ganancia` fuerza `cliente = 'VATEX'`), `numero_factura`, `prendas`,
+  `ganancia_por_prenda` (la pone y **congela** el trigger), `es_saldo_inicial`, `anulada`,
+  `cuenta` (generada: `vatex` o `lower(btrim(cliente))`). `fecha_vencimiento` = fecha en que
+  se espera el cobro. Las marcadas `estado = 'cobrado'` con la pantalla vieja cuentan cobradas.
+- **`cobros`**: abonos que me hacen. Van a la **cuenta** del cliente, no a una factura;
+  `v_cxc` los aplica a la factura más antigua primero. `id` lo genera la pantalla.
+- **`ventas_directas`**: en línea y ferias (`canal`, `evento`, `monto`, `prendas`,
+  `ganancia_por_prenda` congelada). Ingreso directo. Feria de 2 días = 2 filas.
+- **`sueldo_dueno_pagos`**: lo que el dueño se paga de "Mi sueldo".
+- **"Mi sueldo"**: `fn_ganancia_por_prenda(es_vatex)` = $2,50 VATEX / $5,00 fuera (cambiar la
+  tarifa = `create or replace` de esa función; solo afecta lo nuevo). Cada factura o venta
+  con prendas es una ganancia; los pagos se aplican a la más antigua
+  (`v_sueldo_dueno_registros`). Es **gasto del negocio al ganarse**; el pago NO vuelve a contar
+  en rentabilidad (`v_movimientos.cuenta_en_rentabilidad` es falso si hay `sueldo_pago_id`).
+- **`movimientos`**: + `cobro_id`, `venta_directa_id`, `sueldo_pago_id` (únicos, restrict);
+  categoría `ventas` para los ingresos.
+- Funciones: `registrar_cobro`, `registrar_venta_directa`, `pagar_mi_sueldo` (todo o nada,
+  idempotentes por `p_id`, no aceptan más de lo que se debe). Vistas: `v_cxc`,
+  `v_cxc_cuentas`, `v_sueldo_dueno_registros`, `v_sueldo_dueno`.
 
 ---
 
@@ -245,9 +265,33 @@ gasto nuevo**. Cuándo y cómo se reconoce el sueldo como gasto se decide en la 
   - `Deudas.tsx`.
   - `FormDeuda.tsx`: deuda + pagos con `crear_deuda`.
   - `ModalesPago.tsx`: `pagar_cuota` y `abonar_deuda`.
-  - `PorCobrar.tsx`: versión simple hasta la fase 5.
-  - `comunes.tsx`.
+  - `PorCobrar.tsx` (5B): VATEX como una cuenta + otros clientes; `ModalesCobro.tsx`
+    (nueva factura con prendas; abono con vista previa de a qué facturas va).
+  - `VentasDirectas.tsx` (5B): en línea y ferias, "Guardar y agregar otro día".
+  - `MiSueldo.tsx` (5B): ganado, pagado y lo que me deben; "Pagarme".
+  - `comunes.tsx`: `useDatosFinanzas`, `useIngresos`, `NavPeriodo`, `nuevoId` (el de
+    `src/lib/id.ts`, nunca `crypto.randomUUID()` directo).
+- `src/lib/finanzas/ingresos.ts` (5B): `resumenSueldo`, `resumenVentas`, `repartoAbono`
+  (vista previa; quien decide es la base), `ingresosDelPeriodo`, `GANANCIA_POR_PRENDA`
+  (solo para mostrar).
 - Pruebas: `tests/finanzas-*.test.ts`.
+- **Datos de prueba:** nombres que empiezan con `ZZZ-PRUEBA` y se borran con
+  `supabase/limpieza_zzz_prueba.sql` (probarla antes con `limpieza_zzz_prueba_en_seco.sql`).
+  VATEX: `ZZZ-PRUEBA` en el **concepto** de la factura y en las **notas** del abono. Pagos de
+  sueldo: en las **notas**.
+
+## Pedidos del dueño sobre cheques y quincena (2026-10-15)
+
+- **"Atento: se viene"**: `armarAgenda` devuelve `proximos` = pendientes de los
+  `DIAS_ATENTO` (3) días SIGUIENTES al periodo. Se muestran en Quincena/Mes y en el bot,
+  **sin sumar** (se suman en su periodo). Motivo: el dueño pide dinero a VATEX con unos 3
+  días de anticipación; un pago del 16 lo tiene que ver en la quincena del 1 al 15.
+- **Cheques al sábado sin juntarse** (`ajustarASabados` en `cuotas.ts`): al generar cheques,
+  cada fecha pasa al sábado más cercano (se deposita el lunes; le da jueves/viernes para
+  pedir dinero). Si ese sábado ya tiene cheques pendientes (`chequesPorFecha`) o de la misma
+  deuda, busca el sábado libre más cercano (±2 semanas); comparte solo si la suma no pasa el
+  **tope (por defecto $900, editable)**; un cheque solo que pasa el tope está bien. Nunca
+  antes de la fecha base ni desordenados. Solo aplica a `medio = cheque`; se puede apagar.
 
 ## Decisiones tomadas
 
@@ -279,8 +323,9 @@ gasto nuevo**. Cuándo y cómo se reconoce el sueldo como gasto se decide en la 
 - **2:** riesgo de protesto (cheques por cuenta de origen vs saldo).
 - **3:** reconocimiento del sueldo como gasto.
 - **4:** editar o anular deudas y pagos.
-- **5:** ingresos, VATEX (estimados diarios, liquidaciones, "dinero en la calle") y
-  `movimientos.cuenta_por_cobrar_id`.
+- **5A:** ✅ aplicada (2026-10-15); **5A-2** (editar facturas) ✅ aplicada. **5B:** ✅ pantallas Por cobrar, Ventas directas y Mi sueldo
+  (aprobada, con editar facturas, "atento: se viene" y cheques al sábado). **5C:** que Quincena y Mes muestren los ingresos y que "Mi
+  sueldo" aparezca en el total de lo que se debe.
 - **No cubierto aún:**
   - devoluciones de VATEX;
   - flujo de cobro de cheques por cobrar;

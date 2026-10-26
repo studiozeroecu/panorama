@@ -7,6 +7,7 @@ import { money, sumar } from "@/lib/finanzas/formato";
 import { mesDe } from "@/lib/finanzas/periodos";
 import { labelTipoDeuda } from "@/lib/finanzas/categorias";
 import { cargarPagosDeDeuda } from "@/lib/finanzas/cargar";
+import { chequesPorFecha } from "@/lib/finanzas/cuotas";
 import type { Cheque, Deuda } from "@/lib/finanzas/tipos";
 import { Badge } from "@/components/ui";
 import { BannerError, EtiquetaAmbito, EtiquetaExigibilidad, mensajeError, useDatosFinanzas } from "./comunes";
@@ -163,6 +164,7 @@ export default function Deudas({ avisar }: { avisar: (m: string) => void }) {
       <FormDeuda
         supabase={supabase}
         abierto={formAbierto}
+        ocupado={chequesPorFecha(datos?.chequesAbiertos ?? [])}
         onCerrar={() => setFormAbierto(false)}
         onGuardado={async (m) => {
           setFormAbierto(false);

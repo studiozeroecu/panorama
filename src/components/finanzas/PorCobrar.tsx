@@ -1,232 +1,254 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { hoyEcuador, fmtFecha, diasHasta } from "@/lib/fechas";
-import { leerTodo, ErrorCarga } from "@/lib/finanzas/cargar";
+import { Fragment, useMemo, useState } from "react";
+import { fmtFecha } from "@/lib/fechas";
 import { money, sumar } from "@/lib/finanzas/formato";
-import { Modal, Campo, Fila, Badge } from "@/components/ui";
-import { BannerError, mensajeError } from "./comunes";
+import { clientesConocidos } from "@/lib/finanzas/ingresos";
+import type { Cobro, FacturaCobrar } from "@/lib/finanzas/tipos";
+import { Badge } from "@/components/ui";
+import { BannerError, useIngresos } from "./comunes";
+import { FormFactura, ModalAbonoCobro, type CuentaAbonar } from "./ModalesCobro";
 
 /**
- * Cuentas por cobrar — versión anterior, sin cambios de fondo. Se rediseña en
- * la fase 5 (liquidaciones de VATEX, "dinero en la calle").
+ * Por cobrar (fase 5). VATEX va aparte como UNA sola cuenta: los abonos se
+ * restan de todo lo que debe y la base los aplica a la factura más antigua.
+ * Los demás clientes, cada uno con su cuenta. Lo que está por cobrar NO es
+ * dinero todavía; solo lo es cada abono que entra.
  */
-interface CxC {
-  id: string;
-  cliente: string;
-  concepto: string;
-  monto: number;
-  fecha_factura: string;
-  fecha_vencimiento: string | null;
-  estado: "pendiente" | "cobrado";
-  fecha_cobro: string | null;
-  notas: string;
-}
-
-function Semaforo({ fecha }: { fecha: string | null }) {
-  if (!fecha) return <Badge>sin fecha</Badge>;
-  const d = diasHasta(fecha);
-  if (d < 0) return <Badge color="rojo">vencido {-d} día{d !== -1 ? "s" : ""}</Badge>;
-  if (d <= 3) return <Badge color="ambar">vence en {d === 0 ? "HOY" : `${d} día${d !== 1 ? "s" : ""}`}</Badge>;
-  return <Badge color="verde">en {d} días</Badge>;
-}
-
 export default function PorCobrar({ avisar }: { avisar: (m: string) => void }) {
-  const supabase = useMemo(() => createClient(), []);
-  const [filas, setFilas] = useState<CxC[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState(false);
-  const [cobrando, setCobrando] = useState<string | null>(null);
+  const { supabase, datos, error, cargando, recargar } = useIngresos();
+  const [form, setForm] = useState<{ esVatex: boolean; factura?: FacturaCobrar } | null>(null);
+  const editar = (f: FacturaCobrar) => setForm({ esVatex: f.es_vatex, factura: f });
+  const [abonando, setAbonando] = useState<CuentaAbonar | null>(null);
+  const [abierta, setAbierta] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
-    try {
-      const data = await leerTodo<CxC>("las cuentas por cobrar", (a, b) =>
-        supabase.from("cuentas_por_cobrar").select("*").order("id").range(a, b)
-      );
-      setFilas(data.map((x) => ({ ...x, monto: Number(x.monto) })));
-      setError(null);
-    } catch (e) {
-      setFilas(null);
-      setError(e instanceof ErrorCarga ? e.message : mensajeError(e));
-    }
-  }, [supabase]);
+  const facturas = useMemo(() => (datos?.facturas ?? []).filter((f) => !f.anulada), [datos]);
+  const porCuenta = (cuenta: string) => facturas.filter((f) => f.cuenta === cuenta);
+  const vatex = datos?.cuentas.find((c) => c.es_vatex);
+  const otros = (datos?.cuentas ?? []).filter((c) => !c.es_vatex).sort((a, b) => b.saldo - a.saldo);
+  const cobrosDe = (cuenta: string) => (datos?.cobros ?? []).filter((c) => c.cuenta === cuenta).reverse();
+  const totalOtros = sumar(otros.map((c) => c.saldo));
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  const abrirAbono = (cliente: string, esVatex: boolean, cuenta: string, saldo: number) =>
+    setAbonando({ cliente, esVatex, saldo, facturas: porCuenta(cuenta) });
 
-  async function marcarCobrado(x: CxC) {
-    if (cobrando) return;
-    setCobrando(x.id);
-    const { error } = await supabase
-      .from("cuentas_por_cobrar")
-      .update({ estado: "cobrado", fecha_cobro: hoyEcuador() })
-      .eq("id", x.id)
-      .eq("estado", "pendiente"); // doble clic: el segundo no cambia nada
-    setCobrando(null);
-    if (error) return avisar(`Error: ${error.message}`);
-    avisar(`Cobrado: ${money(x.monto)} de ${x.cliente}`);
-    await reload();
+  async function trasCambio(m: string) {
+    avisar(m);
+    await recargar();
   }
-
-  const porFecha = (a: CxC, b: CxC) => (a.fecha_vencimiento ?? "9999").localeCompare(b.fecha_vencimiento ?? "9999");
-  const pendientes = (filas ?? []).filter((x) => x.estado === "pendiente").sort(porFecha);
-  const cobradas = (filas ?? [])
-    .filter((x) => x.estado !== "pendiente")
-    .sort((a, b) => (b.fecha_cobro ?? "").localeCompare(a.fecha_cobro ?? ""))
-    .slice(0, 10);
 
   return (
     <section>
-      <div className="section-head">
+      <div className="section-head" style={{ flexWrap: "wrap", gap: 8 }}>
         <h2>Por cobrar</h2>
-        <button className="btn primary" onClick={() => setForm(true)}>+ Nueva por cobrar</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn primary" onClick={() => setForm({ esVatex: true })}>+ Factura VATEX</button>
+          <button className="btn" onClick={() => setForm({ esVatex: false })}>+ Factura otro cliente</button>
+        </div>
       </div>
-      <p className="sub" style={{ marginTop: -6, fontSize: 12.5 }}>
-        Versión simple. Las liquidaciones de VATEX y el “dinero en la calle” llegan en la fase 5.
-      </p>
 
       {error ? (
         <BannerError texto={error} />
-      ) : !filas ? (
+      ) : cargando && !datos ? (
         <div className="empty">Cargando…</div>
-      ) : !filas.length ? (
-        <div className="card empty">Sin registros aún.</div>
-      ) : (
+      ) : datos ? (
         <>
-          <p style={{ fontSize: 13 }}>
-            Pendiente de cobro: <strong>{money(sumar(pendientes.map((x) => x.monto)))}</strong> ({pendientes.length})
-          </p>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cliente / concepto</th>
-                  <th style={{ textAlign: "right" }}>Monto</th>
-                  <th>Factura</th>
-                  <th>Vencimiento</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...pendientes, ...cobradas].map((x) => {
-                  const pendiente = x.estado === "pendiente";
-                  return (
-                    <tr key={x.id} style={!pendiente ? { opacity: 0.5 } : undefined}>
-                      <td>
-                        <strong>{x.cliente}</strong>
-                        {x.concepto && <div className="sub" style={{ fontSize: 11.5 }}>{x.concepto}</div>}
-                        {x.notas && <div className="sub" style={{ fontSize: 11 }}>{x.notas}</div>}
-                      </td>
-                      <td className="num">{money(x.monto)}</td>
-                      <td style={{ fontSize: 12.5 }}>{fmtFecha(x.fecha_factura)}</td>
-                      <td>
-                        {pendiente ? <Semaforo fecha={x.fecha_vencimiento} /> : <span className="sub" style={{ fontSize: 12 }}>{fmtFecha(x.fecha_vencimiento)}</span>}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {pendiente ? (
-                          <button className="btn" style={{ fontSize: 12 }} disabled={cobrando != null} onClick={() => marcarCobrado(x)}>
-                            {cobrando === x.id ? "Guardando…" : "✓ Cobrada"}
-                          </button>
-                        ) : (
-                          <Badge color="verde">Cobrada</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          {/* ---------------- VATEX ---------------- */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <div>
+                <div className="label">VATEX te debe</div>
+                <div className="value">{money(vatex?.saldo ?? 0)}</div>
+                <div className="hint">
+                  {vatex && vatex.facturas_abiertas > 0
+                    ? `${vatex.facturas_abiertas} factura${vatex.facturas_abiertas !== 1 ? "s" : ""} abierta${vatex.facturas_abiertas !== 1 ? "s" : ""} · la más antigua del ${fmtFecha(vatex.factura_abierta_mas_antigua)}`
+                    : "nada pendiente"}
+                  {vatex && vatex.dias_atraso_max > 0 && (
+                    <> · <Badge color="rojo">atraso de hasta {vatex.dias_atraso_max} día{vatex.dias_atraso_max !== 1 ? "s" : ""}</Badge></>
+                  )}
+                </div>
+              </div>
+              {vatex && vatex.saldo > 0 && (
+                <button className="btn primary" onClick={() => abrirAbono("VATEX", true, "vatex", vatex.saldo)}>
+                  Registrar abono de VATEX
+                </button>
+              )}
+            </div>
           </div>
-        </>
-      )}
+          <TablaFacturas facturas={porCuenta("vatex")} onEditar={editar} />
+          <ListaAbonos cobros={cobrosDe("vatex")} titulo="Abonos de VATEX" />
 
-      <FormCobrar
-        abierto={form}
-        onCerrar={() => setForm(false)}
-        onGuardado={async () => {
-          setForm(false);
-          avisar("Factura por cobrar registrada");
-          await reload();
+          {/* ---------------- Otros clientes ---------------- */}
+          <h3 style={{ margin: "28px 0 8px" }}>
+            Otros clientes {totalOtros > 0 && <span className="sub">— te deben {money(totalOtros)}</span>}
+          </h3>
+          {!otros.length ? (
+            <div className="card empty">Sin facturas de otros clientes.</div>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th style={{ textAlign: "right" }}>Facturado</th>
+                    <th style={{ textAlign: "right" }}>Cobrado</th>
+                    <th style={{ textAlign: "right" }}>Te debe</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {otros.map((c) => (
+                    <Fragment key={c.cuenta}>
+                      <tr style={{ cursor: "pointer", opacity: c.saldo > 0 ? 1 : 0.55 }}
+                        onClick={() => setAbierta(abierta === c.cuenta ? null : c.cuenta)}>
+                        <td>
+                          <strong>{abierta === c.cuenta ? "▾" : "▸"} {c.cliente}</strong>
+                          {c.dias_atraso_max > 0 && <> <Badge color="rojo">atraso {c.dias_atraso_max} d</Badge></>}
+                          <div className="sub" style={{ fontSize: 11.5 }}>
+                            {c.facturas_abiertas} abierta{c.facturas_abiertas !== 1 ? "s" : ""}
+                          </div>
+                        </td>
+                        <td className="num">{money(c.total_facturado)}</td>
+                        <td className="num">{money(c.total_cobrado)}</td>
+                        <td className="num"><strong>{money(c.saldo)}</strong></td>
+                        <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                          {c.saldo > 0 && (
+                            <button className="btn" style={{ fontSize: 12 }}
+                              onClick={() => abrirAbono(c.cliente, false, c.cuenta, c.saldo)}>Abonar</button>
+                          )}
+                        </td>
+                      </tr>
+                      {abierta === c.cuenta && (
+                        <tr>
+                          <td colSpan={5} style={{ background: "var(--surface-2)" }}>
+                            <TablaFacturas facturas={porCuenta(c.cuenta)} compacta onEditar={editar} />
+                            <ListaAbonos cobros={cobrosDe(c.cuenta)} titulo="Abonos" />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <p className="sub" style={{ marginTop: 22, fontSize: 12.5 }}>
+            Total por cobrar: <strong>{money(sumar([vatex?.saldo ?? 0, totalOtros]))}</strong> — no es dinero hasta que te
+            abonan; cada abono sí entra como ingreso del día.
+          </p>
+        </>
+      ) : null}
+
+      <FormFactura
+        supabase={supabase}
+        abierto={form != null}
+        esVatex={form?.esVatex ?? true}
+        factura={form?.factura ?? null}
+        clientes={clientesConocidos(datos?.facturas ?? [])}
+        onCerrar={() => setForm(null)}
+        onGuardado={async (m) => {
+          setForm(null);
+          await trasCambio(m);
+        }}
+      />
+      <ModalAbonoCobro
+        supabase={supabase}
+        cuenta={abonando}
+        onCerrar={() => setAbonando(null)}
+        onHecho={async (m) => {
+          setAbonando(null);
+          await trasCambio(m);
         }}
       />
     </section>
   );
 }
 
-function FormCobrar({ abierto, onCerrar, onGuardado }: { abierto: boolean; onCerrar: () => void; onGuardado: () => void }) {
-  const supabase = useMemo(() => createClient(), []);
-  const [cliente, setCliente] = useState("");
-  const [concepto, setConcepto] = useState("");
-  const [monto, setMonto] = useState("");
-  const [factura, setFactura] = useState(hoyEcuador());
-  const [vence, setVence] = useState("");
-  const [notas, setNotas] = useState("");
-  const [guardando, setGuardando] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+function EstadoFactura({ f }: { f: FacturaCobrar }) {
+  if (f.estado_calculado === "cobrada") return <Badge color="verde">cobrada</Badge>;
+  if (f.dias_atraso > 0) return <Badge color="rojo">atrasada {f.dias_atraso} d</Badge>;
+  if (f.estado_calculado === "abonada") return <Badge color="ambar">abonada</Badge>;
+  return <Badge>pendiente</Badge>;
+}
 
-  useEffect(() => {
-    if (abierto) {
-      setCliente(""); setConcepto(""); setMonto(""); setFactura(hoyEcuador());
-      setVence(""); setNotas(""); setErr(null); setGuardando(false);
-    }
-  }, [abierto]);
+function TablaFacturas({
+  facturas,
+  compacta = false,
+  onEditar,
+}: {
+  facturas: FacturaCobrar[];
+  compacta?: boolean;
+  onEditar: (f: FacturaCobrar) => void;
+}) {
+  const abiertas = facturas.filter((f) => f.saldo > 0);
+  const cobradas = facturas.filter((f) => f.saldo <= 0).slice(-10).reverse();
+  if (!facturas.length) return <div className="card empty">Sin facturas.</div>;
 
-  async function guardar() {
-    if (guardando) return;
-    const m = parseFloat(monto);
-    if (!cliente.trim()) return setErr("El cliente es requerido.");
-    if (!(m > 0)) return setErr("El monto debe ser mayor a 0.");
-    setGuardando(true);
-    const { error } = await supabase.from("cuentas_por_cobrar").insert({
-      cliente: cliente.trim(),
-      concepto: concepto.trim(),
-      monto: m,
-      fecha_factura: factura,
-      fecha_vencimiento: vence || null,
-      notas: notas.trim(),
-    });
-    setGuardando(false);
-    if (error) return setErr(error.message);
-    onGuardado();
-  }
+  const filas = (lista: FacturaCobrar[]) =>
+    lista.map((f) => (
+      <tr key={f.id} style={f.saldo <= 0 ? { opacity: 0.55 } : undefined}>
+        <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtFecha(f.fecha_factura)}</td>
+        <td>
+          {f.numero_factura ? `#${f.numero_factura}` : "—"}
+          {f.es_saldo_inicial && <> <Badge>antes de oct</Badge></>}
+          {f.concepto && <div className="sub" style={{ fontSize: 11.5 }}>{f.concepto}</div>}
+        </td>
+        <td className="num">{f.prendas || "—"}</td>
+        <td className="num">{money(f.monto)}</td>
+        <td className="num">{money(f.cobrado)}</td>
+        <td className="num"><strong>{money(f.saldo)}</strong></td>
+        <td style={{ fontSize: 12.5 }}>
+          <EstadoFactura f={f} />
+          {f.fecha_esperada && f.saldo > 0 && <div className="sub" style={{ fontSize: 11 }}>esperada {fmtFecha(f.fecha_esperada)}</div>}
+        </td>
+        <td style={{ textAlign: "right" }}>
+          <button className="btn" style={{ fontSize: 12, padding: "4px 9px" }} onClick={() => onEditar(f)}
+            aria-label="Editar factura" title="Editar factura">✏️</button>
+        </td>
+      </tr>
+    ));
 
   return (
-    <Modal
-      titulo="Nueva factura por cobrar"
-      abierto={abierto}
-      onCerrar={guardando ? () => {} : onCerrar}
-      pie={
-        <>
-          <button className="btn" onClick={onCerrar} disabled={guardando}>Cancelar</button>
-          <button className="btn primary" onClick={guardar} disabled={guardando}>{guardando ? "Guardando…" : "Guardar"}</button>
-        </>
-      }
-    >
-      {err && <div className="error-banner">{err}</div>}
-      <Fila>
-        <Campo label="Cliente" requerido>
-          <input className="pinput" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-        </Campo>
-        <Campo label="Monto ($)" requerido>
-          <input className="pinput" type="number" step="0.01" min="0" value={monto} onChange={(e) => setMonto(e.target.value)} />
-        </Campo>
-      </Fila>
-      <Campo label="Concepto">
-        <input className="pinput" value={concepto} onChange={(e) => setConcepto(e.target.value)} />
-      </Campo>
-      <Fila>
-        <Campo label="Fecha factura" requerido>
-          <input className="pinput" type="date" value={factura} onChange={(e) => setFactura(e.target.value)} />
-        </Campo>
-        <Campo label="Fecha vencimiento">
-          <input className="pinput" type="date" value={vence} onChange={(e) => setVence(e.target.value)} />
-        </Campo>
-      </Fila>
-      <Campo label="Notas">
-        <textarea className="pinput" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} />
-      </Campo>
-    </Modal>
+    <div className="table-scroll" style={{ marginBottom: compacta ? 8 : 12 }}>
+      <table style={compacta ? { fontSize: 12.5 } : undefined}>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Factura</th>
+            <th style={{ textAlign: "right" }}>Prendas</th>
+            <th style={{ textAlign: "right" }}>Monto</th>
+            <th style={{ textAlign: "right" }}>Cobrado</th>
+            <th style={{ textAlign: "right" }}>Saldo</th>
+            <th>Estado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas(abiertas)}
+          {filas(cobradas)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ListaAbonos({ cobros, titulo }: { cobros: Cobro[]; titulo: string }) {
+  if (!cobros.length) return null;
+  return (
+    <details style={{ marginBottom: 8 }}>
+      <summary style={{ cursor: "pointer", fontSize: 13 }}>
+        {titulo} ({cobros.length}) — {money(sumar(cobros.map((c) => c.monto)))}
+      </summary>
+      <div className="card" style={{ padding: "6px 14px", marginTop: 6 }}>
+        {cobros.map((c) => (
+          <div key={c.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "5px 0",
+            borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+            <span>{fmtFecha(c.fecha)} · {c.medio}{c.notas ? ` · ${c.notas}` : ""}</span>
+            <span className="num" style={{ color: "var(--good)" }}>{money(c.monto)}</span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }

@@ -13,10 +13,17 @@
  *    sin fecha). Suman al total adeudado, NUNCA al periodo.
  *  - rebotados: sección roja aparte, siempre visible hasta resolverse. NO suman
  *    al periodo.
+ *  - proximos: pagos de los 3 días SIGUIENTES al periodo ("atento: se viene").
+ *    El dueño pide a VATEX con unos 3 días de anticipación, así que un pago
+ *    del 16 tiene que verlo ya en la quincena del 1 al 15. NO suman (se
+ *    sumarán en su propio periodo).
  *  - gastos: por defecto solo ámbito empresa; personal solo si se pide.
  */
 import { sumar } from "./formato";
-import { contiene, type Periodo } from "./periodos";
+import { contiene, sumarDias, type Periodo } from "./periodos";
+
+/** Días después del periodo que se muestran como "atento: se viene". */
+export const DIAS_ATENTO = 3;
 import type { Ambito, Cheque, DatosFinanzas, Deuda, EstadoCheque, Exigibilidad, Medio } from "./tipos";
 
 export interface ItemPago {
@@ -84,6 +91,10 @@ export interface Agenda {
 
   rebotados: ItemPago[];
   totalRebotados: number;
+
+  /** pendientes de los DIAS_ATENTO días siguientes al periodo; NO suman */
+  proximos: ItemPago[];
+  totalProximos: number;
 
   gastos: {
     ambito: "empresa" | "todos";
@@ -155,6 +166,12 @@ export function armarAgenda(
     .filter((c) => contiene(periodo, c.fecha_pago))
     .map((c) => aItem(c, hoy))
     .sort((a, b) => (a.fechaPago ?? "").localeCompare(b.fechaPago ?? "") || a.quien.localeCompare(b.quien));
+
+  const limiteAtento = sumarDias(periodo.hasta, DIAS_ATENTO);
+  const proximos = pendientes
+    .filter((c) => c.fecha_cobro != null && c.fecha_cobro > periodo.hasta && c.fecha_cobro <= limiteAtento)
+    .map((c) => aItem(c, hoy))
+    .sort(porFecha);
 
   const rebotados = abiertos
     .filter((c) => c.estado === "rebotado")
@@ -234,6 +251,8 @@ export function armarAgenda(
     totalSinFecha: sumar(sinFecha.map((s) => s.monto)),
     rebotados,
     totalRebotados: sumar(rebotados.map((p) => p.monto)),
+    proximos,
+    totalProximos: sumar(proximos.map((p) => p.monto)),
     gastos: {
       ambito: incluirPersonal ? "todos" : "empresa",
       cantidad: gastosPeriodo.length,
