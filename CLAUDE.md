@@ -63,7 +63,7 @@ versionadas. Orden real de ejecución:
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
-`schema_fase8r_conjuntos.sql` ⏳ **escrita, PENDIENTE de aplicar** (⚠️ aplicar y desplegar JUNTOS)
+`schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -392,9 +392,9 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-26 — producción — `schema_fase8r_conjuntos.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-26 — producción — `schema_fase8r_conjuntos.sql` ✅ EJECUTADA
 
-Verificable con `supabase/smoke_test_fase8r.sql` (8 comprobaciones). ⚠️ **Aplicar y desplegar
+Verificada con `supabase/smoke_test_fase8r.sql`: 8/8. ⚠️ **Aplicar y desplegar
 juntos:** el código pide `prod_prendas.es_conjunto`, `prod_prenda_partes`, `prod_corte_colores.parte`
 y `prod_maquila_colores.costo_unitario`; sin la fase, `/produccion` y `/cortadora` no cargan.
 
