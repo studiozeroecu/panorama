@@ -69,7 +69,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8x_convertir_a_conjunto.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -398,10 +398,9 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-27 — producción — `schema_fase8x_convertir_a_conjunto.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-27 — producción — `schema_fase8x_convertir_a_conjunto.sql` ✅ EJECUTADA
 
-Verificable con `supabase/smoke_test_fase8x.sql` (2 comprobaciones). Sin tablas ni columnas: se
-puede desplegar antes (el botón falla con un error claro hasta aplicarla).
+Verificada con `supabase/smoke_test_fase8x.sql`: 2/2. Sin tablas ni columnas nuevas.
 
 - **`fn_convertir_a_conjunto(corte, colores jsonb)`**: un corte de CONJUNTO registrado antes de la
   8r tiene una sola fila por color. Lo parte: la fila vieja pasa a ser la **superior** y se crea
