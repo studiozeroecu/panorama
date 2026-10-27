@@ -25,6 +25,7 @@ import type {
   EnvioLocal,
   Feria,
   IngresoFeria,
+  OrdenEstampado,
   EstadoPedido,
   EstadoColorMaquila,
 } from "@/lib/produccion/types";
@@ -116,7 +117,7 @@ interface FilaMaquila {
         procesado: boolean;
         costo_unitario: number | string | null;
         corte_color: {
-          color: string; parte: "superior" | "inferior" | null; unidades: number; orden: number;
+          color: string; parte: "superior" | "inferior" | null; tono: "claro" | "oscuro" | null; unidades: number; orden: number;
           tallas: FilaTalla[] | null;
         } | null;
         entregas:
@@ -144,6 +145,7 @@ export interface ProdData {
   enviosLocales: EnvioLocal[];
   ferias: Feria[];
   feriaIngresos: IngresoFeria[];
+  ordenesEstampado: OrdenEstampado[];
   productosVatex: { codigo: string; descripcion: string }[];
 }
 
@@ -162,6 +164,7 @@ const VACIO: ProdData = {
   enviosLocales: [],
   ferias: [],
   feriaIngresos: [],
+  ordenesEstampado: [],
   productosVatex: [],
 };
 
@@ -195,7 +198,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
     const [
       prendas, proveedores, costosFijos, maquiladoras, talleres,
       pedidos, cortes, maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, productos,
-      ferias, feriaIngresos,
+      ferias, feriaIngresos, ordenesEstampado,
     ] = await Promise.all([
       // Fase 8r: las partes de cada conjunto vienen anidadas. Se siguen cargando
       // todas las prendas, archivadas incluidas (regla de la fase 8e).
@@ -235,7 +238,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
            colores:prod_maquila_colores (
              id, corte_color_id, estado, fecha_envio, fecha_entrega, procesado, costo_unitario,
              corte_color:prod_corte_colores (
-               color, parte, unidades, orden,
+               color, parte, tono, unidades, orden,
                tallas:prod_corte_color_tallas (talla, unidades)
              ),
              entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado, tipo, motivo)
@@ -249,10 +252,11 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       supabase.from("products").select("codigo, descripcion").order("codigo"),
       sel("prod_ferias", "fecha"),
       sel("prod_feria_ingresos", "created_at"),
+      sel("prod_ordenes_estampado", "created_at"),
     ]);
 
     const failed = [prendas, proveedores, costosFijos, maquiladoras, talleres, pedidos, cortes,
-      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, ferias, feriaIngresos].find((r) => r.error);
+      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, ferias, feriaIngresos, ordenesEstampado].find((r) => r.error);
     if (failed?.error) {
       setError(
         failed.error.message.includes("does not exist") ||
@@ -345,6 +349,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           corte_color_id: c.corte_color_id,
           color: c.corte_color?.color ?? "",
           parte: c.corte_color?.parte ?? null,
+          tono: c.corte_color?.tono ?? null,
           costo_unitario: c.costo_unitario == null ? null : Number(c.costo_unitario),
           unidades: Number(c.corte_color?.unidades ?? 0),
           tallas: aTallas(c.corte_color?.tallas),
@@ -384,6 +389,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       enviosLocales: (enviosLocales.data ?? []) as EnvioLocal[],
       ferias: (ferias.data ?? []) as Feria[],
       feriaIngresos: (feriaIngresos.data ?? []) as IngresoFeria[],
+      ordenesEstampado: (ordenesEstampado.data ?? []) as OrdenEstampado[],
       productosVatex: (productos.data ?? []) as { codigo: string; descripcion: string }[],
     });
     setError(null);

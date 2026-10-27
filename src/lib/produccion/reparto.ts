@@ -174,9 +174,14 @@ export function costoSalida(produccion: number, destino: DestinoEnvio, estampado
  * (fn_repartir_entrega_maquila): este estado solo junta lo de todas en una
  * pantalla, y formDeEntrega lo vuelve a partir.
  */
-export interface EstampadoGrupo extends DisenoReparto {
-  /** La fila (entrega) a la que pertenece este estampado. */
-  entregaId: string;
+/**
+ * Un estampado de un destino (2026-10-27): se escribe UNA vez y lleva sus
+ * tallas por color (fila), en vez de una fila por color.
+ */
+export interface EstampadoGrupo {
+  nombre: string;
+  /** entrega (fila) → talla → cantidad escrita. */
+  tallas: Record<string, TallasTexto>;
 }
 
 export interface GrupoForm {
@@ -198,8 +203,9 @@ export function formDeEntrega(g: GrupoForm, entregaId: string): RepartoForm {
   for (const { id } of DESTINOS) {
     f.tallas[id] = g.tallas[id][entregaId] ?? {};
     f.disenos[id] = g.estampados[id]
-      .filter((e) => e.entregaId === entregaId)
-      .map(({ nombre, tallas }) => ({ nombre, tallas }));
+      .map((e) => ({ nombre: e.nombre, tallas: e.tallas[entregaId] ?? {} }))
+      // Un estampado sin unidades en esta fila no es de este color.
+      .filter((d) => sumaTallas(tallasLimpias(d.tallas)) > 0);
   }
   return f;
 }
@@ -212,4 +218,14 @@ export function completarGrupoConBodega(
   const out: Record<string, TallasTexto> = {};
   for (const [id, tallas] of Object.entries(llegadas)) out[id] = completarConBodega(tallas, formDeEntrega(g, id));
   return out;
+}
+
+/**
+ * Claro u oscuro, para el film del estampado (fase 8v). Solo es la sugerencia
+ * inicial del interruptor: el dueño lo corrige y se guarda en el color.
+ */
+export function tonoSugerido(color: string): "claro" | "oscuro" {
+  return /negr|azul|marin|navy|vino|caf[eé]|chocolate|gris oscuro|verde (militar|oscuro|botella)|morado|petr[oó]leo|black/i.test(color)
+    ? "oscuro"
+    : "claro";
 }

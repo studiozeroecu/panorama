@@ -142,6 +142,8 @@ export interface ColorMaquila {
   color: string;
   /** Fase 8r: la parte del conjunto (viene del corte). */
   parte: Parte | null;
+  /** Fase 8v: claro / oscuro, para el film del estampado (viene del corte). null = sin marcar. */
+  tono: "claro" | "oscuro" | null;
   /** Fase 8r: precio de maquila de ESTA fila; null = el de la maquila. */
   costo_unitario: number | null;
   tallas: Record<string, number>;
@@ -201,6 +203,17 @@ export interface LoteEstampado {
   destino: "bodega" | "local" | "feria" | null;
   feria_id: string | null;
   local_destino: string | null;
+  /** Fase 8v: la orden con la que se mandó al taller. */
+  orden_id: string | null;
+}
+
+/** Fase 8v: lotes que se mandaron juntos al taller. */
+export interface OrdenEstampado {
+  id: string;
+  fecha: string;
+  taller_id: string | null;
+  por_metro: number;
+  nota: string | null;
 }
 
 export interface StockOnline {

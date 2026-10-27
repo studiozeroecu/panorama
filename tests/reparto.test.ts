@@ -135,7 +135,7 @@ describe("Envío agrupado por producción", () => {
     estampados: {
       bodega: [],
       local: [],
-      feria: [{ entregaId: "negro", nombre: "Logo", tallas: { S: "2" } }],
+      feria: [{ nombre: "Logo", tallas: { negro: { S: "2" } } }],
     },
   };
 
@@ -145,6 +145,12 @@ describe("Envío agrupado por producción", () => {
     expect(negro.disenos.feria).toEqual([{ nombre: "Logo", tallas: { S: "2" } }]);
     expect(basicosDestino(negro, "feria")).toEqual({ S: 1, M: 4 });
     expect(formDeEntrega(g, "crudo").disenos.feria).toEqual([]);
+  });
+
+  it("un estampado se escribe una vez y vale para varios colores", () => {
+    const x: GrupoForm = { ...g, estampados: { ...g.estampados, feria: [{ nombre: "Cajas", tallas: { negro: { S: "1" }, crudo: { S: "2" } } }] } };
+    expect(formDeEntrega(x, "negro").disenos.feria).toEqual([{ nombre: "Cajas", tallas: { S: "1" } }]);
+    expect(formDeEntrega(x, "crudo").disenos.feria).toEqual([{ nombre: "Cajas", tallas: { S: "2" } }]);
   });
 
   it("lo que sobra → bodega, fila por fila", () => {

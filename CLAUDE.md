@@ -66,7 +66,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
 `schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -394,6 +395,30 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8v_ordenes_estampado.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8v.sql`: 3/3. ⚠️ **Se aplicó antes de desplegar:** `useProduccion` pide `prod_corte_colores.tono` y `prod_ordenes_estampado`; sin la
+fase, `/produccion` no carga.
+
+- **Tono claro / oscuro** (`prod_corte_colores.tono`): decide el film del estampado (claro y oscuro
+  nunca comparten metro, la regla de `dtf_lotes`). Es del COLOR de la tela, no del lote: el lote
+  lo toma por su maquila y su color (`tonoDeLote` en EstampadosTab). Se marca con el interruptor
+  *Oscuro* en Envío (se guarda al procesar, solo si cambió; arranca con lo guardado o con
+  `tonoSugerido` por el nombre) y se puede cambiar en Estampados. Sin marcar = claro, con aviso.
+- **Envío:** cada estampado se escribe UNA vez y trae solos los colores del destino
+  (`EstampadoGrupo.tallas` = fila → talla → cantidad), en vez de una fila por color.
+- **Orden de estampado** (`prod_ordenes_estampado` + `prod_lotes_estampado.orden_id`, RLS admin;
+  `fn_crear_orden_estampado(lote_ids[], taller, fecha, por_metro, nota)`, todo o nada): se marcan
+  lotes pendientes —de distintas producciones y destinos— y se mandan juntos al taller.
+- ⚠️ **Los metros se calculan, no se guardan, y se redondean sobre el TOTAL de la orden** por
+  estampado y tono (`ceil(unidades / por_metro)`, por defecto 4), no lote por lote:
+  2 + 2 + 3 estampados son 2 m, no 3. Al taller: metros por estampado y tono (botón *Copiar
+  resumen*); al dueño: el desglose por lote en fracción de metro. `src/lib/produccion/ordenEstampado.ts`
+  con tests.
+- Estampados muestra cada lote como cuadro estampado × talla; las órdenes en taller se agrupan
+  con su resumen. El retorno sigue siendo por lote (fase 8t).
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8u_cierre_ferias.sql` ✅ EJECUTADA
 

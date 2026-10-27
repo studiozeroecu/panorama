@@ -34,9 +34,13 @@ import {
   tallasDestino,
   tallasEstampado,
   type DestinoEnvio,
+  tallasLimpias,
+  tonoSugerido,
   type EstampadoGrupo,
   type GrupoForm,
 } from "@/lib/produccion/reparto";
+
+type Tono = "claro" | "oscuro";
 import { costoProduccionUnitario } from "./costoDeCorte";
 
 /**
@@ -132,6 +136,11 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
   const [localDestino, setLocalDestino] = useState("");
   const [feriaId, setFeriaId] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  // Fase 8v: claro / oscuro de cada color, para el film. Arranca con lo guardado
+  // o con una sugerencia por el nombre del color; se guarda al procesar.
+  const [tonos, setTonos] = useState<Record<string, Tono>>(() =>
+    Object.fromEntries(filas.map((f) => [f.col.corte_color_id, f.col.tono ?? tonoSugerido(f.col.color)]))
+  );
 
   const costoEst = parseFloat(costoEstampado) || 0;
   const precioLocal = prenda ? Number(prenda.precio_venta_local) : 0;
@@ -155,6 +164,13 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
       }
     }
   }
+  for (const { id, etiqueta } of DESTINOS) {
+    if (!activo(id)) continue;
+    for (const e of g.estampados[id]) {
+      const n = Object.values(e.tallas).reduce((s, x) => s + sumaTallas(tallasLimpias(x)), 0);
+      if (e.nombre.trim() && n === 0) problemas.push(`${etiqueta}: el estampado "${e.nombre.trim()}" no tiene unidades.`);
+    }
+  }
   if (activo("feria") && !feriaId) problemas.push("Elige a qué feria va la mercadería.");
 
   const alternar = (d: DestinoEnvio) =>
@@ -174,6 +190,15 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
     setOcupado(true);
     const hechas: string[] = [];
     try {
+      // El tono es del color del corte: se guarda primero, solo donde cambió.
+      for (const f of filas) {
+        const t = tonos[f.col.corte_color_id];
+        if (t && t !== f.col.tono) {
+          const { error } = await supabase.from("prod_corte_colores").update({ tono: t }).eq("id", f.col.corte_color_id);
+          if (error) throw new Error(`${f.etiqueta}: ${error.message}`);
+          f.col.tono = t;
+        }
+      }
       for (const f of filas) {
         const r = repartoParaBase(formDeEntrega(g, f.entrega.id));
         if (!Object.keys(r).length) continue;
@@ -278,7 +303,8 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
 
       {DESTINOS.filter((d) => activo(d.id)).map(({ id }) => (
         <DestinoGrupo key={id} destino={id} g={g} setG={setG} filas={filas} tallas={tallas}
-          costoEstampado={costoEst} precioLocal={precioLocal}>
+          costoEstampado={costoEst} precioLocal={precioLocal} tonos={tonos}
+          setTono={(cc, t) => setTonos((x) => ({ ...x, [cc]: t }))}>
           {id === "local" && (
             <Fila>
               <Campo label="Local destino (para cruzar con las guías de logística)">
@@ -353,6 +379,8 @@ function DestinoGrupo({
   tallas,
   costoEstampado,
   precioLocal,
+  tonos,
+  setTono,
   children,
 }: {
   destino: DestinoEnvio;
@@ -362,6 +390,8 @@ function DestinoGrupo({
   tallas: string[];
   costoEstampado: number;
   precioLocal: number;
+  tonos: Record<string, Tono>;
+  setTono: (corteColorId: string, tono: Tono) => void;
   children?: React.ReactNode;
 }) {
   const etiqueta = DESTINOS.find((d) => d.id === destino)!.etiqueta;
@@ -439,52 +469,61 @@ function DestinoGrupo({
 
       {estampados.length > 0 && (
         <>
-          <div className="label" style={{ fontSize: 10.5, margin: "10px 0 6px" }}>De esas, cuántas van con cada estampado</div>
-          <div className="table-scroll" style={{ marginBottom: 8 }}>
-            <table style={{ width: "auto", minWidth: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ ...CELDA, textAlign: "left" }}>Estampado</th>
-                  <th style={{ ...CELDA, textAlign: "left" }}>Color</th>
-                  {tallas.map((t) => <th key={t} style={CELDA}>{t}</th>)}
-                  <th style={CELDA}>Total</th>
-                  <th style={CELDA}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {estampados.map((e, i) => {
-                  const van = porFila.find((x) => x.f.entrega.id === e.entregaId)?.van ?? {};
-                  return (
-                    <tr key={i}>
-                      <td style={{ ...CELDA, textAlign: "left" }}>
-                        <input className="pinput" style={{ minWidth: 120 }} placeholder="Ej: Logo frontal" value={e.nombre}
-                          onChange={(ev) => escribirEstampado(i, { nombre: ev.target.value })} />
-                      </td>
-                      <td style={{ ...CELDA, textAlign: "left" }}>
-                        <select className="pinput" value={e.entregaId}
-                          onChange={(ev) => escribirEstampado(i, { entregaId: ev.target.value })}>
-                          {filas.map((f) => <option key={f.entrega.id} value={f.entrega.id}>{f.etiqueta}</option>)}
-                        </select>
-                      </td>
-                      {tallas.map((t) => (
-                        <td key={t} style={CELDA}>
-                          {(van[t] ?? 0) > 0 ? (
-                            <InputTalla valor={e.tallas[t]} max={van[t]}
-                              onChange={(v) => escribirEstampado(i, { tallas: { ...e.tallas, [t]: v } })} />
-                          ) : <span className="sub">—</span>}
-                        </td>
-                      ))}
-                      <td style={CELDA} className="num">{Object.values(e.tallas).reduce((s, v) => s + cantidad(v), 0)}</td>
-                      <td style={CELDA}>
-                        <button className="btn" style={{ padding: "4px 10px" }}
-                          onClick={() => cambiarEstampados((es) => es.filter((_, j) => j !== i))}>✕</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="label" style={{ fontSize: 10.5, margin: "10px 0 6px" }}>
+            De esas, cuántas van con cada estampado · marca “Oscuro” en los colores que llevan film de prenda oscura
           </div>
+          {estampados.map((e, i) => {
+            const totalEst = Object.values(e.tallas).reduce(
+              (s, porTalla) => s + Object.values(porTalla).reduce((a, v) => a + cantidad(v), 0), 0);
+            return (
+              <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <input className="pinput" style={{ flex: 1, minWidth: 140 }} placeholder="Nombre del estampado, ej: Cajas"
+                    value={e.nombre} onChange={(ev) => escribirEstampado(i, { nombre: ev.target.value })} />
+                  <span className="sub" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{totalEst} und.</span>
+                  <button className="btn" style={{ padding: "4px 10px" }}
+                    onClick={() => cambiarEstampados((es) => es.filter((_, j) => j !== i))}>✕</button>
+                </div>
+                <div className="table-scroll">
+                  <table style={{ width: "auto", minWidth: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...CELDA, textAlign: "left" }}>Color</th>
+                        <th style={CELDA}>Oscuro</th>
+                        {tallas.map((t) => <th key={t} style={CELDA}>{t}</th>)}
+                        <th style={CELDA}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {porFila.filter((x) => x.nVan > 0).map(({ f, van }) => {
+                        const fila = e.tallas[f.entrega.id] ?? {};
+                        return (
+                          <tr key={f.entrega.id}>
+                            <td style={{ ...CELDA, textAlign: "left" }}>{f.etiqueta}</td>
+                            <td style={CELDA}>
+                              <input type="checkbox" title="El estampado va en film para prenda oscura"
+                                checked={tonos[f.col.corte_color_id] === "oscuro"}
+                                onChange={(ev) => setTono(f.col.corte_color_id, ev.target.checked ? "oscuro" : "claro")}
+                                style={{ accentColor: "var(--accent)", width: 16, height: 16 }} />
+                            </td>
+                            {tallas.map((t) => (
+                              <td key={t} style={CELDA}>
+                                {(van[t] ?? 0) > 0 ? (
+                                  <InputTalla valor={fila[t]} max={van[t]}
+                                    onChange={(v) => escribirEstampado(i, { tallas: { ...e.tallas, [f.entrega.id]: { ...fila, [t]: v } } })} />
+                                ) : <span className="sub">—</span>}
+                              </td>
+                            ))}
+                            <td style={CELDA} className="num">{Object.values(fila).reduce((s, v) => s + cantidad(v), 0)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
 
           <div className="label" style={{ fontSize: 10.5, margin: "10px 0 6px" }}>Básicas (lo que queda sin estampar)</div>
           <div className="table-scroll" style={{ marginBottom: 8 }}>
@@ -509,9 +548,7 @@ function DestinoGrupo({
       {nVan > 0 && (
         <button className="btn" style={{ fontSize: 12, marginBottom: 10 }}
           onClick={() => {
-            // Por defecto, el primer color que tiene algo en este destino.
-            const primero = porFila.find((x) => x.nVan > 0)?.f.entrega.id ?? filas[0].entrega.id;
-            cambiarEstampados((es) => [...es, { nombre: "", tallas: {}, entregaId: primero }]);
+            cambiarEstampados((es) => [...es, { nombre: "", tallas: {} }]);
           }}>
           + Agregar estampado
         </button>
