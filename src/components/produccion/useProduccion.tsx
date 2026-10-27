@@ -26,6 +26,7 @@ import type {
   Feria,
   IngresoFeria,
   OrdenEstampado,
+  Estampado,
   EstadoPedido,
   EstadoColorMaquila,
 } from "@/lib/produccion/types";
@@ -146,6 +147,7 @@ export interface ProdData {
   ferias: Feria[];
   feriaIngresos: IngresoFeria[];
   ordenesEstampado: OrdenEstampado[];
+  estampados: Estampado[];
   productosVatex: { codigo: string; descripcion: string }[];
 }
 
@@ -165,6 +167,7 @@ const VACIO: ProdData = {
   ferias: [],
   feriaIngresos: [],
   ordenesEstampado: [],
+  estampados: [],
   productosVatex: [],
 };
 
@@ -198,7 +201,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
     const [
       prendas, proveedores, costosFijos, maquiladoras, talleres,
       pedidos, cortes, maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, productos,
-      ferias, feriaIngresos, ordenesEstampado,
+      ferias, feriaIngresos, ordenesEstampado, estampados,
     ] = await Promise.all([
       // Fase 8r: las partes de cada conjunto vienen anidadas. Se siguen cargando
       // todas las prendas, archivadas incluidas (regla de la fase 8e).
@@ -253,10 +256,11 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       sel("prod_ferias", "fecha"),
       sel("prod_feria_ingresos", "created_at"),
       sel("prod_ordenes_estampado", "created_at"),
+      supabase.from("prod_estampados").select("*").order("nombre"),
     ]);
 
     const failed = [prendas, proveedores, costosFijos, maquiladoras, talleres, pedidos, cortes,
-      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, ferias, feriaIngresos, ordenesEstampado].find((r) => r.error);
+      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, ferias, feriaIngresos, ordenesEstampado, estampados].find((r) => r.error);
     if (failed?.error) {
       setError(
         failed.error.message.includes("does not exist") ||
@@ -390,6 +394,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       ferias: (ferias.data ?? []) as Feria[],
       feriaIngresos: (feriaIngresos.data ?? []) as IngresoFeria[],
       ordenesEstampado: (ordenesEstampado.data ?? []) as OrdenEstampado[],
+      estampados: (estampados.data ?? []) as Estampado[],
       productosVatex: (productos.data ?? []) as { codigo: string; descripcion: string }[],
     });
     setError(null);

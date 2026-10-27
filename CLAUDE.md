@@ -67,7 +67,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -395,6 +396,23 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8w_lista_estampados.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8w.sql`: 3/3. ⚠️ **Se aplicó antes de desplegar:** `useProduccion` pide `prod_estampados`.
+
+- **Lista de estampados** (`prod_estampados`, RLS admin, índice único `lower(btrim(nombre))`): la
+  orden de estampado suma metros por NOMBRE, así que el nombre se ELIGE de la lista
+  (`ElegirEstampado.tsx`, con "+ Nuevo estampado…") en vez de escribirse. Arranca con los nombres
+  ya usados en los lotes. Los lotes siguen guardando el nombre como texto en `disenos`.
+- **`fn_renombrar_estampado(viejo, nuevo, lote_ids[] | null)`**: cambia el nombre en los lotes que
+  aún no volvieron del taller (los retornados ya entraron al stock y no se tocan). Con
+  `lote_ids` = los de una producción (✏️ en la tabla); con null = desde la lista, en todos, y si el
+  nuevo ya existía los dos se funden. No deja juntar dos estampados de un mismo lote.
+- **Estampados agrupa los pendientes POR PRODUCCIÓN** (pedido del dueño): una tarjeta por maquila
+  con una tabla estampado · color · oscuro · destino · tallas, y se marca la producción entera
+  para la orden.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8v_ordenes_estampado.sql` ✅ EJECUTADA
 

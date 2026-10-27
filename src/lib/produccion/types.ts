@@ -207,6 +207,13 @@ export interface LoteEstampado {
   orden_id: string | null;
 }
 
+/** Fase 8w: la lista de estampados. Se elige de aquí para que el mismo se llame siempre igual. */
+export interface Estampado {
+  id: string;
+  nombre: string;
+  archivada_en: string | null;
+}
+
 /** Fase 8v: lotes que se mandaron juntos al taller. */
 export interface OrdenEstampado {
   id: string;

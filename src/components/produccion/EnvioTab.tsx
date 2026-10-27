@@ -42,6 +42,7 @@ import {
 
 type Tono = "claro" | "oscuro";
 import { costoProduccionUnitario } from "./costoDeCorte";
+import ElegirEstampado from "./ElegirEstampado";
 
 /**
  * Envío se arma POR PRODUCCIÓN (decisión del dueño, 2026-10-27): una tarjeta
@@ -478,8 +479,9 @@ function DestinoGrupo({
             return (
               <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                  <input className="pinput" style={{ flex: 1, minWidth: 140 }} placeholder="Nombre del estampado, ej: Cajas"
-                    value={e.nombre} onChange={(ev) => escribirEstampado(i, { nombre: ev.target.value })} />
+                  <div style={{ flex: 1 }}>
+                    <ElegirEstampado valor={e.nombre} ancho={220} onChange={(nombre) => escribirEstampado(i, { nombre })} />
+                  </div>
                   <span className="sub" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{totalEst} und.</span>
                   <button className="btn" style={{ padding: "4px 10px" }}
                     onClick={() => cambiarEstampados((es) => es.filter((_, j) => j !== i))}>✕</button>

@@ -7,6 +7,7 @@ import { money, ordenarTallas, type Feria, type LoteEstampado, type OrdenEstampa
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import { resumenOrden, textoParaTaller, type LoteParaOrden, type Tono } from "@/lib/produccion/ordenEstampado";
 import FichaEstampadoModal from "./FichaEstampadoModal";
+import ElegirEstampado from "./ElegirEstampado";
 
 /**
  * Estampados — fase 8v. Los lotes pendientes se juntan en una ORDEN (pueden
@@ -25,14 +26,24 @@ export default function EstampadosTab() {
   const ordenesAbiertas = data.ordenesEstampado.filter((o) => enTaller.some((l) => l.orden_id === o.id));
   const sueltosEnTaller = enTaller.filter((l) => !l.orden_id || !data.ordenesEstampado.some((o) => o.id === l.orden_id));
 
-  const alternar = (id: string) =>
-    setElegidos((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+  const elegir = (ids: string[], marcar: boolean) =>
+    setElegidos((x) => (marcar ? [...new Set([...x, ...ids])] : x.filter((y) => !ids.includes(y))));
+  // Fase 8w: una tarjeta por producción (maquila); los lotes sin producción, cada uno aparte.
+  const porProduccion = Object.values(
+    pendientes.reduce<Record<string, LoteEstampado[]>>((acc, l) => {
+      const k = l.maquila_id ?? `lote-${l.id}`;
+      (acc[k] ??= []).push(l);
+      return acc;
+    }, {})
+  );
 
   return (
     <section>
       <div className="section-head">
         <h2>Estampados <span className="sub" style={{ fontWeight: 400 }}>· órdenes al taller y retorno de lotes</span></h2>
       </div>
+
+      <ListaEstampados />
 
       {!data.lotesEstampado.length && (
         <Vacio titulo="Sin lotes para estampar aún" hint="Los lotes con estampado que proceses en Envío aparecen aquí." />
@@ -41,15 +52,15 @@ export default function EstampadosTab() {
       {pendientes.length > 0 && (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            <div className="label">Pendientes de enviar al taller ({pendientes.length}) · marca los que van juntos en una orden</div>
+            <div className="label">Pendientes de enviar al taller · marca las producciones que van juntas en una orden</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn" style={{ fontSize: 12 }} onClick={() => setElegidos(pendientes.map((l) => l.id))}>Marcar todos</button>
               {seleccion.length > 0 && <button className="btn" style={{ fontSize: 12 }} onClick={() => setElegidos([])}>Quitar marcas</button>}
             </div>
           </div>
           {seleccion.length > 0 && <NuevaOrden lotes={seleccion} alCrear={() => setElegidos([])} />}
-          {pendientes.map((l) => (
-            <LotePendiente key={l.id} lote={l} elegido={elegidos.includes(l.id)} alElegir={() => alternar(l.id)} />
+          {porProduccion.map((ls) => (
+            <ProduccionPendiente key={ls[0].maquila_id ?? ls[0].id} lotes={ls} elegidos={elegidos} alElegir={elegir} />
           ))}
         </>
       )}
@@ -140,7 +151,7 @@ function CuadroDisenos({ lote }: { lote: LoteEstampado }) {
 }
 
 /** Interruptor claro / oscuro del lote: cambia el tono del color en el corte. */
-function TonoLote({ lote }: { lote: LoteEstampado }) {
+function TonoLote({ lote, compacto }: { lote: LoteEstampado; compacto?: boolean }) {
   const { data, supabase, reload, toast } = useProd();
   const tono = tonoDeLote(data, lote);
   const colores = coloresDelLote(data, lote);
@@ -153,7 +164,14 @@ function TonoLote({ lote }: { lote: LoteEstampado }) {
     if (error) return toast(error.message, "error");
     await reload();
   }
-  if (!colores.length) return <Badge color="gris">tono sin marcar</Badge>;
+  if (!colores.length) return compacto ? <span className="sub">—</span> : <Badge color="gris">tono sin marcar</Badge>;
+  if (compacto) {
+    return (
+      <input type="checkbox" checked={tono === "oscuro"} title={tono ? "" : "Sin marcar: cuenta como claro"}
+        onChange={(e) => cambiar(e.target.checked ? "oscuro" : "claro")}
+        style={{ accentColor: "var(--accent)", width: 16, height: 16, outline: tono ? undefined : "1px dashed var(--warn)" }} />
+    );
+  }
   return (
     <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
       <input type="checkbox" checked={tono === "oscuro"} onChange={(e) => cambiar(e.target.checked ? "oscuro" : "claro")}
@@ -163,26 +181,193 @@ function TonoLote({ lote }: { lote: LoteEstampado }) {
   );
 }
 
-function LotePendiente({ lote, elegido, alElegir }: { lote: LoteEstampado; elegido: boolean; alElegir: () => void }) {
-  const [ficha, setFicha] = useState(false);
+/**
+ * Fase 8w: los lotes pendientes se ven POR PRODUCCIÓN (pedido del dueño): una
+ * tarjeta por corte con una tabla ordenada por estampado y color, en vez de
+ * una tarjeta por color. Se marca la producción entera para la orden.
+ */
+function ProduccionPendiente({
+  lotes,
+  elegidos,
+  alElegir,
+}: {
+  lotes: LoteEstampado[];
+  elegidos: string[];
+  alElegir: (ids: string[], marcar: boolean) => void;
+}) {
+  const { data, supabase, reload, toast } = useProd();
+  const [ficha, setFicha] = useState<LoteEstampado | null>(null);
+  const [renombrando, setRenombrando] = useState<string | null>(null);
+  const m = data.maquilas.find((x) => x.id === lotes[0].maquila_id);
+  const corte = m ? data.cortes.find((c) => c.id === m.corte_id) : undefined;
+  const pedido = corte ? data.pedidos.find((p) => p.id === corte.pedido_id) : undefined;
+  const prenda = pedido ? data.prendas.find((p) => p.id === pedido.prenda_id) : undefined;
+  const ids = lotes.map((l) => l.id);
+  const todos = ids.every((id) => elegidos.includes(id));
+  const algunos = ids.some((id) => elegidos.includes(id));
+  const total = lotes.reduce((s, l) => s + Number(l.total_unidades), 0);
+
+  // Una fila por estampado de cada lote, ordenadas por estampado y luego color.
+  const filas = lotes
+    .flatMap((l) =>
+      (l.disenos ?? []).map((d) => ({
+        lote: l,
+        nombre: d.nombre,
+        unidades: Number(d.unidades),
+        // Los lotes viejos no traen tallas por diseño; con uno solo, son las del lote.
+        tallas: d.tallas ?? ((l.disenos ?? []).length === 1 ? l.tallas : null),
+      }))
+    )
+    .sort((a, b) => a.nombre.localeCompare(b.nombre) || a.lote.color.localeCompare(b.lote.color));
+  const tallas = ordenarTallas([...new Set(filas.flatMap((f) => Object.keys(f.tallas ?? {})))]);
+
+  async function renombrar(viejo: string, nuevo: string) {
+    setRenombrando(null);
+    if (!nuevo || nuevo === viejo) return;
+    const { error } = await supabase.rpc("fn_renombrar_estampado", { p_viejo: viejo, p_nuevo: nuevo, p_lote_ids: ids });
+    if (error) return toast(error.message, "error");
+    toast(`"${viejo}" ahora es "${nuevo}" en esta producción`);
+    await reload();
+  }
+
   return (
-    <div className="prod-card" style={elegido ? { borderColor: "var(--accent)" } : undefined}>
+    <div className="prod-card" style={algunos ? { borderColor: "var(--accent)" } : undefined}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <input type="checkbox" checked={elegido} onChange={alElegir}
+        <input type="checkbox" checked={todos} onChange={() => alElegir(ids, !todos)}
+          title="Marcar esta producción para la orden"
           style={{ accentColor: "var(--accent)", width: 18, height: 18, marginTop: 3 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge> <DestinoLote lote={lote} /></h4>
-          <div className="prod-meta" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <span>{lote.total_unidades} und. · {money(Number(lote.costo_unitario))}/und. de estampado</span>
-            <TonoLote lote={lote} />
+          <h4>
+            {pedido?.nombre_tela ?? "Sin producción"}
+            {(prenda?.nombre ?? lotes[0].prenda_nombre) && (
+              <span className="sub" style={{ fontWeight: 400 }}> · {prenda?.nombre ?? lotes[0].prenda_nombre}</span>
+            )}
+          </h4>
+          <div className="prod-meta">{total} und. para estampar · {lotes.length} {lotes.length === 1 ? "lote" : "lotes"}</div>
+
+          <div className="table-scroll" style={{ marginTop: 8 }}>
+            <table style={{ width: "auto", minWidth: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...CELDA, textAlign: "left" }}>Estampado</th>
+                  <th style={{ ...CELDA, textAlign: "left" }}>Color</th>
+                  <th style={CELDA}>Oscuro</th>
+                  <th style={{ ...CELDA, textAlign: "left" }}>Va a</th>
+                  {tallas.map((t) => <th key={t} style={CELDA}>{t}</th>)}
+                  <th style={CELDA}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f, i) => {
+                  const clave = `${f.lote.id}|${f.nombre}`;
+                  const enLista = data.estampados.some((e) => e.nombre === f.nombre);
+                  return (
+                    <tr key={clave + i}>
+                      <td style={{ ...CELDA, textAlign: "left" }}>
+                        {renombrando === clave ? (
+                          <ElegirEstampado valor={f.nombre} ancho={150} onChange={(n) => renombrar(f.nombre, n)} />
+                        ) : (
+                          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <b>{f.nombre}</b>
+                            {!enLista && <span style={{ color: "var(--warn)", fontSize: 11 }}>no está en la lista</span>}
+                            <button className="btn" title="Cambiar el nombre en esta producción"
+                              style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => setRenombrando(clave)}>✏️</button>
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ ...CELDA, textAlign: "left" }}>{f.lote.color}</td>
+                      <td style={CELDA}><TonoLote lote={f.lote} compacto /></td>
+                      <td style={{ ...CELDA, textAlign: "left" }}><DestinoLote lote={f.lote} /></td>
+                      {tallas.map((t) => <td key={t} style={CELDA} className="num">{f.tallas?.[t] || "—"}</td>)}
+                      <td style={{ ...CELDA, fontWeight: 600 }} className="num">{f.unidades}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div style={{ marginTop: 8 }}><CuadroDisenos lote={lote} /></div>
-          <div style={{ marginTop: 8 }}>
-            <button className="btn" style={{ fontSize: 12 }} onClick={() => setFicha(true)}>Ficha visual</button>
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+            <span className="sub" style={{ fontSize: 12 }}>Ficha visual:</span>
+            {lotes.map((l) => (
+              <button key={l.id} className="btn" style={{ fontSize: 11.5, padding: "3px 8px" }} onClick={() => setFicha(l)}>
+                {l.color}{l.destino ? ` → ${l.destino === "local" ? "locales" : l.destino}` : ""}
+              </button>
+            ))}
           </div>
         </div>
       </div>
-      <FichaEstampadoModal lote={lote} abierto={ficha} onCerrar={() => setFicha(false)} />
+      {ficha && <FichaEstampadoModal lote={ficha} abierto onCerrar={() => setFicha(null)} />}
+    </div>
+  );
+}
+
+/**
+ * Fase 8w: la lista de estampados. Renombrar aquí cambia el nombre en la lista
+ * y en todos los lotes que aún no vuelven del taller; si el nombre nuevo ya
+ * existe, los dos se funden en uno.
+ */
+function ListaEstampados() {
+  const { data, supabase, reload, toast } = useProd();
+  const [abierta, setAbierta] = useState(false);
+  const [editando, setEditando] = useState<string | null>(null);
+  const [texto, setTexto] = useState("");
+  const [nuevo, setNuevo] = useState("");
+  const activos = data.estampados.filter((e) => !e.archivada_en);
+
+  async function agregar() {
+    const n = nuevo.trim();
+    if (!n) return;
+    const { error } = await supabase.from("prod_estampados").insert({ nombre: n });
+    if (error) return toast(error.message.includes("uq_estampados") ? `"${n}" ya está en la lista.` : error.message, "error");
+    setNuevo("");
+    await reload();
+  }
+
+  async function guardar(viejo: string) {
+    const n = texto.trim();
+    setEditando(null);
+    if (!n || n === viejo) return;
+    const { data: res, error } = await supabase.rpc("fn_renombrar_estampado", { p_viejo: viejo, p_nuevo: n, p_lote_ids: null });
+    if (error) return toast(error.message, "error");
+    const lotes = (res as { lotes?: number } | null)?.lotes ?? 0;
+    toast(`"${viejo}" ahora es "${n}"${lotes ? ` · ${lotes} ${lotes === 1 ? "lote" : "lotes"} actualizados` : ""}`);
+    await reload();
+  }
+
+  return (
+    <div className="card" style={{ padding: "10px 14px", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 13 }}><b>Lista de estampados</b> <span className="sub">· {activos.length}</span></span>
+        <button className="btn" style={{ fontSize: 12 }} onClick={() => setAbierta(!abierta)}>{abierta ? "Ocultar" : "Ver y editar"}</button>
+      </div>
+      {abierta && (
+        <div style={{ marginTop: 10 }}>
+          {activos.map((e) => (
+            <div key={e.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+              {editando === e.id ? (
+                <>
+                  <input className="pinput" autoFocus style={{ flex: 1 }} value={texto} onChange={(ev) => setTexto(ev.target.value)}
+                    onKeyDown={(ev) => ev.key === "Enter" && guardar(e.nombre)} />
+                  <button className="btn primary" style={{ fontSize: 12 }} onClick={() => guardar(e.nombre)}>Guardar</button>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => setEditando(null)}>✕</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ flex: 1, fontSize: 13 }}>{e.nombre}</span>
+                  <button className="btn" style={{ fontSize: 11.5, padding: "2px 8px" }}
+                    onClick={() => { setEditando(e.id); setTexto(e.nombre); }}>✏️ Renombrar</button>
+                </>
+              )}
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <input className="pinput" style={{ flex: 1 }} placeholder="Agregar estampado, ej: Cajas" value={nuevo}
+              onChange={(e) => setNuevo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && agregar()} />
+            <button className="btn primary" style={{ fontSize: 12 }} disabled={!nuevo.trim()} onClick={agregar}>Agregar</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
