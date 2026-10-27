@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useProd } from "./useProduccion";
+import NombreTela from "./ResumenTela";
 import { Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, ordenarTallas, TALLA_ORDER, type Feria, type IngresoFeria } from "@/lib/produccion/types";
 import { fmtFecha, hoyEcuador } from "@/lib/fechas";
@@ -231,6 +232,7 @@ function porPrenda(lineas: LineaFeria[]): { prenda: string; filas: LineaFeria[] 
  * en Envío. Cada fila dice si es básica o con qué estampado, y de dónde vino.
  */
 function PrendaEnFeria({ prenda, filas, cerrada }: { prenda: string; filas: LineaFeria[]; cerrada: boolean }) {
+  const [info, setInfo] = useState(false);
   const tallas = ordenarTallas([...new Set(filas.flatMap((l) => Object.keys(l.ingreso.tallas).filter((t) => (l.ingreso.tallas[t] ?? 0) > 0)))]);
   const total = filas.reduce((s, l) => s + l.fueron, 0);
   const costo = filas.reduce((s, l) => s + l.fueron * Number(l.ingreso.costo_unitario), 0);
@@ -239,11 +241,16 @@ function PrendaEnFeria({ prenda, filas, cerrada }: { prenda: string; filas: Line
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline", marginBottom: 6 }}>
-        <span style={{ fontSize: 14.5, fontWeight: 700 }}>{prenda}</span>
+        <button type="button" onClick={() => setInfo(!info)} title="Ver de qué tela y corte salió"
+          style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer",
+            fontSize: 14.5, fontWeight: 700, textAlign: "left" }}>
+          {info ? "▾" : "▸"} {prenda}
+        </button>
         <span className="sub" style={{ fontSize: 12.5 }}>
           {total} und. · costo {money(costo)}{cerrada ? ` · vendidas ${vendidas}` : ""}
         </span>
       </div>
+      {info && <OrigenPrenda filas={filas} />}
       <div className="table-scroll">
         <table style={{ width: "auto", minWidth: "100%" }}>
           <thead>
@@ -275,6 +282,51 @@ function PrendaEnFeria({ prenda, filas, cerrada }: { prenda: string; filas: Line
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * De dónde salió una prenda de la feria: la tela, el corte y la maquila, por
+ * la maquila de cada línea. Tocar el nombre de la tela abre su resumen de
+ * gastos (ResumenTela). La estancada es de antes de la app: no hay de dónde.
+ */
+function OrigenPrenda({ filas }: { filas: LineaFeria[] }) {
+  const { data } = useProd();
+  const maquilaIds = [...new Set(filas.map((l) => l.ingreso.maquila_id).filter((x): x is string => !!x))];
+  const origenes = maquilaIds.map((id) => {
+    const m = data.maquilas.find((x) => x.id === id);
+    const corte = m ? data.cortes.find((c) => c.id === m.corte_id) : undefined;
+    const pedido = corte ? data.pedidos.find((p) => p.id === corte.pedido_id) : undefined;
+    return {
+      id,
+      pedido,
+      proveedor: pedido ? data.proveedores.find((x) => x.id === pedido.proveedor_id)?.empresa : undefined,
+      corte,
+      maquiladora: m ? data.maquiladoras.find((x) => x.id === m.maquiladora_id)?.nombre : undefined,
+      costoMaquila: m ? Number(m.costo_unitario) : undefined,
+    };
+  });
+  const sinOrigen = filas.filter((l) => !l.ingreso.maquila_id).reduce((s, l) => s + l.fueron, 0);
+
+  return (
+    <div style={{ background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 12.5 }}>
+      {origenes.map((o) => (
+        <div key={o.id} style={{ marginBottom: 6, lineHeight: 1.7 }}>
+          <span className="sub">Tela:</span> <b><NombreTela pedido={o.pedido} /></b>
+          {o.proveedor && <span className="sub"> · {o.proveedor}</span>}
+          {o.pedido && <span className="sub"> · {Number(o.pedido.valor_metro) ? `${money(Number(o.pedido.valor_metro))} el metro` : ""}</span>}
+          <br />
+          <span className="sub">Corte:</span> {o.corte ? fmtFecha(o.corte.fecha) : "—"}
+          {o.corte && <span className="sub"> · {o.corte.total_unidades} prendas cortadas</span>}
+          {" · "}<span className="sub">Maquila:</span> {o.maquiladora ?? "—"}
+          {o.costoMaquila != null && <span className="sub"> ({money(o.costoMaquila)} c/u)</span>}
+        </div>
+      ))}
+      {sinOrigen > 0 && (
+        <div className="sub">{sinOrigen} {sinOrigen === 1 ? "prenda es" : "prendas son"} de bodega o estancada: de antes de la app, sin tela registrada.</div>
+      )}
+      {origenes.length > 0 && <div className="sub" style={{ marginTop: 2 }}>Toca el nombre de la tela para ver todo lo que lleva gastado.</div>}
     </div>
   );
 }
