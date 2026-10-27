@@ -66,7 +66,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
 `schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8u_cierre_ferias.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -395,11 +395,10 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-27 — producción — `schema_fase8u_cierre_ferias.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-27 — producción — `schema_fase8u_cierre_ferias.sql` ✅ EJECUTADA
 
-Verificable con `supabase/smoke_test_fase8u.sql` (7 comprobaciones). **Se puede desplegar antes de
-aplicarla:** la pestaña Ferias carga los regresos por su cuenta (no en `useProduccion`) y, si
-falta la tabla, solo ella muestra el aviso.
+Verificada con `supabase/smoke_test_fase8u.sql`: 7/7. La pestaña Ferias carga los regresos por su
+cuenta (no en `useProduccion`): si la tabla faltara, solo ella mostraría el aviso.
 
 - **Pestaña nueva *Ferias*** (`FeriasTab.tsx`): cada feria con lo que fue (de Envío, del taller o
   estancada), su costo, y al cerrar lo que regresó y lo vendido. Lógica en
