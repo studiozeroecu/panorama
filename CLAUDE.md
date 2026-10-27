@@ -70,7 +70,7 @@ versionadas. Orden real de ejecución:
 `schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8y_salida_bodega.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8y_salida_bodega.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -399,10 +399,9 @@ Formato:
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
 
-### 2026-10-27 — producción — `schema_fase8y_salida_bodega.sql` ⏳ PENDIENTE DE APLICAR
+### 2026-10-27 — producción — `schema_fase8y_salida_bodega.sql` ✅ EJECUTADA
 
-Verificable con `supabase/smoke_test_fase8y.sql` (3 comprobaciones). Se puede desplegar antes:
-solo falla el botón al mandar.
+Verificada con `supabase/smoke_test_fase8y.sql`: 3/3.
 
 - **"📦 Mandar desde bodega"** (pestaña Bodega, `SalidaBodega.tsx`): mercadería de ANTES de la
   app (no está en el sistema) a locales, feria o que se queda en bodega, básica o estampada. Se
