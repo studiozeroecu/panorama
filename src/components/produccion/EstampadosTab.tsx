@@ -28,14 +28,7 @@ export default function EstampadosTab() {
 
   const elegir = (ids: string[], marcar: boolean) =>
     setElegidos((x) => (marcar ? [...new Set([...x, ...ids])] : x.filter((y) => !ids.includes(y))));
-  // Fase 8w: una tarjeta por producción (maquila); los lotes sin producción, cada uno aparte.
-  const porProduccion = Object.values(
-    pendientes.reduce<Record<string, LoteEstampado[]>>((acc, l) => {
-      const k = l.maquila_id ?? `lote-${l.id}`;
-      (acc[k] ??= []).push(l);
-      return acc;
-    }, {})
-  );
+  const porProduccion = porProduccionDe(pendientes);
 
   return (
     <section>
@@ -71,7 +64,9 @@ export default function EstampadosTab() {
           {ordenesAbiertas.map((o) => (
             <OrdenEnTaller key={o.id} orden={o} lotes={enTaller.filter((l) => l.orden_id === o.id)} />
           ))}
-          {sueltosEnTaller.map((l) => <LoteEnTaller key={l.id} lote={l} />)}
+          {porProduccionDe(sueltosEnTaller).map((ls) => (
+            <ProduccionPendiente key={ls[0].maquila_id ?? ls[0].id} lotes={ls} enTaller />
+          ))}
         </>
       )}
       {retornados.length > 0 && (
@@ -99,6 +94,17 @@ export default function EstampadosTab() {
 
 const CELDA = { padding: "5px 8px", textAlign: "center" as const };
 
+/** Fase 8w: una tarjeta por producción (maquila); los lotes sin producción, cada uno aparte. */
+function porProduccionDe(lotes: LoteEstampado[]): LoteEstampado[][] {
+  return Object.values(
+    lotes.reduce<Record<string, LoteEstampado[]>>((acc, l) => {
+      const k = l.maquila_id ?? `lote-${l.id}`;
+      (acc[k] ??= []).push(l);
+      return acc;
+    }, {})
+  );
+}
+
 /** Fase 8v: el tono sale del color del corte (prod_corte_colores.tono). */
 function coloresDelLote(data: ProdData, lote: LoteEstampado) {
   const m = data.maquilas.find((x) => x.id === lote.maquila_id);
@@ -112,42 +118,6 @@ function tonoDeLote(data: ProdData, lote: LoteEstampado): Tono | null {
 
 function etiquetaLote(lote: LoteEstampado, ferias: Feria[]): string {
   return `${lote.prenda_nombre} · ${lote.color} → ${textoDestino(lote, ferias)}`;
-}
-
-/** Qué estampado va en qué talla, como cuadro. Los lotes viejos no traen tallas por diseño. */
-function CuadroDisenos({ lote }: { lote: LoteEstampado }) {
-  const disenos = lote.disenos ?? [];
-  const conTallas = disenos.length > 0 && disenos.every((d) => d.tallas);
-  if (!conTallas) {
-    return (
-      <div className="sub" style={{ fontSize: 12.5 }}>
-        {disenos.map((d) => `${d.nombre} (${d.unidades})`).join(", ")}
-      </div>
-    );
-  }
-  const tallas = ordenarTallas([...new Set(disenos.flatMap((d) => Object.keys(d.tallas ?? {})))]);
-  return (
-    <div className="table-scroll">
-      <table style={{ width: "auto", minWidth: "60%" }}>
-        <thead>
-          <tr>
-            <th style={{ ...CELDA, textAlign: "left" }}>Estampado</th>
-            {tallas.map((t) => <th key={t} style={CELDA}>{t}</th>)}
-            <th style={CELDA}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {disenos.map((d, i) => (
-            <tr key={i}>
-              <td style={{ ...CELDA, textAlign: "left" }}>{d.nombre}</td>
-              {tallas.map((t) => <td key={t} style={CELDA} className="num">{d.tallas?.[t] || "—"}</td>)}
-              <td style={{ ...CELDA, fontWeight: 600 }} className="num">{d.unidades}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 /** Interruptor claro / oscuro del lote: cambia el tono del color en el corte. */
@@ -188,16 +158,21 @@ function TonoLote({ lote, compacto }: { lote: LoteEstampado; compacto?: boolean 
  */
 function ProduccionPendiente({
   lotes,
-  elegidos,
+  elegidos = [],
   alElegir,
+  enTaller = false,
 }: {
   lotes: LoteEstampado[];
-  elegidos: string[];
-  alElegir: (ids: string[], marcar: boolean) => void;
+  elegidos?: string[];
+  alElegir?: (ids: string[], marcar: boolean) => void;
+  /** En el taller: sin casilla de orden, y con el retorno de cada lote. */
+  enTaller?: boolean;
 }) {
   const { data, supabase, reload, toast } = useProd();
   const [ficha, setFicha] = useState<LoteEstampado | null>(null);
   const [renombrando, setRenombrando] = useState<string | null>(null);
+  const [fechaRetorno, setFechaRetorno] = useState(hoyEcuador());
+  const [retornando, setRetornando] = useState(false);
   const m = data.maquilas.find((x) => x.id === lotes[0].maquila_id);
   const corte = m ? data.cortes.find((c) => c.id === m.corte_id) : undefined;
   const pedido = corte ? data.pedidos.find((p) => p.id === corte.pedido_id) : undefined;
@@ -221,6 +196,29 @@ function ProduccionPendiente({
     .sort((a, b) => a.nombre.localeCompare(b.nombre) || a.lote.color.localeCompare(b.lote.color));
   const tallas = ordenarTallas([...new Set(filas.flatMap((f) => Object.keys(f.tallas ?? {})))]);
 
+  /**
+   * Fase 8a/8t: una llamada a fn_retornar_lote_estampado por lote; cada lote
+   * entra solo a su destino. Un reintento no es error (`ya_retornado`).
+   */
+  async function retornar(cuales: LoteEstampado[]) {
+    if (!fechaRetorno || retornando) return;
+    setRetornando(true);
+    let und = 0;
+    try {
+      for (const l of cuales) {
+        const { data: res, error } = await supabase.rpc("fn_retornar_lote_estampado", { p_lote_id: l.id, p_fecha: fechaRetorno });
+        if (error) throw new Error(`${l.color}: ${error.message}`);
+        und += (res as { unidades?: number } | null)?.unidades ?? 0;
+      }
+      toast(`${und} estampadas recibidas · cada una entró a su destino`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setRetornando(false);
+      await reload();
+    }
+  }
+
   async function renombrar(viejo: string, nuevo: string) {
     setRenombrando(null);
     if (!nuevo || nuevo === viejo) return;
@@ -233,9 +231,11 @@ function ProduccionPendiente({
   return (
     <div className="prod-card" style={algunos ? { borderColor: "var(--accent)" } : undefined}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <input type="checkbox" checked={todos} onChange={() => alElegir(ids, !todos)}
-          title="Marcar esta producción para la orden"
-          style={{ accentColor: "var(--accent)", width: 18, height: 18, marginTop: 3 }} />
+        {!enTaller && (
+          <input type="checkbox" checked={todos} onChange={() => alElegir?.(ids, !todos)}
+            title="Marcar esta producción para la orden"
+            style={{ accentColor: "var(--accent)", width: 18, height: 18, marginTop: 3 }} />
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h4>
             {pedido?.nombre_tela ?? "Sin producción"}
@@ -243,7 +243,10 @@ function ProduccionPendiente({
               <span className="sub" style={{ fontWeight: 400 }}> · {prenda?.nombre ?? lotes[0].prenda_nombre}</span>
             )}
           </h4>
-          <div className="prod-meta">{total} und. para estampar · {lotes.length} {lotes.length === 1 ? "lote" : "lotes"}</div>
+          <div className="prod-meta">
+            {total} und. {enTaller ? "en el taller" : "para estampar"} · {lotes.length} {lotes.length === 1 ? "lote" : "lotes"}
+            {enTaller && lotes[0].fecha_envio && ` · enviado ${fmtFecha(lotes[0].fecha_envio)}`}
+          </div>
 
           <div className="table-scroll" style={{ marginTop: 8 }}>
             <table style={{ width: "auto", minWidth: "100%" }}>
@@ -286,6 +289,23 @@ function ProduccionPendiente({
               </tbody>
             </table>
           </div>
+
+          {enTaller && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 }}>
+              <div style={{ minWidth: 140 }}>
+                <div className="label" style={{ fontSize: 10.5 }}>Fecha de retorno</div>
+                <input className="pinput" type="date" value={fechaRetorno} onChange={(e) => setFechaRetorno(e.target.value)} />
+              </div>
+              {lotes.length > 1 && lotes.map((l) => (
+                <button key={l.id} className="btn" style={{ fontSize: 12 }} disabled={retornando} onClick={() => retornar([l])}>
+                  ✓ {l.color} → {textoDestino(l, data.ferias)}
+                </button>
+              ))}
+              <button className="btn primary" style={{ fontSize: 12.5 }} disabled={retornando || !fechaRetorno} onClick={() => retornar(lotes)}>
+                {retornando ? "Procesando…" : lotes.length > 1 ? "✓ Todo recibido" : "✓ Retorno recibido"}
+              </button>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
             <span className="sub" style={{ fontSize: 12 }}>Ficha visual:</span>
@@ -519,74 +539,10 @@ function OrdenEnTaller({ orden, lotes }: { orden: OrdenEstampado; lotes: LoteEst
       </div>
       {ver && <div style={{ marginTop: 10 }}><ResumenOrden lotes={lotes} porMetro={orden.por_metro} /></div>}
       <div style={{ marginTop: 10 }}>
-        {lotes.map((l) => <LoteEnTaller key={l.id} lote={l} />)}
+        {porProduccionDe(lotes).map((ls) => (
+          <ProduccionPendiente key={ls[0].maquila_id ?? ls[0].id} lotes={ls} enTaller />
+        ))}
       </div>
-    </div>
-  );
-}
-
-function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
-  const { data, supabase, reload, toast } = useProd();
-  const [fecha, setFecha] = useState(hoyEcuador());
-  const [ocupado, setOcupado] = useState(false);
-  const [ficha, setFicha] = useState(false);
-  const taller = data.talleres.find((t) => t.id === lote.taller_id);
-
-  /**
-   * Fase 8a: una sola llamada a fn_retornar_lote_estampado, que suma el stock y
-   * marca el lote en la misma transacción. Antes eran N sumas desde el navegador y
-   * después el update: si fallaba a mitad, el lote seguía en taller y reintentar
-   * duplicaba el stock. El reparto por talla vive ahora solo en fn_repartir_por_talla.
-   */
-  async function retornar() {
-    if (!fecha) return toast("Ingresa la fecha de retorno.", "error");
-    setOcupado(true);
-    try {
-      const { data: res, error } = await supabase.rpc("fn_retornar_lote_estampado", {
-        p_lote_id: lote.id,
-        p_fecha: fecha,
-      });
-      if (error) throw new Error(error.message);
-
-      const r = (res ?? {}) as { ya_retornado?: boolean; unidades?: number };
-      // Un reintento no es un fallo: ya estaba hecho. Se avisa en tono neutro.
-      toast(
-        r.ya_retornado
-          ? "Este lote ya estaba retornado — no se sumó nada."
-          : `${r.unidades ?? 0} unidades estampadas → ${textoDestino(lote, data.ferias)}`
-      );
-      await reload();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "error");
-    } finally {
-      setOcupado(false);
-    }
-  }
-
-  return (
-    <div className="prod-card">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <div>
-          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge> <DestinoLote lote={lote} /></h4>
-          <div className="prod-meta">
-            {lote.total_unidades} und. · taller: {taller?.nombre ?? "—"} · enviado {fmtFecha(lote.fecha_envio)} ·
-            costo {money(Number(lote.costo_total))}
-          </div>
-          <div style={{ marginTop: 6 }}><CuadroDisenos lote={lote} /></div>
-        </div>
-        <Badge color="ambar">En taller</Badge>
-      </div>
-      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-        <div style={{ minWidth: 150 }}>
-          <div className="label" style={{ fontSize: 10.5 }}>Fecha de retorno</div>
-          <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-        </div>
-        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setFicha(true)}>Ficha visual</button>
-        <button className="btn primary" style={{ fontSize: 12.5 }} disabled={ocupado} onClick={retornar}>
-          {ocupado ? "Procesando…" : "Retorno recibido ✓"}
-        </button>
-      </div>
-      <FichaEstampadoModal lote={lote} abierto={ficha} onCerrar={() => setFicha(false)} />
     </div>
   );
 }

@@ -412,6 +412,8 @@ Verificada con `supabase/smoke_test_fase8w.sql`: 3/3. ⚠️ **Se aplicó antes 
 - **Estampados agrupa los pendientes POR PRODUCCIÓN** (pedido del dueño): una tarjeta por maquila
   con una tabla estampado · color · oscuro · destino · tallas, y se marca la producción entera
   para la orden.
+  Lo que está **en el taller** se agrupa igual, dentro de su orden, con el retorno por lote o
+  *"Todo recibido"* (una llamada a `fn_retornar_lote_estampado` por lote, una tras otra).
 - **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8v_ordenes_estampado.sql` ✅ EJECUTADA
