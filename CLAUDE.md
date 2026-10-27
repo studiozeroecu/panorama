@@ -69,7 +69,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8y_salida_bodega.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -397,6 +398,24 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8y_salida_bodega.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8y.sql` (3 comprobaciones). Se puede desplegar antes:
+solo falla el botón al mandar.
+
+- **"📦 Mandar desde bodega"** (pestaña Bodega, `SalidaBodega.tsx`): mercadería de ANTES de la
+  app (no está en el sistema) a locales, feria o que se queda en bodega, básica o estampada. Se
+  escribe prenda, costo de producción por prenda y colores × tallas, y se reparte con la MISMA
+  tarjeta de Envío (`ProduccionCard` con la prop `manual`).
+- **`fn_repartir_desde_bodega`**: hermana de `fn_repartir_entrega_maquila` (8t) sin maquila ni
+  entrega. Lo que se queda en bodega ENTRA al stock (`prod_bodega_ingresos.origen = 'manual'`);
+  las básicas a feria entran como `'estancada'`. Las estampadas son lotes pendientes que entran en
+  la orden de impresión. Idempotente por color: tabla `prod_salidas_bodega` (RLS admin), con el id
+  generado al escribir la fila.
+- `prod_lotes_estampado` gana **`tono`** (los lotes sin corte guardan el suyo; `tonoDeLote` lo mira
+  primero) y **`salida_id`** (Estampados agrupa por maquila, o por salida).
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8x_convertir_a_conjunto.sql` ✅ EJECUTADA
 

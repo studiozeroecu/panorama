@@ -6,10 +6,12 @@ import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha, sumarDias } from "@/lib/fechas";
+import SalidaBodega from "./SalidaBodega";
 
 export default function StockTab() {
   const { data, supabase, reload, toast } = useProd();
   const [venta, setVenta] = useState<StockOnline | null>(null);
+  const [mandando, setMandando] = useState(false);
   const [cantidad, setCantidad] = useState("1");
   const [precio, setPrecio] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
@@ -77,7 +79,13 @@ export default function StockTab() {
     <section>
       <div className="section-head">
         <h2>Bodega <span className="sub" style={{ fontWeight: 400 }}>· lo disponible y la venta en línea que sale de aquí</span></h2>
+        {!mandando && (
+          <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => setMandando(true)}>📦 Mandar desde bodega</button>
+        )}
       </div>
+
+      {/* Fase 8y: mercadería vieja (que no está en el sistema) a locales o ferias. */}
+      {mandando && <SalidaBodega alCerrar={() => setMandando(false)} />}
 
       <div className="cards" style={{ marginBottom: 24 }}>
         <div className="card"><div className="label">En bodega</div><div className="value">{totalDisp}</div><div className="hint">unidades disponibles</div></div>

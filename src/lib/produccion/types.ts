@@ -205,6 +205,10 @@ export interface LoteEstampado {
   local_destino: string | null;
   /** Fase 8v: la orden con la que se mandó al taller. */
   orden_id: string | null;
+  /** Fase 8y: tono de un lote SIN producción (desde bodega); los demás lo toman del corte. */
+  tono: "claro" | "oscuro" | null;
+  /** Fase 8y: agrupa los lotes de una misma salida desde bodega. */
+  salida_id: string | null;
 }
 
 /** Fase 8w: la lista de estampados. Se elige de aquí para que el mismo se llame siempre igual. */

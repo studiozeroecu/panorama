@@ -53,7 +53,7 @@ import ElegirEstampado from "./ElegirEstampado";
  * Cada fila sigue siendo UNA entrega de maquila (fase 8o: un color puede
  * volver en partes) y en la base se procesa por separado.
  */
-interface FilaEnvio {
+export interface FilaEnvio {
   col: ColorMaquila;
   entrega: EntregaMaquila;
   etiqueta: string;
@@ -61,8 +61,9 @@ interface FilaEnvio {
   produccion: number | null;
 }
 
-interface Grupo {
-  maquila: Maquila;
+export interface Grupo {
+  /** Sin maquila = mercadería vieja mandada desde la bodega (fase 8y). */
+  maquila?: Maquila;
   corte: Corte | undefined;
   pedido: PedidoTela | null | undefined;
   prenda: Prenda | null | undefined;
@@ -102,7 +103,7 @@ export default function EnvioTab() {
       {!grupos.length ? (
         <Vacio titulo="Sin entregas por procesar" hint="Aparecen aquí cuando un color vuelve de maquila, entero o en partes." />
       ) : (
-        grupos.map((g) => <ProduccionCard key={g.maquila.id} grupo={g} />)
+        grupos.map((g) => <ProduccionCard key={g.maquila!.id} grupo={g} />)
       )}
 
       <Historial />
@@ -111,7 +112,15 @@ export default function EnvioTab() {
   );
 }
 
-function ProduccionCard({ grupo }: { grupo: Grupo }) {
+/** Fase 8y: la misma tarjeta, pero para mercadería vieja escrita a mano en la bodega. */
+export interface SalidaManual {
+  salidaId: string;
+  prendaId: string | null;
+  prendaNombre: string;
+  alTerminar: () => void;
+}
+
+export function ProduccionCard({ grupo, manual }: { grupo: Grupo; manual?: SalidaManual }) {
   const { data, supabase, reload, toast } = useProd();
   const { pedido, prenda, filas } = grupo;
   const tallas = ordenarTallas([
@@ -192,7 +201,7 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
     const hechas: string[] = [];
     try {
       // El tono es del color del corte: se guarda primero, solo donde cambió.
-      for (const f of filas) {
+      for (const f of manual ? [] : filas) {
         const t = tonos[f.col.corte_color_id];
         if (t && t !== f.col.tono) {
           const { error } = await supabase.from("prod_corte_colores").update({ tono: t }).eq("id", f.col.corte_color_id);
@@ -203,22 +212,34 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
       for (const f of filas) {
         const r = repartoParaBase(formDeEntrega(g, f.entrega.id));
         if (!Object.keys(r).length) continue;
-        const { error } = await supabase.rpc("fn_repartir_entrega_maquila", {
-          p_entrega_id: f.entrega.id,
-          p_reparto: {
-            costo_produccion: f.produccion ?? 0,
-            costo_estampado: costoEst,
-            bodega: r.bodega ?? null,
-            local: r.local
-              ? { ...r.local, local_destino: localDestino || null, producto_codigo: productoCodigo.trim() || null, precio: precioLocal }
-              : null,
-            feria: r.feria ? { ...r.feria, feria_id: feriaId } : null,
-          },
-        });
+        const reparto = {
+          costo_produccion: f.produccion ?? 0,
+          costo_estampado: costoEst,
+          bodega: r.bodega ?? null,
+          local: r.local
+            ? { ...r.local, local_destino: localDestino || null, producto_codigo: productoCodigo.trim() || null, precio: precioLocal }
+            : null,
+          feria: r.feria ? { ...r.feria, feria_id: feriaId } : null,
+        };
+        // Fase 8y: lo de la bodega va por su propia función; cada fila con su id
+        // (generado al escribirla), así un reintento no la reparte dos veces.
+        const { error } = manual
+          ? await supabase.rpc("fn_repartir_desde_bodega", {
+              p_id: f.entrega.id,
+              p_salida_id: manual.salidaId,
+              p_prenda_id: manual.prendaId,
+              p_prenda_nombre: manual.prendaNombre,
+              p_color: f.col.color,
+              p_tono: tonos[f.col.corte_color_id] ?? null,
+              p_tallas: f.entrega.tallas,
+              p_reparto: reparto,
+            })
+          : await supabase.rpc("fn_repartir_entrega_maquila", { p_entrega_id: f.entrega.id, p_reparto: reparto });
         if (error) throw new Error(`${f.etiqueta}: ${error.message}`);
         hechas.push(f.etiqueta);
       }
-      toast(`Producción procesada · ${hechas.length} ${hechas.length === 1 ? "color" : "colores"}`);
+      toast(`${manual ? "Salida de bodega lista" : "Producción procesada"} · ${hechas.length} ${hechas.length === 1 ? "color" : "colores"}`);
+      manual?.alTerminar();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast(hechas.length ? `Se procesaron ${hechas.length} de ${filas.length}. Falló ${msg}` : msg, "error");
@@ -231,8 +252,8 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
   return (
     <div className="prod-card">
       <h4>
-        <NombreTela pedido={pedido ?? null} />
-        {prenda && <span className="sub" style={{ fontWeight: 400 }}> · {prenda.nombre}</span>}
+        {manual ? <>{manual.prendaNombre} <span className="sub" style={{ fontWeight: 400 }}>· desde bodega</span></> : <NombreTela pedido={pedido ?? null} />}
+        {prenda && !manual && <span className="sub" style={{ fontWeight: 400 }}> · {prenda.nombre}</span>}
         {parcial && <> <Badge color="ambar">Entrega parcial</Badge></>}
       </h4>
       <div className="prod-meta">
@@ -244,7 +265,7 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
         </div>
       )}
       {/* Fase 8x: conjunto cortado antes de la 8r: cada color cuenta como una sola prenda. */}
-      {prenda?.es_conjunto && filas.every((f) => !f.col.parte) && (
+      {!manual && prenda?.es_conjunto && filas.every((f) => !f.col.parte) && (
         <div style={{ fontSize: 12.5, color: "var(--warn)", marginTop: 6 }}>
           ⚠ Esta producción es un conjunto pero se cortó antes de separar las partes: cada color cuenta como una sola
           prenda. Antes de repartir, ve a <b>Corte</b> y usa <b>🧩 Separar en conjunto</b> en este corte.
@@ -357,7 +378,7 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
 
       <div style={{ textAlign: "right" }}>
         <button className="btn primary" style={{ fontSize: 13 }} disabled={ocupado || problemas.length > 0} onClick={procesar}>
-          {ocupado ? "Procesando…" : filas.length > 1 ? `Procesar los ${filas.length} colores` : "Procesar entrega"}
+          {ocupado ? "Procesando…" : manual ? "Mandar" : filas.length > 1 ? `Procesar los ${filas.length} colores` : "Procesar entrega"}
         </button>
       </div>
     </div>

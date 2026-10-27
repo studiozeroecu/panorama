@@ -98,7 +98,7 @@ const CELDA = { padding: "5px 8px", textAlign: "center" as const };
 function porProduccionDe(lotes: LoteEstampado[]): LoteEstampado[][] {
   return Object.values(
     lotes.reduce<Record<string, LoteEstampado[]>>((acc, l) => {
-      const k = l.maquila_id ?? `lote-${l.id}`;
+      const k = l.maquila_id ?? l.salida_id ?? `lote-${l.id}`;
       (acc[k] ??= []).push(l);
       return acc;
     }, {})
@@ -112,6 +112,8 @@ function coloresDelLote(data: ProdData, lote: LoteEstampado) {
 }
 
 function tonoDeLote(data: ProdData, lote: LoteEstampado): Tono | null {
+  // Fase 8y: un lote desde bodega no tiene corte; guarda su tono él mismo.
+  if (lote.tono) return lote.tono;
   const cs = coloresDelLote(data, lote);
   return cs.find((c) => c.tono)?.tono ?? null;
 }
@@ -126,15 +128,13 @@ function TonoLote({ lote, compacto }: { lote: LoteEstampado; compacto?: boolean 
   const tono = tonoDeLote(data, lote);
   const colores = coloresDelLote(data, lote);
   async function cambiar(t: Tono) {
-    if (!colores.length) return;
-    const { error } = await supabase
-      .from("prod_corte_colores")
-      .update({ tono: t })
-      .in("id", colores.map((c) => c.corte_color_id));
+    // Sin corte (desde bodega): el tono vive en el lote.
+    const { error } = colores.length
+      ? await supabase.from("prod_corte_colores").update({ tono: t }).in("id", colores.map((c) => c.corte_color_id))
+      : await supabase.from("prod_lotes_estampado").update({ tono: t }).eq("id", lote.id);
     if (error) return toast(error.message, "error");
     await reload();
   }
-  if (!colores.length) return compacto ? <span className="sub">—</span> : <Badge color="gris">tono sin marcar</Badge>;
   if (compacto) {
     return (
       <input type="checkbox" checked={tono === "oscuro"} title={tono ? "" : "Sin marcar: cuenta como claro"}
@@ -238,7 +238,7 @@ function ProduccionPendiente({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h4>
-            {pedido?.nombre_tela ?? "Sin producción"}
+            {pedido?.nombre_tela ?? (lotes[0].salida_id ? "Desde bodega" : "Sin producción")}
             {(prenda?.nombre ?? lotes[0].prenda_nombre) && (
               <span className="sub" style={{ fontWeight: 400 }}> · {prenda?.nombre ?? lotes[0].prenda_nombre}</span>
             )}
