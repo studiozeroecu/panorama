@@ -280,6 +280,22 @@ function PrendaEnFeria({ prenda, filas, cerrada }: { prenda: string; filas: Line
               </tr>
             ))}
           </tbody>
+          {filas.length > 1 && (
+            <tfoot>
+              <tr style={{ borderTop: "2px solid var(--border)" }}>
+                <td style={{ ...CELDA, textAlign: "left", fontWeight: 700 }} colSpan={2}>Total por talla</td>
+                {tallas.map((t) => (
+                  <td key={t} style={{ ...CELDA, fontWeight: 700 }} className="num">
+                    {filas.reduce((s, l) => s + (l.ingreso.tallas[t] ?? 0), 0)}
+                  </td>
+                ))}
+                <td style={{ ...CELDA, fontWeight: 700 }} className="num">{total}</td>
+                <td style={CELDA}></td>
+                {cerrada && <td style={{ ...CELDA, fontWeight: 700 }} className="num">{filas.reduce((s, l) => s + l.regresaron, 0)}</td>}
+                {cerrada && <td style={{ ...CELDA, fontWeight: 700, color: "var(--good)" }} className="num">{vendidas}</td>}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>
