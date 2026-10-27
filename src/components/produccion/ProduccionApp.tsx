@@ -13,6 +13,7 @@ import MaquilaTab from "./MaquilaTab";
 import EnvioTab from "./EnvioTab";
 import EstampadosTab from "./EstampadosTab";
 import StockTab from "./StockTab";
+import FeriasTab from "./FeriasTab";
 import ResumenTab from "./ResumenTab";
 
 const TABS = [
@@ -23,6 +24,7 @@ const TABS = [
   { id: "envio", label: "Envío" },
   { id: "estampados", label: "Estampados" },
   { id: "stock", label: "Bodega" },
+  { id: "ferias", label: "Ferias" },
   { id: "resumen", label: "Resumen" },
   { id: "prendas", label: "Prendas" },
   { id: "proveedores", label: "Proveedores" },
@@ -51,6 +53,7 @@ function Shell() {
       0
     ),
     estampados: data.lotesEstampado.filter((l) => l.estado !== "retornado").length,
+    ferias: data.ferias.filter((f) => !f.cerrada_en).length,
   };
 
   return (
@@ -94,6 +97,7 @@ function Shell() {
           {tab === "envio" && <EnvioTab />}
           {tab === "estampados" && <EstampadosTab />}
           {tab === "stock" && <StockTab />}
+          {tab === "ferias" && <FeriasTab />}
           {tab === "resumen" && <ResumenTab />}
         </>
       )}

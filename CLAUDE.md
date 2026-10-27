@@ -65,7 +65,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
 `schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
 `schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8u_cierre_ferias.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -393,6 +394,40 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8u_cierre_ferias.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8u.sql` (7 comprobaciones). **Se puede desplegar antes de
+aplicarla:** la pestaña Ferias carga los regresos por su cuenta (no en `useProduccion`) y, si
+falta la tabla, solo ella muestra el aviso.
+
+- **Pestaña nueva *Ferias*** (`FeriasTab.tsx`): cada feria con lo que fue (de Envío, del taller o
+  estancada), su costo, y al cerrar lo que regresó y lo vendido. Lógica en
+  `src/lib/produccion/ferias.ts` (con tests). **Lo vendido NO se guarda**: fue − regresó, por
+  línea. Las ganancias las anota el dueño en Finanzas.
+- **Mercadería estancada** (`fn_agregar_estancada`): lo que se saca de los locales para venderlo
+  con descuento. Se ESCRIBE a mano (muchas prendas son de antes de la app): prenda, color,
+  estampado, tallas y costo por prenda; la base le suma el operativo de feria. Entra como
+  `prod_feria_ingresos.origen = 'estancada'`, sin `prenda_id`.
+- **Cierre** (`fn_cerrar_feria(feria, retornos jsonb, fecha)`), una sola vez: por línea y talla,
+  cuántas regresan a **bodega** y cuántas a **locales** (sin decir a cuál, decisión del dueño).
+  Tabla nueva **`prod_feria_retornos`** (RLS + `admin_all_*`), contra la línea de la feria, para
+  que el costo sea el exacto de esa salida. Reintento = `{"ya_cerrada": true}`, no error.
+- ⚠️ **El costo operativo SE REEMPLAZA, no se acumula:** lo que vuelve a locales queda con
+  $2,50 en vez de $5; a la bodega, $0.
+- Lo que regresa a la bodega suma `prod_stock_online` + `prod_bodega_ingresos` (origen nuevo
+  `'feria'`, columna `feria_id`). Lo que regresa a locales y vino de producción queda también como
+  **envío a locales sin local** (`prod_envios_locales.feria_id`); la estancada no, porque ya
+  estaba contada en los locales.
+- La pantalla **no deja cerrar** una feria con estampadas suyas aún en el taller: llegarían a una
+  feria ya cerrada.
+- **Envío agrupado por producción** (no es schema, 2026-10-27, pedido del dueño al usarlo): una
+  tarjeta por corte con **colores en filas y tallas en columnas**, y la misma tabla para cada
+  destino; los estampados de cada destino llevan su color. Cada fila sigue siendo UNA entrega y
+  se procesa con su propia llamada a `fn_repartir_entrega_maquila`, una tras otra: si una falla,
+  las anteriores quedan hechas y el resto sigue pendiente (`GrupoForm` / `formDeEntrega` en
+  `reparto.ts`).
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8t_destinos_y_costos.sql` ✅ EJECUTADA
 

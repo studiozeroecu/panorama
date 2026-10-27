@@ -8,6 +8,10 @@ import {
   problemasReparto,
   repartoParaBase,
   type RepartoForm,
+  type GrupoForm,
+  grupoVacio,
+  formDeEntrega,
+  completarGrupoConBodega,
 } from "@/lib/produccion/reparto";
 
 const LLEGO = { S: 10, M: 15 };
@@ -115,5 +119,35 @@ describe("costoSalida", () => {
     expect(costoSalida(6, "local", null)).toBe(8.5);
     expect(costoSalida(6, "local", 2.5)).toBe(11);
     expect(costoSalida(6, "feria", 2.5)).toBe(13.5);
+  });
+});
+
+describe("Envío agrupado por producción", () => {
+  // Dos colores de la misma producción: cada fila es una entrega.
+  const LLEGADAS = { negro: { S: 4, M: 4 }, crudo: { S: 2, M: 2 } };
+  const g: GrupoForm = {
+    ...grupoVacio(["bodega", "feria"]),
+    tallas: {
+      bodega: { negro: { S: "1" } },
+      local: {},
+      feria: { negro: { S: "3", M: "4" }, crudo: { S: "2" } },
+    },
+    estampados: {
+      bodega: [],
+      local: [],
+      feria: [{ entregaId: "negro", nombre: "Logo", tallas: { S: "2" } }],
+    },
+  };
+
+  it("cada fila sale con lo suyo, estampados incluidos", () => {
+    const negro = formDeEntrega(g, "negro");
+    expect(negro.tallas.feria).toEqual({ S: "3", M: "4" });
+    expect(negro.disenos.feria).toEqual([{ nombre: "Logo", tallas: { S: "2" } }]);
+    expect(basicosDestino(negro, "feria")).toEqual({ S: 1, M: 4 });
+    expect(formDeEntrega(g, "crudo").disenos.feria).toEqual([]);
+  });
+
+  it("lo que sobra → bodega, fila por fila", () => {
+    expect(completarGrupoConBodega(LLEGADAS, g)).toEqual({ negro: { S: "1" }, crudo: { M: "2" } });
   });
 });

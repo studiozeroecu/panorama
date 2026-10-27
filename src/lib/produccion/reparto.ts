@@ -166,3 +166,50 @@ export function repartoParaBase(form: RepartoForm) {
 export function costoSalida(produccion: number, destino: DestinoEnvio, estampado: number | null): number {
   return Math.round((produccion + (estampado ?? 0) + COSTO_OPERATIVO[destino]) * 100) / 100;
 }
+
+/**
+ * Envío agrupado por producción (2026-10-27): una tarjeta por corte, con los
+ * colores en filas y las tallas en columnas. Cada fila es UNA entrega
+ * pendiente, y cada entrega se sigue procesando por separado en la base
+ * (fn_repartir_entrega_maquila): este estado solo junta lo de todas en una
+ * pantalla, y formDeEntrega lo vuelve a partir.
+ */
+export interface EstampadoGrupo extends DisenoReparto {
+  /** La fila (entrega) a la que pertenece este estampado. */
+  entregaId: string;
+}
+
+export interface GrupoForm {
+  activos: DestinoEnvio[];
+  /** destino → entrega → talla → cantidad escrita. */
+  tallas: Record<DestinoEnvio, Record<string, TallasTexto>>;
+  estampados: Record<DestinoEnvio, EstampadoGrupo[]>;
+}
+
+export const grupoVacio = (activos: DestinoEnvio[] = []): GrupoForm => ({
+  activos,
+  tallas: { bodega: {}, local: {}, feria: {} },
+  estampados: { bodega: [], local: [], feria: [] },
+});
+
+/** El formulario de UNA entrega dentro del grupo, para reusar las reglas de arriba. */
+export function formDeEntrega(g: GrupoForm, entregaId: string): RepartoForm {
+  const f = formVacio(g.activos);
+  for (const { id } of DESTINOS) {
+    f.tallas[id] = g.tallas[id][entregaId] ?? {};
+    f.disenos[id] = g.estampados[id]
+      .filter((e) => e.entregaId === entregaId)
+      .map(({ nombre, tallas }) => ({ nombre, tallas }));
+  }
+  return f;
+}
+
+/** "Lo que sobra → bodega" para todas las filas a la vez. */
+export function completarGrupoConBodega(
+  llegadas: Record<string, Record<string, number>>,
+  g: GrupoForm
+): Record<string, TallasTexto> {
+  const out: Record<string, TallasTexto> = {};
+  for (const [id, tallas] of Object.entries(llegadas)) out[id] = completarConBodega(tallas, formDeEntrega(g, id));
+  return out;
+}
