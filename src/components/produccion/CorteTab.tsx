@@ -10,6 +10,7 @@ import { estimarUnidades } from "@/lib/produccion/estimacion";
 import CorridaCorteModal from "./CorridaCorteModal";
 import CostoCorteCard from "./CostoCorteCard";
 import CorregirCorteModal from "./CorregirCorteModal";
+import ConvertirConjuntoModal from "./ConvertirConjuntoModal";
 import type { Corte } from "@/lib/produccion/types";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { PARTES, nombreParte, etiquetaFila, type Parte } from "@/lib/produccion/conjuntos";
@@ -30,6 +31,8 @@ export default function CorteTab() {
   const [corrida, setCorrida] = useState(false);
   // Fase 8q: el corte cuyas cantidades se están corrigiendo.
   const [corrigiendo, setCorrigiendo] = useState<Corte | null>(null);
+  // Fase 8x: el corte de conjunto viejo que se está separando por partes.
+  const [separando, setSeparando] = useState<Corte | null>(null);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -213,6 +216,11 @@ export default function CorteTab() {
                 </div>
                 <button className="btn" style={{ padding: "2px 9px", fontSize: 11.5, marginTop: 5 }}
                   onClick={() => setCorrigiendo(c)}>✏️ Corregir cantidades</button>
+                {/* Fase 8x: un conjunto cortado antes de la 8r, con una sola fila por color. */}
+                {prenda?.es_conjunto && (c.colores ?? []).length > 0 && (c.colores ?? []).every((col) => !col.parte) && (
+                  <button className="btn" style={{ padding: "2px 9px", fontSize: 11.5, marginTop: 5, marginLeft: 6 }}
+                    onClick={() => setSeparando(c)}>🧩 Separar en conjunto</button>
+                )}
                 <CostoCorteCard corte={c} />
               </div>
             ))}
@@ -233,6 +241,7 @@ export default function CorteTab() {
       </div>
       <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
       {corrigiendo && <CorregirCorteModal corte={corrigiendo} onCerrar={() => setCorrigiendo(null)} />}
+      {separando && <ConvertirConjuntoModal corte={separando} onCerrar={() => setSeparando(null)} />}
 
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />

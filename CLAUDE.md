@@ -68,7 +68,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8x_convertir_a_conjunto.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -396,6 +397,23 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8x_convertir_a_conjunto.sql` ⏳ PENDIENTE DE APLICAR
+
+Verificable con `supabase/smoke_test_fase8x.sql` (2 comprobaciones). Sin tablas ni columnas: se
+puede desplegar antes (el botón falla con un error claro hasta aplicarla).
+
+- **`fn_convertir_a_conjunto(corte, colores jsonb)`**: un corte de CONJUNTO registrado antes de la
+  8r tiene una sola fila por color. Lo parte: la fila vieja pasa a ser la **superior** y se crea
+  la **inferior** (mismo color, pedido_color, orden, capas, tono), cada una con las tallas que
+  escribe el dueño. En maquila cada parte toma su precio (`prod_prenda_partes.costo_maquila`) y
+  el MISMO estado y fechas; si el color ya había vuelto, sus entregas se rehacen completas por
+  parte (sin procesar, para Envío). Totales y jsonb de respaldo se reconstruyen como en la 8q.
+- ⚠️ **Solo si nada del corte pasó por Envío ni tiene bajas** (`procesado`): con algo ya en stock,
+  partirlo dejaría el stock contando lo viejo.
+- **Pantalla:** botón *🧩 Separar en conjunto* en Corte (solo si la prenda es conjunto y ningún
+  color tiene parte; `ConvertirConjuntoModal.tsx`), y un aviso en la tarjeta de Envío que lleva ahí.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8w_lista_estampados.sql` ✅ EJECUTADA
 

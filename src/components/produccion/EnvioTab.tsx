@@ -243,6 +243,13 @@ function ProduccionCard({ grupo }: { grupo: Grupo }) {
           👉 Indicación al pedir la tela: <b>{pedido.destino_indicado === "locales" ? "directo a locales" : "bodega de estampados"}</b>
         </div>
       )}
+      {/* Fase 8x: conjunto cortado antes de la 8r: cada color cuenta como una sola prenda. */}
+      {prenda?.es_conjunto && filas.every((f) => !f.col.parte) && (
+        <div style={{ fontSize: 12.5, color: "var(--warn)", marginTop: 6 }}>
+          ⚠ Esta producción es un conjunto pero se cortó antes de separar las partes: cada color cuenta como una sola
+          prenda. Antes de repartir, ve a <b>Corte</b> y usa <b>🧩 Separar en conjunto</b> en este corte.
+        </div>
+      )}
 
       {/* Lo que llegó, y lo que falta repartir en cada casilla */}
       <div className="table-scroll" style={{ margin: "12px 0" }}>
