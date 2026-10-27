@@ -22,7 +22,7 @@ const TABS = [
   { id: "maquila", label: "Maquila" },
   { id: "envio", label: "Envío" },
   { id: "estampados", label: "Estampados" },
-  { id: "stock", label: "Venta online" },
+  { id: "stock", label: "Bodega" },
   { id: "resumen", label: "Resumen" },
   { id: "prendas", label: "Prendas" },
   { id: "proveedores", label: "Proveedores" },

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { Badge, Vacio, Tallas } from "@/components/ui";
-import { money, type LoteEstampado } from "@/lib/produccion/types";
+import { money, type Feria, type LoteEstampado } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import FichaEstampadoModal from "./FichaEstampadoModal";
 
@@ -42,7 +42,7 @@ export default function EstampadosTab() {
             <div className="prod-card" key={l.id} style={{ opacity: 0.75 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <div>
-                  <h4>{l.prenda_nombre} <Badge color="azul">{l.color}</Badge></h4>
+                  <h4>{l.prenda_nombre} <Badge color="azul">{l.color}</Badge> <DestinoLote lote={l} /></h4>
                   <div className="prod-meta">
                     {l.total_unidades} und. · {(l.disenos ?? []).map((d) => `${d.nombre} (${d.unidades})`).join(", ")} ·
                     costo {money(Number(l.costo_total))} · retornado {fmtFecha(l.fecha_retorno)}
@@ -79,7 +79,7 @@ function LotePendiente({ lote }: { lote: LoteEstampado }) {
     <div className="prod-card">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
-          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge></h4>
+          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge> <DestinoLote lote={lote} /></h4>
           <div className="prod-meta">
             {lote.total_unidades} unidades · {(lote.disenos ?? []).map((d) => `${d.nombre} (${d.unidades})`).join(", ")} ·
             costo estimado {money(Number(lote.costo_total))} ({money(Number(lote.costo_unitario))}/und.)
@@ -136,8 +136,8 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
       // Un reintento no es un fallo: ya estaba hecho. Se avisa en tono neutro.
       toast(
         r.ya_retornado
-          ? "Este lote ya estaba retornado — no se sumó nada al stock."
-          : `${r.unidades ?? 0} unidades estampadas ingresadas al stock`
+          ? "Este lote ya estaba retornado — no se sumó nada."
+          : `${r.unidades ?? 0} unidades estampadas → ${textoDestino(lote, data.ferias)}`
       );
       await reload();
     } catch (e) {
@@ -151,7 +151,7 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
     <div className="prod-card">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
-          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge></h4>
+          <h4>{lote.prenda_nombre} <Badge color="azul">{lote.color}</Badge> <DestinoLote lote={lote} /></h4>
           <div className="prod-meta">
             {lote.total_unidades} und. · taller: {taller?.nombre ?? "—"} · enviado {fmtFecha(lote.fecha_envio)} ·
             costo {money(Number(lote.costo_total))}
@@ -173,4 +173,16 @@ function LoteEnTaller({ lote }: { lote: LoteEstampado }) {
       <FichaEstampadoModal lote={lote} abierto={ficha} onCerrar={() => setFicha(false)} />
     </div>
   );
+}
+
+/** Fase 8t: a dónde entra el lote al volver del taller. Los anteriores, a la bodega. */
+function textoDestino(lote: LoteEstampado, ferias: Feria[]): string {
+  if (lote.destino === "feria") return `feria ${ferias.find((f) => f.id === lote.feria_id)?.nombre ?? ""}`.trim();
+  if (lote.destino === "local") return lote.local_destino ? `local ${lote.local_destino}` : "locales";
+  return "bodega";
+}
+
+function DestinoLote({ lote }: { lote: LoteEstampado }) {
+  const { data } = useProd();
+  return <Badge color={lote.destino === "feria" ? "verde" : lote.destino === "local" ? "ambar" : "gris"}>→ {textoDestino(lote, data.ferias)}</Badge>;
 }

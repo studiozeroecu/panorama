@@ -64,7 +64,8 @@ versionadas. Orden real de ejecución:
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
 `schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
-`schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -392,6 +393,43 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8t_destinos_y_costos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8t.sql`: 10/10. Corrige la 8s el mismo día,
+tras verla en pantalla. ⚠️ **Aplicar y desplegar juntos:** el código nuevo manda la forma nueva de
+`p_reparto`; contra la función de la 8s, Envío fallaría con *"Marca al menos un destino"* o
+parecido (sin dañar datos).
+
+- **Tres destinos: Bodega, Locales y Feria** (decisiones del dueño, 2026-10-27). "Stock online" pasa
+  a llamarse **Bodega** en pantalla (`prod_stock_online` NO cambia de nombre); la venta en línea
+  sale de la bodega. La pestaña *Venta online* se llama ahora *Bodega*. **Estampado deja de ser
+  destino.**
+- **Estampado DENTRO de cada destino:** por destino se dice cuántas van con cada estampado, talla
+  por talla; lo que queda va **básico** (se calcula, no se escribe). Las básicas llegan ya a su
+  destino; las estampadas generan un **lote al taller con el destino anotado**
+  (`prod_lotes_estampado.destino`, `feria_id`, `local_destino`, `producto_codigo`, `precio_local`)
+  y `fn_retornar_lote_estampado` (reescrita, misma firma) las entrega solas ahí, **cada diseño con
+  su nombre**. Los lotes viejos (sin destino o sin tallas por diseño) vuelven a la bodega como en
+  la 8a (comprobación 9).
+- **Costo COMPLETO congelado en cada salida** (`costo_produccion`, `costo_estampado`,
+  `costo_operativo` en `prod_envios_locales`, `prod_feria_ingresos`, la nueva
+  `prod_bodega_ingresos` y en el lote; `costo_unitario` = el total). Producción = tela + maquila +
+  horas + insumos + fijos por prenda, calculado en pantalla con **`costoDeCorte`**
+  (`components/produccion/costoDeCorte.ts`, lo comparte con `CostoCorteCard` para que digan el
+  mismo número) **sin el estampado**, que ahora se cobra solo a las estampadas (por defecto $2,50).
+- **Costo operativo:** `fn_costo_operativo` — locales $2,50, feria $5, en línea $5, **bodega $0**
+  (se suma cuando sale a vender). ⚠️ Se mueve junto con `COSTO_OPERATIVO` de
+  `src/lib/produccion/reparto.ts`, que es solo para mostrar. El margen de locales se calcula contra
+  el costo completo.
+- **Tabla nueva:** `prod_bodega_ingresos` (RLS + `admin_all_*`): cada entrada a la bodega con su
+  costo, porque `prod_stock_online` suma lotes y no puede guardarlo. `prod_envios_locales` gana
+  `estampado` (antes no había forma de mandar estampadas a un local) y `lote_estampado_id`.
+- **`smoke_test_fase8s.sql` queda OBSOLETO** (usa la forma de `p_reparto` de la 8s). Falla a
+  propósito; no es regresión.
+- **Pendiente:** el $5 de la venta en línea al vender desde la bodega (StockTab); la parte B de
+  ferias (cierre y estancada); ResumenTab sigue con su propio cálculo de costos.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8s_reparto_ferias.sql` ✅ EJECUTADA
 

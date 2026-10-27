@@ -76,11 +76,11 @@ export default function StockTab() {
   return (
     <section>
       <div className="section-head">
-        <h2>Venta online <span className="sub" style={{ fontWeight: 400 }}>· stock disponible y registro de ventas</span></h2>
+        <h2>Bodega <span className="sub" style={{ fontWeight: 400 }}>· lo disponible y la venta en línea que sale de aquí</span></h2>
       </div>
 
       <div className="cards" style={{ marginBottom: 24 }}>
-        <div className="card"><div className="label">En stock online</div><div className="value">{totalDisp}</div><div className="hint">unidades disponibles</div></div>
+        <div className="card"><div className="label">En bodega</div><div className="value">{totalDisp}</div><div className="hint">unidades disponibles</div></div>
         <div className="card"><div className="label">Vendidas online</div><div className="value">{totalVend}</div><div className="hint">unidades acumuladas</div></div>
         <div className="card"><div className="label">Ingreso online (30 días)</div>
           <div className="value">{money(
@@ -93,7 +93,7 @@ export default function StockTab() {
       </div>
 
       {!grupos.size ? (
-        <Vacio titulo="Sin stock online aún" hint='El stock entra desde "Envío" y cuando los estampados retornan del taller.' />
+        <Vacio titulo="La bodega está vacía" hint='El stock entra desde "Envío" y cuando los estampados retornan del taller.' />
       ) : (
         [...grupos.entries()].map(([k, items]) => {
           const [prenda, color, estampado] = k.split("||");

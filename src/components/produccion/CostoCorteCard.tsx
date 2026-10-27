@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useProd } from "./useProduccion";
 import { money, type Corte } from "@/lib/produccion/types";
-import { costoCorte } from "@/lib/produccion/costoCorte";
+import { costoDeCorte } from "./costoDeCorte";
 import { etiquetaFila, nombreParte, setsPosibles } from "@/lib/produccion/conjuntos";
 
 /**
@@ -23,35 +23,9 @@ export default function CostoCorteCard({ corte }: { corte: Corte }) {
   const maquila = data.maquilas.find((m) => m.corte_id === corte.id);
   if (!pedido) return null;
 
-  const cortesDelPedido = data.cortes.filter((c) => c.pedido_id === pedido.id);
   const prenda = data.prendas.find((x) => x.id === pedido.prenda_id);
-  const consumoParte = (parte: "superior" | "inferior") =>
-    prenda?.partes.find((x) => x.parte === parte)?.consumo_metros ?? null;
-  const estampado = maquila
-    ? data.lotesEstampado
-        .filter((l) => l.maquila_id === maquila.id)
-        .reduce((s, l) => s + Number(l.costo_total), 0)
-    : 0;
-
-  const c = costoCorte({
-    corte,
-    pedido,
-    cortesDelPedido,
-    costoMaquilaUnitario: maquila ? Number(maquila.costo_unitario) : 0,
-    coloresMaquila: (maquila?.colores ?? []).map((col) => ({
-      unidades: col.unidades,
-      entregas: col.entregas,
-      // Fase 8r: cada parte de un conjunto con su precio de maquila.
-      costoUnitario: col.costo_unitario,
-      parte: col.parte,
-    })),
-    jornadas: corte.jornadas,
-    insumos: corte.insumos,
-    estampado,
-    // Por prenda, como en Envío y Resumen: la suma de todos los costos fijos.
-    costoFijoPorUnidad: data.costosFijos.reduce((s, f) => s + Number(f.valor), 0),
-    consumoPartes: { superior: consumoParte("superior"), inferior: consumoParte("inferior") },
-  });
+  const c = costoDeCorte(data, corte);
+  if (!c) return null;
 
   // Fase 8r: sets que salen de lo cortado — siempre de la misma talla, por color.
   const sets = c.partes

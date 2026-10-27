@@ -75,7 +75,7 @@ export default function ResumenTab() {
         <div className="card"><div className="label">Pedidos de tela</div><div className="value">{pedidosMes.length}</div><div className="hint">{money(costoTela)} en tela</div></div>
         <div className="card"><div className="label">Unidades cortadas</div><div className="value">{unidadesCortadas}</div><div className="hint">{cortesMes.length} corte{cortesMes.length !== 1 ? "s" : ""}</div></div>
         <div className="card"><div className="label">Vendidas en el mes</div><div className="value">{unidadesVendidas + unidadesLocales}</div><div className="hint">{unidadesVendidas} online · {unidadesLocales} a locales</div></div>
-        <div className="card"><div className="label">Stock online actual</div><div className="value">{stockActual}</div><div className="hint">unidades disponibles hoy</div></div>
+        <div className="card"><div className="label">En bodega</div><div className="value">{stockActual}</div><div className="hint">unidades disponibles hoy</div></div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>

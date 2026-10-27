@@ -1,6 +1,10 @@
 /**
- * Fase 8s: el reparto de UNA entrega de maquila entre varios destinos, talla
- * por talla.
+ * Fases 8s y 8t: el reparto de UNA entrega de maquila entre sus destinos,
+ * talla por talla.
+ *
+ * Tres destinos: bodega, locales y feria (decisión del dueño, 2026-10-27).
+ * Dentro de cada uno se dice cuántas van con cada estampado; lo que queda va
+ * BÁSICO y se calcula solo.
  *
  * Lo que se escribe en pantalla viaja como texto (inputs) y aquí se convierte.
  * La regla dura —cada talla cuadra EXACTO con lo que llegó— la vuelve a exigir
@@ -8,14 +12,28 @@
  * marcar en qué talla está el descuadre.
  */
 
-export type DestinoEnvio = "online" | "estampado" | "local" | "feria";
+export type DestinoEnvio = "bodega" | "local" | "feria";
 
 export const DESTINOS: { id: DestinoEnvio; etiqueta: string }[] = [
-  { id: "online", etiqueta: "Stock online" },
-  { id: "estampado", etiqueta: "Estampado" },
+  { id: "bodega", etiqueta: "Bodega" },
   { id: "local", etiqueta: "Locales" },
   { id: "feria", etiqueta: "Feria" },
 ];
+
+/**
+ * Costo operativo por prenda según a dónde sale. ⚠️ La tarifa que se guarda la
+ * pone la base (fn_costo_operativo); esto es solo para mostrarla. Se mueven
+ * juntas. La bodega no lleva: se suma cuando sale a vender (en línea, $5).
+ */
+export const COSTO_OPERATIVO: Record<DestinoEnvio | "online", number> = {
+  bodega: 0,
+  local: 2.5,
+  feria: 5,
+  online: 5,
+};
+
+/** Lo que cuesta estampar una prenda, si no se escribe otro valor. */
+export const COSTO_ESTAMPADO_DEFECTO = 2.5;
 
 export type TallasTexto = Record<string, string>;
 
@@ -26,11 +44,17 @@ export interface DisenoReparto {
 
 export interface RepartoForm {
   activos: DestinoEnvio[];
-  online: TallasTexto;
-  local: TallasTexto;
-  feria: TallasTexto;
-  disenos: DisenoReparto[];
+  /** Cuántas van a cada destino, por talla (básicas + estampadas). */
+  tallas: Record<DestinoEnvio, TallasTexto>;
+  /** Los estampados de cada destino; lo que no cubren va básico. */
+  disenos: Record<DestinoEnvio, DisenoReparto[]>;
 }
+
+export const formVacio = (activos: DestinoEnvio[] = []): RepartoForm => ({
+  activos,
+  tallas: { bodega: {}, local: {}, feria: {} },
+  disenos: { bodega: [], local: [], feria: [] },
+});
 
 /** Un input vacío o inválido cuenta como 0; los negativos también (el input no los deja). */
 export function cantidad(v: string | undefined): number {
@@ -38,7 +62,7 @@ export function cantidad(v: string | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Texto → números, sin ceros. Es lo que viaja a la base. */
+/** Texto → números, sin ceros. */
 export function tallasLimpias(t: TallasTexto): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [talla, v] of Object.entries(t)) {
@@ -48,9 +72,9 @@ export function tallasLimpias(t: TallasTexto): Record<string, number> {
   return out;
 }
 
-const suma = (t: Record<string, number>) => Object.values(t).reduce((s, n) => s + n, 0);
+export const sumaTallas = (t: Record<string, number>) => Object.values(t).reduce((s, n) => s + n, 0);
 
-/** Lo que va a estampado por talla: la suma de todos los diseños. */
+/** Lo estampado de un destino por talla: la suma de sus diseños. */
 export function tallasEstampado(disenos: DisenoReparto[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const d of disenos) {
@@ -59,21 +83,22 @@ export function tallasEstampado(disenos: DisenoReparto[]): Record<string, number
   return out;
 }
 
-/** Unidades por talla de un destino. Un destino desmarcado no cuenta, aunque tenga números escritos. */
-export function tallasDestino(form: RepartoForm, destino: DestinoEnvio): Record<string, number> {
-  if (!form.activos.includes(destino)) return {};
-  if (destino === "estampado") return tallasEstampado(form.disenos);
-  return tallasLimpias(form[destino]);
+/** Lo que va a un destino por talla. Un destino desmarcado no cuenta, aunque tenga números. */
+export function tallasDestino(form: RepartoForm, d: DestinoEnvio): Record<string, number> {
+  return form.activos.includes(d) ? tallasLimpias(form.tallas[d]) : {};
 }
 
-export function unidadesDestino(form: RepartoForm, destino: DestinoEnvio): number {
-  return suma(tallasDestino(form, destino));
+/** Básicas de un destino por talla: lo que va − lo estampado. Negativo = los diseños se pasan. */
+export function basicosDestino(form: RepartoForm, d: DestinoEnvio): Record<string, number> {
+  const out: Record<string, number> = { ...tallasDestino(form, d) };
+  for (const [t, n] of Object.entries(tallasEstampado(form.disenos[d]))) out[t] = (out[t] ?? 0) - n;
+  return out;
 }
 
 /**
- * Lo que falta repartir por talla: llegó − asignado. Negativo = sobra (se
- * repartió más de lo que llegó). Incluye las tallas que solo aparecen en los
- * destinos, para que un error de tecleo en una talla que no llegó se vea.
+ * Lo que falta repartir por talla: llegó − lo de los destinos. Negativo =
+ * sobra. Incluye las tallas que solo aparecen en los destinos, para que un
+ * error de tecleo en una talla que no llegó se vea.
  */
 export function faltaPorTalla(llegadas: Record<string, number>, form: RepartoForm): Record<string, number> {
   const out: Record<string, number> = {};
@@ -84,17 +109,14 @@ export function faltaPorTalla(llegadas: Record<string, number>, form: RepartoFor
   return out;
 }
 
-/**
- * "Lo que sobra va al online": online = llegó − lo de los demás destinos, por
- * talla. Lo que ya hubiera en online se reemplaza, no se suma.
- */
-export function completarConOnline(llegadas: Record<string, number>, form: RepartoForm): TallasTexto {
-  const sinOnline = { ...form, activos: form.activos.filter((d) => d !== "online") };
-  const online: TallasTexto = {};
-  for (const [t, n] of Object.entries(faltaPorTalla(llegadas, sinOnline))) {
-    if (n > 0) online[t] = String(n);
+/** "Lo que sobra → bodega": bodega = llegó − lo de los otros destinos, por talla. */
+export function completarConBodega(llegadas: Record<string, number>, form: RepartoForm): TallasTexto {
+  const sinBodega = { ...form, activos: form.activos.filter((d) => d !== "bodega") };
+  const bodega: TallasTexto = {};
+  for (const [t, n] of Object.entries(faltaPorTalla(llegadas, sinBodega))) {
+    if (n > 0) bodega[t] = String(n);
   }
-  return online;
+  return bodega;
 }
 
 /** Lo que impide guardar, en palabras para el dueño. Vacío = se puede procesar. */
@@ -106,32 +128,41 @@ export function problemasReparto(llegadas: Record<string, number>, form: Reparto
     if (n > 0) out.push(`Talla ${t}: faltan ${n} por repartir.`);
     if (n < 0) out.push(`Talla ${t}: repartiste ${-n} de más.`);
   }
-  if (form.activos.includes("estampado")) {
-    for (const d of form.disenos) {
-      const und = suma(tallasLimpias(d.tallas));
-      if (!d.nombre.trim() && und > 0) out.push("Hay un diseño con unidades pero sin nombre.");
-      if (d.nombre.trim() && und === 0) out.push(`El diseño "${d.nombre.trim()}" no tiene unidades.`);
-    }
-  }
   for (const { id, etiqueta } of DESTINOS) {
-    if (form.activos.includes(id) && unidadesDestino(form, id) === 0) {
+    if (!form.activos.includes(id)) continue;
+    if (sumaTallas(tallasDestino(form, id)) === 0) {
       out.push(`${etiqueta} está marcado pero no tiene unidades.`);
+      continue;
+    }
+    for (const [t, n] of Object.entries(basicosDestino(form, id))) {
+      if (n < 0) out.push(`${etiqueta}, talla ${t}: los estampados suman ${-n} más de las que van.`);
+    }
+    for (const d of form.disenos[id]) {
+      const und = sumaTallas(tallasLimpias(d.tallas));
+      if (!d.nombre.trim() && und > 0) out.push(`${etiqueta}: hay un estampado con unidades pero sin nombre.`);
+      if (d.nombre.trim() && und === 0) out.push(`${etiqueta}: el estampado "${d.nombre.trim()}" no tiene unidades.`);
     }
   }
   return out;
 }
 
-/** El objeto `p_reparto` de fn_repartir_entrega_maquila, sin los datos de cada destino. */
+/** Básicas y estampados de cada destino marcado, como los espera fn_repartir_entrega_maquila. */
 export function repartoParaBase(form: RepartoForm) {
-  const activo = (d: DestinoEnvio) => form.activos.includes(d);
-  return {
-    online: activo("online") ? tallasLimpias(form.online) : null,
-    disenos: activo("estampado")
-      ? form.disenos
-          .map((d) => ({ nombre: d.nombre.trim(), tallas: tallasLimpias(d.tallas) }))
-          .filter((d) => d.nombre || suma(d.tallas) > 0)
-      : null,
-    local: activo("local") ? tallasLimpias(form.local) : null,
-    feria: activo("feria") ? tallasLimpias(form.feria) : null,
-  };
+  const out: Partial<Record<DestinoEnvio, { basicos: Record<string, number>; disenos: { nombre: string; tallas: Record<string, number> }[] }>> = {};
+  for (const d of form.activos) {
+    const basicos: Record<string, number> = {};
+    for (const [t, n] of Object.entries(basicosDestino(form, d))) if (n > 0) basicos[t] = n;
+    out[d] = {
+      basicos,
+      disenos: form.disenos[d]
+        .map((x) => ({ nombre: x.nombre.trim(), tallas: tallasLimpias(x.tallas) }))
+        .filter((x) => x.nombre || sumaTallas(x.tallas) > 0),
+    };
+  }
+  return out;
+}
+
+/** Costo por prenda que sale a un destino: producción + estampado (si va estampada) + operativo. */
+export function costoSalida(produccion: number, destino: DestinoEnvio, estampado: number | null): number {
+  return Math.round((produccion + (estampado ?? 0) + COSTO_OPERATIVO[destino]) * 100) / 100;
 }

@@ -1,111 +1,119 @@
 import { describe, it, expect } from "vitest";
 import {
+  basicosDestino,
+  completarConBodega,
+  costoSalida,
   faltaPorTalla,
+  formVacio,
   problemasReparto,
-  completarConOnline,
-  tallasEstampado,
   repartoParaBase,
   type RepartoForm,
-  type DisenoReparto,
 } from "@/lib/produccion/reparto";
 
 const LLEGO = { S: 10, M: 15 };
 
-const vacio = (activos: RepartoForm["activos"]): RepartoForm => ({
-  activos,
-  online: {},
-  local: {},
-  feria: {},
-  disenos: [{ nombre: "", tallas: {} }],
+const con = (activos: RepartoForm["activos"], cambios: Partial<RepartoForm> = {}): RepartoForm => ({
+  ...formVacio(activos),
+  ...cambios,
 });
 
 describe("faltaPorTalla", () => {
   it("sin repartir falta todo lo que llegó", () => {
-    expect(faltaPorTalla(LLEGO, vacio(["online"]))).toEqual(LLEGO);
+    expect(faltaPorTalla(LLEGO, con(["bodega"]))).toEqual(LLEGO);
   });
 
-  it("cuadra con cuatro destinos a la vez", () => {
-    const f: RepartoForm = {
-      activos: ["online", "estampado", "local", "feria"],
-      online: { S: "2", M: "5" },
-      local: { M: "2" },
-      feria: { S: "4" },
-      disenos: [
-        { nombre: "Logo", tallas: { S: "4", M: "4" } },
-        { nombre: "Oso", tallas: { M: "4" } },
-      ],
-    };
+  it("cuadra con tres destinos", () => {
+    const f = con(["bodega", "local", "feria"], {
+      tallas: { bodega: { S: "3", M: "5" }, local: { M: "5" }, feria: { S: "7", M: "5" } },
+    });
     expect(faltaPorTalla(LLEGO, f)).toEqual({ S: 0, M: 0 });
     expect(problemasReparto(LLEGO, f)).toEqual([]);
   });
 
   it("un destino desmarcado no cuenta aunque tenga números", () => {
-    const f = { ...vacio(["online"]), online: { S: "10", M: "15" }, feria: { S: "4" } };
+    const f = con(["bodega"], { tallas: { bodega: { S: "10", M: "15" }, local: {}, feria: { S: "4" } } });
     expect(faltaPorTalla(LLEGO, f)).toEqual({ S: 0, M: 0 });
   });
+});
 
-  it("una talla que no llegó aparece como sobrante", () => {
-    const f = { ...vacio(["online"]), online: { S: "10", M: "15", L: "1" } };
-    expect(faltaPorTalla(LLEGO, f)).toEqual({ S: 0, M: 0, L: -1 });
-    expect(problemasReparto(LLEGO, f)).toEqual(["Talla L: repartiste 1 de más."]);
+describe("estampados dentro de un destino", () => {
+  // El ejemplo del dueño: a la feria 10 S, 10 M, 10 L; dos estampados de 3 cada
+  // uno por talla; las 4 que quedan de cada talla van básicas.
+  const LLEGO_SUDADERA = { S: 10, M: 10, L: 10 };
+  const feria = con(["feria"], {
+    tallas: { bodega: {}, local: {}, feria: { S: "10", M: "10", L: "10" } },
+    disenos: {
+      bodega: [],
+      local: [],
+      feria: [
+        { nombre: "Estampado 1", tallas: { S: "3", M: "3", L: "3" } },
+        { nombre: "Estampado 2", tallas: { S: "3", M: "3", L: "3" } },
+      ],
+    },
+  });
+
+  it("lo que no se estampa va básico", () => {
+    expect(basicosDestino(feria, "feria")).toEqual({ S: 4, M: 4, L: 4 });
+    expect(problemasReparto(LLEGO_SUDADERA, feria)).toEqual([]);
+  });
+
+  it("viaja a la base como básicas + estampados", () => {
+    expect(repartoParaBase(feria)).toEqual({
+      feria: {
+        basicos: { S: 4, M: 4, L: 4 },
+        disenos: [
+          { nombre: "Estampado 1", tallas: { S: 3, M: 3, L: 3 } },
+          { nombre: "Estampado 2", tallas: { S: 3, M: 3, L: 3 } },
+        ],
+      },
+    });
+  });
+
+  it("los estampados no pueden pasar de lo que va al destino", () => {
+    const f = { ...feria, disenos: { ...feria.disenos, feria: [{ nombre: "Grande", tallas: { S: "12" } }] } };
+    expect(problemasReparto(LLEGO_SUDADERA, f)).toEqual(["Feria, talla S: los estampados suman 2 más de las que van."]);
+  });
+
+  it("estampado sin nombre o sin unidades", () => {
+    const f: RepartoForm = {
+      ...feria,
+      disenos: { ...feria.disenos, feria: [{ nombre: "", tallas: { S: "1" } }, { nombre: "Oso", tallas: {} }] },
+    };
+    expect(problemasReparto(LLEGO_SUDADERA, f)).toEqual([
+      "Feria: hay un estampado con unidades pero sin nombre.",
+      'Feria: el estampado "Oso" no tiene unidades.',
+    ]);
   });
 });
 
 describe("problemasReparto", () => {
   it("pide marcar un destino", () => {
-    expect(problemasReparto(LLEGO, vacio([]))).toEqual(["Marca al menos un destino."]);
+    expect(problemasReparto(LLEGO, con([]))).toEqual(["Marca al menos un destino."]);
   });
 
-  it("dice qué falta en cada talla", () => {
-    const f = { ...vacio(["online"]), online: { S: "8", M: "15" } };
-    expect(problemasReparto(LLEGO, f)).toEqual(["Talla S: faltan 2 por repartir."]);
+  it("dice qué falta y qué sobra en cada talla", () => {
+    const f = con(["bodega"], { tallas: { bodega: { S: "8", M: "15", L: "1" }, local: {}, feria: {} } });
+    expect(problemasReparto(LLEGO, f)).toEqual(["Talla S: faltan 2 por repartir.", "Talla L: repartiste 1 de más."]);
   });
 
   it("un destino marcado sin unidades es un error", () => {
-    const f = { ...vacio(["online", "feria"]), online: { S: "10", M: "15" } };
+    const f = con(["bodega", "feria"], { tallas: { bodega: { S: "10", M: "15" }, local: {}, feria: {} } });
     expect(problemasReparto(LLEGO, f)).toEqual(["Feria está marcado pero no tiene unidades."]);
   });
+});
 
-  it("diseño sin nombre o sin unidades", () => {
-    const f: RepartoForm = {
-      ...vacio(["estampado"]),
-      disenos: [
-        { nombre: "", tallas: { S: "10" } },
-        { nombre: "Oso", tallas: {} },
-        { nombre: "Logo", tallas: { M: "15" } },
-      ],
-    };
-    expect(problemasReparto(LLEGO, f)).toEqual([
-      "Hay un diseño con unidades pero sin nombre.",
-      'El diseño "Oso" no tiene unidades.',
-    ]);
+describe("completarConBodega", () => {
+  it("bodega = lo que no se fue a otro destino", () => {
+    const f = con(["bodega", "feria"], { tallas: { bodega: { S: "1" }, local: {}, feria: { S: "4", M: "15" } } });
+    expect(completarConBodega(LLEGO, f)).toEqual({ S: "6" });
   });
 });
 
-describe("completarConOnline", () => {
-  it("online = lo que no se fue a otro destino", () => {
-    const f = { ...vacio(["online", "feria"]), online: { S: "1", M: "3" }, feria: { S: "4", M: "15" } };
-    expect(completarConOnline(LLEGO, f)).toEqual({ S: "6" });
-  });
-
-  it("con nada repartido, todo va al online", () => {
-    expect(completarConOnline(LLEGO, vacio([]))).toEqual({ S: "10", M: "15" });
-  });
-});
-
-describe("repartoParaBase", () => {
-  it("suma el estampado por talla y descarta filas vacías", () => {
-    const disenos: DisenoReparto[] = [
-      { nombre: "Logo", tallas: { S: "4", M: "4" } },
-      { nombre: "Oso", tallas: { M: "4", L: "0" } },
-      { nombre: " ", tallas: {} },
-    ];
-    expect(tallasEstampado(disenos)).toEqual({ S: 4, M: 8 });
-    const r = repartoParaBase({ ...vacio(["estampado"]), disenos });
-    expect(r.disenos).toEqual([
-      { nombre: "Logo", tallas: { S: 4, M: 4 } },
-      { nombre: "Oso", tallas: { M: 4 } },
-    ]);
-    expect(r.online).toBeNull();
+describe("costoSalida", () => {
+  it("producción + estampado + operativo del destino", () => {
+    expect(costoSalida(6, "bodega", null)).toBe(6);
+    expect(costoSalida(6, "local", null)).toBe(8.5);
+    expect(costoSalida(6, "local", 2.5)).toBe(11);
+    expect(costoSalida(6, "feria", 2.5)).toBe(13.5);
   });
 });

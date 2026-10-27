@@ -197,6 +197,10 @@ export interface LoteEstampado {
   fecha_envio: string | null;
   fecha_retorno: string | null;
   estado: "pendiente" | "en_taller" | "retornado";
+  /** Fase 8t: a dónde entra al volver del taller. null = lote anterior: a la bodega. */
+  destino: "bodega" | "local" | "feria" | null;
+  feria_id: string | null;
+  local_destino: string | null;
 }
 
 export interface StockOnline {
