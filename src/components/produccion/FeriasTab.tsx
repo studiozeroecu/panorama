@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useProd } from "./useProduccion";
-import { Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
+import { Campo, Fila, Badge, Vacio } from "@/components/ui";
 import { money, ordenarTallas, TALLA_ORDER, type Feria, type IngresoFeria } from "@/lib/produccion/types";
 import { fmtFecha, hoyEcuador } from "@/lib/fechas";
 import { COSTO_OPERATIVO, tallasLimpias, sumaTallas, type TallasTexto } from "@/lib/produccion/reparto";
@@ -13,6 +13,7 @@ import {
   retornosParaBase,
   vendidasPorTalla,
   type CierreForm,
+  type LineaFeria,
   type RetornoFeria,
 } from "@/lib/produccion/ferias";
 
@@ -153,66 +154,127 @@ function FeriaCard({ feria, retornos, alCambiar }: { feria: Feria; retornos: Ret
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", margin: "10px 0", fontSize: 13 }}>
-        <span><span className="sub">Fueron:</span> <b className="num">{r.fueron}</b> und.</span>
-        <span><span className="sub">Costo de lo que fue:</span> <b className="num">{money(r.costoEnviado)}</b></span>
-        {cerrada && (
+      {/* Las cifras de la feria, grandes y aparte, como en Bodega. */}
+      <div className="cards" style={{ margin: "12px 0" }}>
+        <div className="card">
+          <div className="label">Fueron</div>
+          <div className="value">{r.fueron}</div>
+          <div className="hint">{unidadesEnTaller > 0 ? `+ ${unidadesEnTaller} aún en el taller` : "prendas"}</div>
+        </div>
+        <div className="card">
+          <div className="label">Costo de lo que fue</div>
+          <div className="value">{money(r.costoEnviado)}</div>
+          <div className="hint">producción + estampado + operativo</div>
+        </div>
+        {cerrada ? (
           <>
-            <span><span className="sub">Regresaron:</span> <b className="num">{r.regresaron}</b></span>
-            <span><span className="sub">Vendidas:</span> <b className="num">{r.vendidas}</b></span>
-            <span><span className="sub">Costo de lo vendido:</span> <b className="num">{money(r.costoVendido)}</b></span>
+            <div className="card">
+              <div className="label">Vendidas</div>
+              <div className="value" style={{ color: "var(--good)" }}>{r.vendidas}</div>
+              <div className="hint">regresaron {r.regresaron}</div>
+            </div>
+            <div className="card">
+              <div className="label">Costo de lo vendido</div>
+              <div className="value">{money(r.costoVendido)}</div>
+              <div className="hint">compáralo con lo que anotaste en Finanzas</div>
+            </div>
           </>
+        ) : (
+          <div className="card">
+            <div className="label">Estado</div>
+            <div className="value" style={{ fontSize: 18 }}>En curso</div>
+            <div className="hint">al terminar, ciérrala para saber lo vendido</div>
+          </div>
         )}
       </div>
 
       {unidadesEnTaller > 0 && (
-        <div className="sub" style={{ fontSize: 12.5, color: "var(--warn)", marginBottom: 8 }}>
+        <div style={{ fontSize: 12.5, color: "var(--warn)", marginBottom: 10 }}>
           ⏳ {unidadesEnTaller} estampadas para esta feria siguen en el taller. Regístralas de vuelta en Estampados
           (entran solas aquí) antes de cerrar.
         </div>
       )}
 
       {!lineas.length ? (
-        <div className="sub" style={{ fontSize: 12.5 }}>Todavía no ha ido nada a esta feria.</div>
+        <div className="empty" style={{ padding: 18 }}>Todavía no ha ido nada a esta feria.</div>
       ) : (
-        <div className="table-scroll">
-          <table style={{ width: "auto", minWidth: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ ...CELDA, textAlign: "left" }}>Prenda</th>
-                <th style={CELDA}>Tallas</th>
-                <th style={CELDA}>Fueron</th>
-                <th style={CELDA}>Costo c/u</th>
-                {cerrada && <th style={CELDA}>Regresaron</th>}
-                {cerrada && <th style={CELDA}>Vendidas</th>}
-                {cerrada && <th style={CELDA}>Costo vendido</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {lineas.map((l) => (
-                <tr key={l.ingreso.id}>
-                  <td style={{ ...CELDA, textAlign: "left" }}>
-                    {l.ingreso.prenda_nombre} · {l.ingreso.color}
-                    <span className="sub"> · {l.ingreso.estampado || "Básica"}</span>{" "}
-                    <Badge color={ORIGEN[l.ingreso.origen].color}>{ORIGEN[l.ingreso.origen].texto}</Badge>
-                  </td>
-                  <td style={CELDA}><Tallas tallas={l.ingreso.tallas} /></td>
-                  <td style={CELDA} className="num">{l.fueron}</td>
-                  <td style={CELDA} className="num">{money(Number(l.ingreso.costo_unitario))}</td>
-                  {cerrada && <td style={CELDA} className="num">{l.regresaron}</td>}
-                  {cerrada && <td style={{ ...CELDA, fontWeight: 600 }} className="num">{l.vendidas}</td>}
-                  {cerrada && <td style={CELDA} className="num">{money(l.costoVendido)}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        porPrenda(lineas).map(({ prenda, filas }) => <PrendaEnFeria key={prenda} prenda={prenda} filas={filas} cerrada={cerrada} />)
       )}
 
       {modo === "estancada" && <Estancada feria={feria} alTerminar={() => setModo("ver")} />}
       {modo === "cerrar" && (
         <Cierre feria={feria} ingresos={ingresos} alTerminar={async () => { setModo("ver"); await alCambiar(); }} />
       )}
+    </div>
+  );
+}
+
+/** Las líneas de la feria agrupadas por prenda, en orden alfabético. */
+function porPrenda(lineas: LineaFeria[]): { prenda: string; filas: LineaFeria[] }[] {
+  const m = new Map<string, LineaFeria[]>();
+  for (const l of lineas) {
+    const k = l.ingreso.prenda_nombre || "Sin nombre";
+    m.set(k, [...(m.get(k) ?? []), l]);
+  }
+  return [...m.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([prenda, filas]) => ({
+      prenda,
+      // Por color, y dentro de cada color primero las básicas y luego los estampados.
+      filas: [...filas].sort((a, b) =>
+        a.ingreso.color.localeCompare(b.ingreso.color) || a.ingreso.estampado.localeCompare(b.ingreso.estampado)),
+    }));
+}
+
+/**
+ * Una prenda dentro de la feria: colores en filas y tallas en columnas, como
+ * en Envío. Cada fila dice si es básica o con qué estampado, y de dónde vino.
+ */
+function PrendaEnFeria({ prenda, filas, cerrada }: { prenda: string; filas: LineaFeria[]; cerrada: boolean }) {
+  const tallas = ordenarTallas([...new Set(filas.flatMap((l) => Object.keys(l.ingreso.tallas).filter((t) => (l.ingreso.tallas[t] ?? 0) > 0)))]);
+  const total = filas.reduce((s, l) => s + l.fueron, 0);
+  const costo = filas.reduce((s, l) => s + l.fueron * Number(l.ingreso.costo_unitario), 0);
+  const vendidas = filas.reduce((s, l) => s + l.vendidas, 0);
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline", marginBottom: 6 }}>
+        <span style={{ fontSize: 14.5, fontWeight: 700 }}>{prenda}</span>
+        <span className="sub" style={{ fontSize: 12.5 }}>
+          {total} und. · costo {money(costo)}{cerrada ? ` · vendidas ${vendidas}` : ""}
+        </span>
+      </div>
+      <div className="table-scroll">
+        <table style={{ width: "auto", minWidth: "100%" }}>
+          <thead>
+            <tr>
+              <th style={{ ...CELDA, textAlign: "left" }}>Color</th>
+              <th style={{ ...CELDA, textAlign: "left" }}>Va</th>
+              {tallas.map((t) => <th key={t} style={CELDA}>{t}</th>)}
+              <th style={CELDA}>Total</th>
+              <th style={CELDA}>Costo c/u</th>
+              {cerrada && <th style={CELDA}>Regresaron</th>}
+              {cerrada && <th style={CELDA}>Vendidas</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((l) => (
+              <tr key={l.ingreso.id}>
+                <td style={{ ...CELDA, textAlign: "left", fontWeight: 600 }}>{l.ingreso.color || "—"}</td>
+                <td style={{ ...CELDA, textAlign: "left" }}>
+                  {l.ingreso.estampado ? <b>{l.ingreso.estampado}</b> : <span className="sub">Básica</span>}{" "}
+                  <Badge color={ORIGEN[l.ingreso.origen].color}>{ORIGEN[l.ingreso.origen].texto}</Badge>
+                </td>
+                {tallas.map((t) => <td key={t} style={CELDA} className="num">{l.ingreso.tallas[t] || <span className="sub">—</span>}</td>)}
+                <td style={{ ...CELDA, fontWeight: 700 }} className="num">{l.fueron}</td>
+                <td style={CELDA} className="num">{money(Number(l.ingreso.costo_unitario))}</td>
+                {cerrada && <td style={CELDA} className="num">{l.regresaron}</td>}
+                {cerrada && <td style={{ ...CELDA, fontWeight: 700, color: "var(--good)" }} className="num">{l.vendidas}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
