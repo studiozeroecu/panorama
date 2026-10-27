@@ -63,7 +63,8 @@ versionadas. Orden real de ejecución:
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
-`schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26**
+`schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
+`schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -391,6 +392,39 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-10-27 — producción — `schema_fase8s_reparto_ferias.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8s.sql`: 9/9. El código pide `prod_ferias` y
+`prod_feria_ingresos`: un deploy sin la fase dejaría `/produccion` sin cargar (ya no aplica, la
+fase está en la base). El código viejo sigue funcionando con la fase aplicada.
+
+- **Envío reparte por talla entre varios destinos a la vez** (decisión del dueño, 2026-10-27):
+  stock online, estampado, locales y **feria**. Cada talla tiene que cuadrar EXACTO con lo que
+  llegó: se acabó el "resto que cae solo al online". La pantalla arranca con todo en online y
+  tiene un botón *"Lo que sobra → stock online"*.
+- **Función nueva:** `fn_repartir_entrega_maquila(p_entrega_id, p_reparto jsonb) → jsonb`
+  (SECURITY INVOKER, solo admin). Mismo lock + guarda de `procesado` que la 8o. Reemplaza en la
+  app a `fn_procesar_entrega_maquila`, que **no se borra** (otro nombre, sin riesgo de sobrecarga):
+  si se revierte el deploy, el código viejo la sigue usando. Auxiliar `fn_tallas_reparto` valida
+  cada mapa de tallas con un mensaje que dice qué columna está mal.
+- **Estampado por diseño × talla:** `prod_lotes_estampado.disenos` gana la clave **`tallas`** en
+  cada diseño (`[{nombre, unidades, tallas}]`); `lote.tallas` = la suma. Los lotes viejos no la
+  tienen. Con `sum(tallas) = total_unidades`, `fn_retornar_lote_estampado` devuelve las tallas
+  exactas (comprobación 7 del smoke). El retorno sigue etiquetando el stock con todos los diseños
+  juntos; separarlo por diseño es la parte C.
+- **Tablas nuevas** (RLS + `admin_all_*`): `prod_ferias` (`nombre`, `fecha`, `cerrada_en` null =
+  abierta) y `prod_feria_ingresos` (cada salida a una feria: tallas, unidades, `costo_unitario`
+  fotografiado = maquila + fijos, `origen` envio | estampado | estancada). Lo que queda en la
+  feria y lo vendido **no se guardan**: saldrán de restar los retornos.
+- **Las ganancias de feria NO se registran aquí:** el dueño las anota en Finanzas (Ventas
+  directas). Aquí solo qué salió, cuánto costó producirlo y (parte B) cuánto regresa.
+- `src/lib/produccion/reparto.ts` (con tests): faltantes por talla, problemas y el payload.
+- **Pendiente — parte B:** pestaña Ferias, cierre con retorno talla por talla al stock online o
+  a un local, y "agregar mercadería estancada" (lo que se saca de los locales para venderlo con
+  descuento). **Parte C:** el retorno de estampado elige destino (online, feria, locales) por talla
+  y diseño.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-26 — producción — `schema_fase8r_conjuntos.sql` ✅ EJECUTADA
 

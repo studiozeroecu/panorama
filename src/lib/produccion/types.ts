@@ -178,6 +178,8 @@ export interface Maquila {
 export interface Diseno {
   nombre: string;
   unidades: number;
+  /** Fase 8s: qué tallas lleva este diseño. Los lotes anteriores no la tienen. */
+  tallas?: Record<string, number>;
 }
 
 export interface LoteEstampado {
@@ -235,6 +237,32 @@ export interface EnvioLocal {
   margen: number;
   producto_codigo: string | null;
   local_destino: string | null;
+}
+
+/** Fase 8s: una feria a la que sale mercadería a vender. */
+export interface Feria {
+  id: string;
+  nombre: string;
+  fecha: string;
+  observaciones: string | null;
+  cerrada_en: string | null;
+}
+
+/** Fase 8s: una salida de mercadería hacia una feria. */
+export interface IngresoFeria {
+  id: string;
+  feria_id: string;
+  fecha: string;
+  origen: "envio" | "estampado" | "estancada";
+  entrega_id: string | null;
+  maquila_id: string | null;
+  prenda_id: string | null;
+  prenda_nombre: string;
+  color: string;
+  estampado: string;
+  tallas: Record<string, number>;
+  unidades: number;
+  costo_unitario: number;
 }
 
 export const TALLA_ORDER = ["XS", "S", "M", "L", "XL", "XXL"];

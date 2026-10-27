@@ -5,9 +5,22 @@ import { useProd } from "./useProduccion";
 import NombreTela from "./ResumenTela";
 import { Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, ordenarTallas, type Maquila, type ColorMaquila, type EntregaMaquila } from "@/lib/produccion/types";
-import { fmtFecha, diasHasta } from "@/lib/fechas";
+import { fmtFecha, diasHasta, hoyEcuador } from "@/lib/fechas";
 import { etiquetaFila } from "@/lib/produccion/conjuntos";
 import { LOCALES, type Guia } from "@/lib/locales";
+import {
+  DESTINOS,
+  cantidad,
+  completarConOnline,
+  faltaPorTalla,
+  problemasReparto,
+  repartoParaBase,
+  tallasEstampado,
+  unidadesDestino,
+  type DestinoEnvio,
+  type DisenoReparto,
+  type RepartoForm,
+} from "@/lib/produccion/reparto";
 import { useEffect } from "react";
 
 /**
@@ -36,7 +49,7 @@ export default function EnvioTab() {
   return (
     <section>
       <div className="section-head">
-        <h2>Envío <span className="sub" style={{ fontWeight: 400 }}>· decide el destino de cada entrega de maquila (completa o parcial)</span></h2>
+        <h2>Envío <span className="sub" style={{ fontWeight: 400 }}>· reparte cada entrega de maquila, talla por talla, entre sus destinos</span></h2>
       </div>
 
       {!lotes.length ? (
@@ -61,17 +74,21 @@ function LoteCard({ lote }: { lote: Lote }) {
   const corte = data.cortes.find((c) => c.id === maquila.corte_id);
   const pedido = corte ? data.pedidos.find((p) => p.id === corte.pedido_id) : null;
   const prenda = pedido ? data.prendas.find((x) => x.id === pedido.prenda_id) : null;
+  const tallas = ordenarTallas(Object.keys(tallasLote ?? {})).filter((t) => (tallasLote[t] ?? 0) > 0);
 
-  const [destino, setDestino] = useState<"online" | "estampado" | "local">("online");
-  const [disenos, setDisenos] = useState<{ nombre: string; unidades: string }[]>([{ nombre: "", unidades: "" }]);
+  // Fase 8s: arranca como antes —todo al stock online— y cada destino que se
+  // marca se lleva su parte talla por talla.
+  const [form, setForm] = useState<RepartoForm>(() => ({
+    activos: ["online"],
+    online: Object.fromEntries(tallas.map((t) => [t, String(tallasLote[t])])),
+    local: {},
+    feria: {},
+    disenos: [{ nombre: "", tallas: {} }],
+  }));
   const [costoEstampado, setCostoEstampado] = useState("2");
-  const [tallasLocal, setTallasLocal] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    for (const [t, v] of Object.entries(tallasLote ?? {})) if (Number(v) > 0) init[t] = String(v);
-    return init;
-  });
   const [productoCodigo, setProductoCodigo] = useState("");
   const [localDestino, setLocalDestino] = useState("");
+  const [feriaId, setFeriaId] = useState("");
   const [ocupado, setOcupado] = useState(false);
 
   const cfPorUnidad = data.costosFijos.reduce((s, c) => s + Number(c.valor), 0);
@@ -79,57 +96,63 @@ function LoteCard({ lote }: { lote: Lote }) {
   const costoUnitario =
     (col.costo_unitario != null ? Number(col.costo_unitario) : Number(maquila.costo_unitario)) + cfPorUnidad;
   const precioLocal = prenda ? Number(prenda.precio_venta_local) : 0;
-
-  const unidadesEstampar = disenos.reduce((s, d) => s + (parseInt(d.unidades, 10) || 0), 0);
   const costoEst = parseFloat(costoEstampado) || 0;
-  const unidadesLocal = Object.values(tallasLocal).reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+
+  const activo = (d: DestinoEnvio) => form.activos.includes(d);
+  const falta = faltaPorTalla(tallasLote, form);
+  const porTallaEstampado = tallasEstampado(form.disenos);
+  const problemas = problemasReparto(tallasLote, form);
+  if (activo("feria") && !feriaId) problemas.push("Elige a qué feria va la mercadería.");
+  const und = (d: DestinoEnvio) => unidadesDestino(form, d);
+
+  // Los destinos marcados se muestran siempre en el orden de DESTINOS, no en el que se marcaron.
+  const alternar = (d: DestinoEnvio) =>
+    setForm((f) => ({
+      ...f,
+      activos: DESTINOS.map((x) => x.id).filter((x) => (x === d ? !f.activos.includes(d) : f.activos.includes(x))),
+    }));
+  const escribir = (d: "online" | "local" | "feria", talla: string, v: string) =>
+    setForm((f) => ({ ...f, [d]: { ...f[d], [talla]: v } }));
+  const escribirDiseno = (i: number, cambio: Partial<DisenoReparto>) =>
+    setForm((f) => ({ ...f, disenos: f.disenos.map((d, j) => (j === i ? { ...d, ...cambio } : d)) }));
 
   /**
-   * Fase 8o: fn_procesar_entrega_maquila (antes fn_procesar_lote_maquila, fase 7). Antes esto eran, desde el
-   * navegador y sin transacción, un insert + N sumas de stock + marcar procesado; si
-   * algo fallaba a mitad el color NO quedaba procesado, seguía en la lista, y volver
-   * a pulsar creaba un segundo lote y duplicaba el stock. Ahora la función bloquea
-   * la fila del color y rechaza el reproceso.
-   * Las reglas (unidades del lote, diseños, tallas disponibles) viven allí.
+   * Fase 8s: fn_repartir_entrega_maquila (antes fn_procesar_entrega_maquila, 8o).
+   * Una sola llamada reparte la entrega entre los destinos marcados; la función
+   * bloquea la entrega, exige que cada talla cuadre exacto y rechaza el reproceso.
    */
   async function procesar() {
+    if (problemas.length) return;
     setOcupado(true);
     try {
-      const tallasLocalNum: Record<string, number> = {};
-      for (const [t, v] of Object.entries(tallasLocal)) {
-        const n = parseInt(v, 10) || 0;
-        if (n > 0) tallasLocalNum[t] = n;
-      }
-
-      const { data: res, error } = await supabase.rpc("fn_procesar_entrega_maquila", {
+      const r = repartoParaBase(form);
+      const { data: res, error } = await supabase.rpc("fn_repartir_entrega_maquila", {
         p_entrega_id: entrega.id,
-        p_destino: destino,
-        p_disenos:
-          destino === "estampado"
-            ? disenos
-                .map((d) => ({ nombre: d.nombre.trim(), unidades: parseInt(d.unidades, 10) || 0 }))
-                .filter((d) => d.nombre && d.unidades > 0)
-            : [],
-        p_costo_estampado: costoEst,
-        p_tallas_local: destino === "local" ? tallasLocalNum : {},
-        p_local_destino: localDestino || null,
-        p_producto_codigo: productoCodigo.trim() || null,
-        p_precio_local: precioLocal,
-        p_costo_unitario: costoUnitario,
+        p_reparto: {
+          online: r.online,
+          estampado: r.disenos ? { costo: costoEst, disenos: r.disenos } : null,
+          local: r.local
+            ? {
+                tallas: r.local,
+                local_destino: localDestino || null,
+                producto_codigo: productoCodigo.trim() || null,
+                precio: precioLocal,
+                costo_unitario: costoUnitario,
+              }
+            : null,
+          feria: r.feria ? { feria_id: feriaId, tallas: r.feria, costo_unitario: costoUnitario } : null,
+        },
       });
       if (error) throw new Error(error.message);
 
-      const r = (res ?? {}) as { unidades?: number; resto?: number };
-      const und = r.unidades ?? 0;
-      const resto = r.resto ?? 0;
-      const cola = resto > 0 ? ` · ${resto} und. al stock online` : "";
-      toast(
-        destino === "online"
-          ? `Lote ingresado al stock online · ${und} unidades`
-          : destino === "estampado"
-            ? `Lote a estampar (${und} und.)${cola}`
-            : `${und} und. a locales${cola}`
-      );
+      const n = (res ?? {}) as Partial<Record<DestinoEnvio, number>>;
+      const partes = [
+        n.online ? `${n.online} al stock online` : "",
+        n.estampado ? `${n.estampado} a estampar` : "",
+        n.local ? `${n.local} a locales` : "",
+        n.feria ? `${n.feria} a feria` : "",
+      ].filter(Boolean);
+      toast(`Entrega procesada · ${partes.join(" · ")}`);
       await reload();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -137,6 +160,13 @@ function LoteCard({ lote }: { lote: Lote }) {
       setOcupado(false);
     }
   }
+
+  const celda = { padding: "6px 8px", textAlign: "center" as const };
+  const inputTalla = (valor: string | undefined, max: number, onChange: (v: string) => void) => (
+    <input className="pinput" type="number" min="0" max={max} inputMode="numeric"
+      style={{ width: 58, textAlign: "center", padding: "6px 4px" }}
+      value={valor ?? ""} onChange={(e) => onChange(e.target.value)} />
+  );
 
   return (
     <div className="prod-card">
@@ -161,74 +191,116 @@ function LoteCard({ lote }: { lote: Lote }) {
       </div>
 
       <div style={{ margin: "14px 0 10px" }}>
-        <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Destino</div>
+        <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Destinos · marca uno o varios</div>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-          {([
-            ["online", "Stock online"],
-            ["estampado", "Enviar a estampado"],
-            ["local", "Ventas a locales"],
-          ] as const).map(([v, label]) => (
-            <label key={v} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" }}>
-              <input type="radio" checked={destino === v} onChange={() => setDestino(v)}
+          {DESTINOS.map(({ id, etiqueta }) => (
+            <label key={id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" }}>
+              <input type="checkbox" checked={activo(id)} onChange={() => alternar(id)}
                 style={{ accentColor: "var(--accent)" }} />
-              {label}
+              {etiqueta}
             </label>
           ))}
         </div>
       </div>
 
-      {destino === "estampado" && (
+      {form.activos.length > 0 && (
+        <div className="table-scroll" style={{ marginBottom: 12 }}>
+          <table style={{ width: "auto", minWidth: "100%" }}>
+            <thead>
+              <tr>
+                <th style={celda}>Talla</th>
+                <th style={celda}>Llegó</th>
+                {DESTINOS.filter((d) => activo(d.id)).map((d) => <th key={d.id} style={celda}>{d.etiqueta}</th>)}
+                <th style={celda}>Falta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tallas.map((t) => {
+                const f = falta[t] ?? 0;
+                return (
+                  <tr key={t}>
+                    <td style={{ ...celda, fontWeight: 600 }}>{t}</td>
+                    <td style={celda} className="num">{tallasLote[t]}</td>
+                    {activo("online") && <td style={celda}>{inputTalla(form.online[t], tallasLote[t], (v) => escribir("online", t, v))}</td>}
+                    {activo("estampado") && (
+                      <td style={celda} className="num" title="Se llena con los diseños de abajo">
+                        {porTallaEstampado[t] ?? 0}
+                      </td>
+                    )}
+                    {activo("local") && <td style={celda}>{inputTalla(form.local[t], tallasLote[t], (v) => escribir("local", t, v))}</td>}
+                    {activo("feria") && <td style={celda}>{inputTalla(form.feria[t], tallasLote[t], (v) => escribir("feria", t, v))}</td>}
+                    <td style={{ ...celda, fontWeight: 600, color: f === 0 ? "var(--good)" : "var(--bad)" }}>
+                      {f === 0 ? "✓" : f > 0 ? f : `+${-f}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activo("online") && form.activos.length > 1 && (
+        <button className="btn" style={{ fontSize: 12, marginBottom: 12 }}
+          onClick={() => setForm((f) => ({ ...f, online: completarConOnline(tallasLote, f) }))}>
+          Lo que sobra → stock online
+        </button>
+      )}
+
+      {activo("estampado") && (
         <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-          <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Diseños a estampar</div>
-          {disenos.map((d, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-              <input className="pinput" style={{ flex: 2 }} placeholder="Ej: Logo frontal" value={d.nombre}
-                onChange={(e) => setDisenos(disenos.map((x, j) => (j === i ? { ...x, nombre: e.target.value } : x)))} />
-              <input className="pinput" style={{ flex: 1 }} type="number" min="0" max={unidadesLote} placeholder="und."
-                value={d.unidades}
-                onChange={(e) => setDisenos(disenos.map((x, j) => (j === i ? { ...x, unidades: e.target.value } : x)))} />
-              <button className="btn" style={{ padding: "4px 10px" }}
-                onClick={() => setDisenos(disenos.filter((_, j) => j !== i))}>✕</button>
-            </div>
-          ))}
-          <button className="btn" style={{ fontSize: 12, marginBottom: 10 }}
-            onClick={() => setDisenos([...disenos, { nombre: "", unidades: "" }])}>+ Agregar diseño</button>
+          <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Estampado · cuántas de cada talla lleva cada diseño</div>
+          <div className="table-scroll">
+            <table style={{ width: "auto", minWidth: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...celda, textAlign: "left" }}>Diseño</th>
+                  {tallas.map((t) => <th key={t} style={celda}>{t}</th>)}
+                  <th style={celda}>Total</th>
+                  <th style={celda}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {form.disenos.map((d, i) => (
+                  <tr key={i}>
+                    <td style={{ ...celda, textAlign: "left" }}>
+                      <input className="pinput" style={{ minWidth: 130 }} placeholder="Ej: Logo frontal" value={d.nombre}
+                        onChange={(e) => escribirDiseno(i, { nombre: e.target.value })} />
+                    </td>
+                    {tallas.map((t) => (
+                      <td key={t} style={celda}>
+                        {inputTalla(d.tallas[t], tallasLote[t], (v) => escribirDiseno(i, { tallas: { ...d.tallas, [t]: v } }))}
+                      </td>
+                    ))}
+                    <td style={celda} className="num">
+                      {Object.values(d.tallas).reduce((s, v) => s + cantidad(v), 0)}
+                    </td>
+                    <td style={celda}>
+                      <button className="btn" style={{ padding: "4px 10px" }} disabled={form.disenos.length === 1}
+                        onClick={() => setForm((f) => ({ ...f, disenos: f.disenos.filter((_, j) => j !== i) }))}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button className="btn" style={{ fontSize: 12, margin: "8px 0 10px" }}
+            onClick={() => setForm((f) => ({ ...f, disenos: [...f.disenos, { nombre: "", tallas: {} }] }))}>+ Agregar diseño</button>
           <Fila>
             <Campo label="Costo por unidad estampada ($)">
               <input className="pinput" type="number" step="0.01" min="0" value={costoEstampado}
                 onChange={(e) => setCostoEstampado(e.target.value)} />
             </Campo>
-            <div style={{ flex: 2, alignSelf: "flex-end", fontSize: 12.5, paddingBottom: 14 }}
-              className={unidadesEstampar > unidadesLote ? "" : "sub"}>
-              {unidadesEstampar > unidadesLote ? (
-                <span style={{ color: "var(--bad)" }}>
-                  ⚠ {unidadesEstampar} und. superan las {unidadesLote} de la entrega
-                </span>
-              ) : (
-                <>Total: <b>{unidadesEstampar}</b> und. · costo {money(unidadesEstampar * costoEst)}
-                  {unidadesEstampar < unidadesLote && unidadesEstampar > 0 &&
-                    <> · las {unidadesLote - unidadesEstampar} restantes van al stock online</>}
-                </>
-              )}
+            <div style={{ flex: 2, alignSelf: "flex-end", fontSize: 12.5, paddingBottom: 14 }} className="sub">
+              Total: <b>{und("estampado")}</b> und. · costo {money(und("estampado") * costoEst)}
             </div>
           </Fila>
         </div>
       )}
 
-      {destino === "local" && (
+      {activo("local") && (
         <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-          <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Unidades por talla a enviar</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-            {ordenarTallas(Object.keys(tallasLote ?? {})).filter((t) => (tallasLote[t] ?? 0) > 0).map((t) => (
-              <div key={t} style={{ textAlign: "center" }}>
-                <div className="sub" style={{ fontSize: 11 }}>{t} <span style={{ opacity: 0.6 }}>/ {tallasLote[t]}</span></div>
-                <input className="pinput" type="number" min="0" max={tallasLote[t]}
-                  style={{ width: 62, textAlign: "center" }}
-                  value={tallasLocal[t] ?? ""}
-                  onChange={(e) => setTallasLocal({ ...tallasLocal, [t]: e.target.value })} />
-              </div>
-            ))}
-          </div>
+          <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Locales</div>
           <Fila>
             <Campo label="Local destino (para cruzar con las guías de logística)">
               <select className="pinput" value={localDestino} onChange={(e) => setLocalDestino(e.target.value)}>
@@ -249,19 +321,105 @@ function LoteCard({ lote }: { lote: Lote }) {
           <div style={{ fontSize: 12.5, display: "grid", gridTemplateColumns: "auto auto", gap: "3px 16px", width: "fit-content" }}>
             <span className="sub">Precio local:</span><span className="num">{money(precioLocal)}</span>
             <span className="sub">Costo por unidad (maquila + fijos):</span><span className="num">{money(costoUnitario)}</span>
-            <span className="sub">Ingreso ({unidadesLocal} und.):</span><span className="num">{money(unidadesLocal * precioLocal)}</span>
+            <span className="sub">Ingreso ({und("local")} und.):</span><span className="num">{money(und("local") * precioLocal)}</span>
             <span className="sub">Margen:</span>
-            <span className="num" style={{ color: unidadesLocal * (precioLocal - costoUnitario) >= 0 ? "var(--good)" : "var(--bad)" }}>
-              {money(unidadesLocal * (precioLocal - costoUnitario))}
+            <span className="num" style={{ color: und("local") * (precioLocal - costoUnitario) >= 0 ? "var(--good)" : "var(--bad)" }}>
+              {money(und("local") * (precioLocal - costoUnitario))}
             </span>
           </div>
         </div>
       )}
 
+      {activo("feria") && <FeriaPanel feriaId={feriaId} setFeriaId={setFeriaId} unidades={und("feria")} costoUnitario={costoUnitario} />}
+
+      {problemas.length > 0 && (
+        <div style={{ fontSize: 12.5, color: "var(--warn)", marginBottom: 10 }}>
+          {problemas.map((p) => <div key={p}>⚠ {p}</div>)}
+        </div>
+      )}
+
       <div style={{ textAlign: "right" }}>
-        <button className="btn primary" style={{ fontSize: 13 }} disabled={ocupado} onClick={procesar}>
+        <button className="btn primary" style={{ fontSize: 13 }} disabled={ocupado || problemas.length > 0} onClick={procesar}>
           {ocupado ? "Procesando…" : "Procesar entrega"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fase 8s: a qué feria va la mercadería. Se elige una abierta o se crea ahí
+ * mismo. Lo que se gana en la feria se anota a mano en Finanzas; aquí solo
+ * queda qué salió y cuánto costó producirlo.
+ */
+function FeriaPanel({
+  feriaId,
+  setFeriaId,
+  unidades,
+  costoUnitario,
+}: {
+  feriaId: string;
+  setFeriaId: (id: string) => void;
+  unidades: number;
+  costoUnitario: number;
+}) {
+  const { data, supabase, reload, toast } = useProd();
+  const abiertas = data.ferias.filter((f) => !f.cerrada_en);
+  const [creando, setCreando] = useState(abiertas.length === 0);
+  const [nombre, setNombre] = useState("");
+  const [fecha, setFecha] = useState(hoyEcuador());
+  const [ocupado, setOcupado] = useState(false);
+
+  async function crear() {
+    if (!nombre.trim() || ocupado) return;
+    setOcupado(true);
+    const { data: nueva, error } = await supabase
+      .from("prod_ferias")
+      .insert({ nombre: nombre.trim(), fecha })
+      .select("id")
+      .single();
+    setOcupado(false);
+    if (error) return toast(error.message, "error");
+    await reload();
+    setFeriaId(nueva.id);
+    setCreando(false);
+    setNombre("");
+  }
+
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+      <div className="label" style={{ fontSize: 10.5, marginBottom: 8 }}>Feria</div>
+      {creando ? (
+        <Fila>
+          <Campo label="Nombre de la feria">
+            <input className="pinput" placeholder="Ej: Feria Navideña CCI" value={nombre}
+              onChange={(e) => setNombre(e.target.value)} />
+          </Campo>
+          <Campo label="Fecha">
+            <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          </Campo>
+          <div style={{ alignSelf: "flex-end", paddingBottom: 14, display: "flex", gap: 8 }}>
+            <button className="btn primary" disabled={!nombre.trim() || ocupado} onClick={crear}>
+              {ocupado ? "Creando…" : "Crear feria"}
+            </button>
+            {abiertas.length > 0 && <button className="btn" onClick={() => setCreando(false)}>Cancelar</button>}
+          </div>
+        </Fila>
+      ) : (
+        <Fila>
+          <Campo label="¿A qué feria va?">
+            <select className="pinput" value={feriaId} onChange={(e) => setFeriaId(e.target.value)}>
+              <option value="">— Elige una feria —</option>
+              {abiertas.map((f) => <option key={f.id} value={f.id}>{f.nombre} · {fmtFecha(f.fecha)}</option>)}
+            </select>
+          </Campo>
+          <div style={{ alignSelf: "flex-end", paddingBottom: 14 }}>
+            <button className="btn" onClick={() => setCreando(true)}>+ Nueva feria</button>
+          </div>
+        </Fila>
+      )}
+      <div className="sub" style={{ fontSize: 12.5 }}>
+        {unidades} und. · costo de producción {money(costoUnitario)} c/u · {money(unidades * costoUnitario)} en total
       </div>
     </div>
   );
@@ -340,6 +498,12 @@ function Historial() {
       fecha: v.fecha,
       texto: `${v.prenda_nombre} · ${v.color} · ${v.unidades} und. a locales · margen ${money(Number(v.margen))}${v.producto_codigo ? ` · ${v.producto_codigo}` : ""}`,
       badge: <Badge color="azul">Locales</Badge>,
+    })),
+    ...data.feriaIngresos.map((f) => ({
+      key: `f-${f.id}`,
+      fecha: f.fecha,
+      texto: `${f.prenda_nombre} · ${f.color} · ${f.unidades} und. a ${data.ferias.find((x) => x.id === f.feria_id)?.nombre ?? "feria"}`,
+      badge: <Badge color="verde">Feria</Badge>,
     })),
   ].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
 
