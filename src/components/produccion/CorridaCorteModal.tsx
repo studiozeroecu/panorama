@@ -39,6 +39,8 @@ export interface BloqueCorrida {
   ancho: AnchoDocumento;
   filas: { talla: string; unidades: number }[];
   llevaRetazo: boolean;
+  /** Solo los ribs con nombre o ancho escritos: lo que se imprime. */
+  ribs: { nombre: string; ancho: string }[];
   columnas: ColumnaDocumento[];
   porCapa: number;
   /** Pieza 2: solo si se eligió una mesa para esta tela. Es opcional. */
@@ -58,6 +60,8 @@ export default function CorridaCorteModal({
   const [corridas, setCorridas] = useState<Record<string, Record<string, string>>>({});
   // retazos[pedidoId] = sus filas. Sin clave = esa tela no lleva retazo.
   const [retazos, setRetazos] = useState<Record<string, FilaRetazo[]>>({});
+  // ribs[pedidoId] = sus filas. Sin clave = esa tela no lleva rib. Solo van en el papel.
+  const [ribs, setRibs] = useState<Record<string, { nombre: string; ancho: string }[]>>({});
   const [fecha, setFecha] = useState(hoyEcuador());
   const [nota, setNota] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -110,6 +114,9 @@ export default function CorridaCorteModal({
             ancho,
             filas: tallasConUnidades(tallas, corrida),
             llevaRetazo: !!retazos[pedido.id],
+            ribs: (ribs[pedido.id] ?? [])
+              .map((r) => ({ nombre: r.nombre.trim(), ancho: r.ancho.trim() }))
+              .filter((r) => r.nombre || r.ancho),
             columnas: columnasDocumento(tallasConUnidades(tallas, corrida), retazos[pedido.id] ?? []),
             porCapa: totalCorrida(corrida),
             mesa: mesa && largo > 0
@@ -123,7 +130,7 @@ export default function CorridaCorteModal({
         }),
     // prendaDe depende de data.prendas, que ya está en las dependencias.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel, porCortar, corridas, retazos, data.prendas, mesas, mesaDe]
+    [sel, porCortar, corridas, retazos, ribs, data.prendas, mesas, mesaDe]
   );
 
   const listo = bloques.length > 0 && bloques.every((b) => b.filas.length > 0);
@@ -188,6 +195,21 @@ export default function CorridaCorteModal({
 
   function ponerRetazo(pedidoId: string, i: number, cambio: Partial<FilaRetazo>) {
     setRetazos((prev) => ({
+      ...prev,
+      [pedidoId]: prev[pedidoId].map((r, j) => (j === i ? { ...r, ...cambio } : r)),
+    }));
+  }
+
+  function alternarRib(pedidoId: string) {
+    setRibs((prev) => {
+      if (!prev[pedidoId]) return { ...prev, [pedidoId]: [{ nombre: "", ancho: "" }] };
+      const { [pedidoId]: _, ...resto } = prev;
+      return resto;
+    });
+  }
+
+  function ponerRib(pedidoId: string, i: number, cambio: { nombre?: string; ancho?: string }) {
+    setRibs((prev) => ({
       ...prev,
       [pedidoId]: prev[pedidoId].map((r, j) => (j === i ? { ...r, ...cambio } : r)),
     }));
@@ -365,6 +387,44 @@ export default function CorridaCorteModal({
                   >+ Otra talla</button>
                 )}
 
+                <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, fontSize: 12.5, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!ribs[b.pedido.id]} onChange={() => alternarRib(b.pedido.id)} />
+                  Lleva rib
+                </label>
+                {(ribs[b.pedido.id] ?? []).map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                    <input
+                      className="pinput" style={{ width: 200 }} placeholder="Nombre del rib" value={r.nombre}
+                      onChange={(e) => ponerRib(b.pedido.id, i, { nombre: e.target.value })}
+                    />
+                    <input
+                      className="pinput" type="number" min={0} step="0.1" style={{ width: 110, textAlign: "center" }}
+                      placeholder="Ancho (cm)" value={r.ancho}
+                      onChange={(e) => ponerRib(b.pedido.id, i, { ancho: e.target.value })}
+                    />
+                    <button
+                      className="btn" style={{ padding: "4px 10px" }}
+                      onClick={() =>
+                        setRibs((prev) => ({
+                          ...prev,
+                          [b.pedido.id]: prev[b.pedido.id].filter((_, j) => j !== i),
+                        }))
+                      }
+                    >✕</button>
+                  </div>
+                ))}
+                {ribs[b.pedido.id] && (
+                  <button
+                    className="btn" style={{ fontSize: 12, padding: "4px 10px", marginTop: 6 }}
+                    onClick={() =>
+                      setRibs((prev) => ({
+                        ...prev,
+                        [b.pedido.id]: [...prev[b.pedido.id], { nombre: "", ancho: "" }],
+                      }))
+                    }
+                  >+ Otro rib</button>
+                )}
+
                 {/* Pieza 2 · área estimada. Opcional: sin mesa elegida no pasa nada. */}
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
                   <select
@@ -507,6 +567,9 @@ export function HojaCorrida({
               <b>{Number(b.pedido.total_metros).toFixed(1)} m</b>
             </p>
 
+            <p className="capas">
+              Esta corrida es por <b>una capa</b> y aplica igual a <b>todos los colores</b> de esta tela.
+            </p>
             <table>
               <thead>
                 <tr>
@@ -531,13 +594,16 @@ export function HojaCorrida({
                 )}
               </tbody>
             </table>
-            <p className="dato" style={{ marginTop: 7 }}>
-              Esta corrida es por <b>una capa</b> y aplica igual a <b>todos los colores</b> de esta tela.
-            </p>
+            {b.ribs.map((r, i) => (
+              <p className="dato" key={i} style={{ marginTop: i ? 2 : 7 }}>
+                Rib: <b>{r.nombre || "—"}</b>
+                {r.ancho && <> · ancho <b>{r.ancho} cm</b></>}
+              </p>
+            ))}
           </section>
         ))}
 
-        {nota.trim() && <div className="hoja-nota">{nota.trim()}</div>}
+        {nota.trim() && <div className="hoja-nota">Observaciones: {nota.trim()}</div>}
       </div>
   );
 }
