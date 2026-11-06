@@ -69,6 +69,23 @@ export default function CorteTab() {
   const prendaDe = (p: PedidoTela | null) => data.prendas.find((x) => x.id === p?.prenda_id);
 
   /**
+   * El propósito de una tela cambia en cualquier momento. Con cortes se avisa: el
+   * corte toma su prenda del pedido, así que esos cortes también cambian de nombre.
+   * Lo que ya salió por Envío guardó su nombre y su costo, y no cambia.
+   */
+  async function cambiarProposito(p: PedidoTela, prendaId: string) {
+    const cortes = data.cortes.filter((c) => c.pedido_id === p.id).length;
+    const nombre = data.prendas.find((x) => x.id === prendaId)?.nombre ?? "sin especificar";
+    if (cortes && !window.confirm(
+      `«${p.nombre_tela}» ya tiene ${cortes} corte${cortes !== 1 ? "s" : ""}: también pasarán a ser de ${nombre}. ¿Cambiar?`
+    )) return;
+    const { error } = await supabase.from("prod_pedidos_tela").update({ prenda_id: prendaId || null }).eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.nombre_tela}»: ahora es para ${nombre}`);
+    await reload();
+  }
+
+  /**
    * Fase 8r: las filas del formulario. Una por color en una prenda sola; DOS por
    * color (superior e inferior) si la prenda de la tela es un conjunto. La clave
    * de cada fila es la que usan la matriz de tallas y los metros.
@@ -180,8 +197,19 @@ export default function CorteTab() {
             <h4><NombreTela pedido={p} /></h4>
             <div className="prod-meta">
               {Number(p.total_metros).toFixed(1)} m comprados
-              {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
+              {" · "}entregado {fmtFecha(p.fecha_entrega_real)}
             </div>
+            <label className="sub" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12.5 }}>
+              Propósito:
+              <select className="pinput" style={{ width: "auto", padding: "3px 6px", fontSize: 12.5 }}
+                value={p.prenda_id ?? ""} onChange={(e) => cambiarProposito(p, e.target.value)}>
+                <option value="">— Sin especificar —</option>
+                {/* Regla de la fase 8e: las archivadas no se eligen, pero la que ya tiene se conserva. */}
+                {data.prendas.filter((x) => !x.archivada_en || x.id === p.prenda_id).map((x) => (
+                  <option key={x.id} value={x.id}>{x.nombre}</option>
+                ))}
+              </select>
+            </label>
             <PedidosUnidos pedido={p} />
             <div style={{ marginTop: 6 }}>
               <Badge color={saldo > 0.5 ? "verde" : "gris"}>
