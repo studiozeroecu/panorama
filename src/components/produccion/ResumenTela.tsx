@@ -11,6 +11,26 @@ import { fmtFecha } from "@/lib/fechas";
 import { fmtHoras } from "@/lib/produccion/horas";
 
 /**
+ * Fase 8z: de qué pedidos salió una tela juntada. Los otros pedidos ya no
+ * existen, así que proveedor, fecha y precio de cada uno solo se ven aquí.
+ */
+export function PedidosUnidos({ pedido }: { pedido: PedidoTela }) {
+  const fotos = pedido.pedidos_unidos ?? [];
+  if (!fotos.length) return null;
+  return (
+    <details style={{ marginTop: 4, fontSize: 12 }}>
+      <summary className="sub" style={{ cursor: "pointer" }}>🔗 Junta {fotos.length} pedidos</summary>
+      {fotos.map((f) => (
+        <div key={f.id} className="sub" style={{ padding: "2px 0 0 14px" }}>
+          {f.nombre_tela}{f.proveedor ? ` · ${f.proveedor}` : ""} · pedido {fmtFecha(f.fecha_pedido)} ·{" "}
+          {Number(f.total_metros).toFixed(1)} m a {money(Number(f.valor_metro))} = {money(Number(f.total_pagar))}
+        </div>
+      ))}
+    </details>
+  );
+}
+
+/**
  * El nombre de una tela, clicable: abre el resumen de lo que lleva gastado,
  * en la etapa en que esté. Se usa en todas las pestañas donde sale una tela
  * (Pedidos, Llegada, Corte, Maquila, Envío), así el resumen está a un toque

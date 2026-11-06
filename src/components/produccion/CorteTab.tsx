@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
-import NombreTela from "./ResumenTela";
+import NombreTela, { PedidosUnidos } from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
@@ -11,6 +11,7 @@ import CorridaCorteModal from "./CorridaCorteModal";
 import CostoCorteCard from "./CostoCorteCard";
 import CorregirCorteModal from "./CorregirCorteModal";
 import ConvertirConjuntoModal from "./ConvertirConjuntoModal";
+import JuntarPedidosModal from "./JuntarPedidosModal";
 import type { Corte } from "@/lib/produccion/types";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { PARTES, nombreParte, etiquetaFila, type Parte } from "@/lib/produccion/conjuntos";
@@ -33,6 +34,8 @@ export default function CorteTab() {
   const [corrigiendo, setCorrigiendo] = useState<Corte | null>(null);
   // Fase 8x: el corte de conjunto viejo que se está separando por partes.
   const [separando, setSeparando] = useState<Corte | null>(null);
+  // Fase 8z: juntar pedidos de la misma tela antes de cortar.
+  const [juntando, setJuntando] = useState(false);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -158,6 +161,7 @@ export default function CorteTab() {
     avanceCorte(p.total_metros, p.colores ?? [], data.cortes.filter((c) => c.pedido_id === p.id)).listo;
   const porCortar = entregados.filter((p) => !estaCortada(p));
   const yaCortadas = entregados.filter(estaCortada);
+  const sinCortes = entregados.filter((p) => !data.cortes.some((c) => c.pedido_id === p.id));
 
   const tarjeta = (p: PedidoTela) => {
     const saldo = saldoDe(p);
@@ -178,6 +182,7 @@ export default function CorteTab() {
               {Number(p.total_metros).toFixed(1)} m comprados
               {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
             </div>
+            <PedidosUnidos pedido={p} />
             <div style={{ marginTop: 6 }}>
               <Badge color={saldo > 0.5 ? "verde" : "gris"}>
                 Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
@@ -235,10 +240,16 @@ export default function CorteTab() {
       <div className="section-head">
         <h2>Corte <span className="sub" style={{ fontWeight: 400 }}>· unidades por color y talla, con control de tela</span></h2>
         {/* A nivel de pantalla y no por tarjeta: el documento combina varias telas. */}
-        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
-          📄 Corrida de corte
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {sinCortes.length >= 2 && (
+            <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setJuntando(true)}>🔗 Juntar telas</button>
+          )}
+          <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
+            📄 Corrida de corte
+          </button>
+        </div>
       </div>
+      {juntando && <JuntarPedidosModal candidatos={sinCortes} onCerrar={() => setJuntando(false)} />}
       <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
       {corrigiendo && <CorregirCorteModal corte={corrigiendo} onCerrar={() => setCorrigiendo(null)} />}
       {separando && <ConvertirConjuntoModal corte={separando} onCerrar={() => setSeparando(null)} />}

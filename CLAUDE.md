@@ -70,7 +70,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8y_salida_bodega.sql` ✅ **aplicada el 2026-10-27**
+`schema_fase8y_salida_bodega.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8z_unir_pedidos.sql` ✅ **aplicada el 2026-11-06**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -398,6 +399,25 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-11-06 — producción — `schema_fase8z_unir_pedidos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8z.sql`: 5/5. ⚠️ **Se aplicó antes de
+desplegar:** `useProduccion` pide `pedidos_unidos`; sin la fase, `/produccion` no carga.
+
+- **Juntar telas** (*🔗 Juntar telas* en Corte, `JuntarPedidosModal.tsx`): dos pedidos de la misma
+  tela que llegaron juntos se cortan como uno. Decisión del dueño: quedan como **UN solo pedido**,
+  así saldo, cortadora, costos y resumen por tela no cambian: siguen viendo un pedido.
+- **`fn_unir_pedidos(ids[], nombre, prenda)`** (el primero = el más antiguo, es el que se queda):
+  suma metros por color (criterio `lower(btrim(color))`) y dinero; `valor_metro` = total ÷ metros.
+  Si los pedidos eran para **prendas distintas**, el dueño elige para cuál es. Solo telas
+  `entregado` y **sin cortes**. Metros + kilos mezclados queda en metros. Reintento =
+  `{"ya_unido": true}`, no error.
+- ⚠️ **Los otros pedidos se BORRAN** (no se archivan): con su `total_pagar` vivo, cada lista y
+  resumen contaría el dinero dos veces. Quedan como FOTO en la columna nueva
+  **`prod_pedidos_tela.pedidos_unidos`** (jsonb), que se muestra con `PedidosUnidos`. **No se puede
+  deshacer.** Vista previa en `src/lib/produccion/unirPedidos.ts`, con tests.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-27 — producción — `schema_fase8y_salida_bodega.sql` ✅ EJECUTADA
 

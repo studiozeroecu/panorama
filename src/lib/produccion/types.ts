@@ -95,6 +95,20 @@ export interface PedidoTela {
   ancho_recibido: number | null;
   /** Fase 8o: qué hacer con la tela al volver de maquila. SOLO informativo: Envío decide. */
   destino_indicado: "locales" | "estampado" | null;
+  /** Fase 8z: FOTO de los pedidos que se juntaron en este. Vacío = pedido normal. */
+  pedidos_unidos: PedidoUnido[];
+}
+
+export interface PedidoUnido {
+  id: string;
+  nombre_tela: string;
+  proveedor: string | null;
+  fecha_pedido: string;
+  fecha_entrega_real: string | null;
+  total_metros: number;
+  valor_metro: number;
+  total_pagar: number;
+  ancho_real: number | null;
 }
 
 export interface ColorCorte {
