@@ -309,11 +309,19 @@ export interface IngresoFeria {
 
 export const TALLA_ORDER = ["XS", "S", "M", "L", "XL", "XXL"];
 
+/**
+ * Más amplio que TALLA_ORDER, que son las columnas fijas de los formularios: una
+ * talla agregada a mano tiene que caer en su sitio. Una XXS al final se confundió
+ * con XXL en el corte.
+ */
+const ORDEN_TALLAS = ["XXS", ...TALLA_ORDER, "XXXL", "3XL", "4XL"];
+
+export function rangoTalla(talla: string): number {
+  return ORDEN_TALLAS.indexOf(talla) + 1 || 99;
+}
+
 export function ordenarTallas(tallas: string[]): string[] {
-  return [...tallas].sort(
-    (a, b) =>
-      (TALLA_ORDER.indexOf(a) + 1 || 99) - (TALLA_ORDER.indexOf(b) + 1 || 99)
-  );
+  return [...tallas].sort((a, b) => rangoTalla(a) - rangoTalla(b));
 }
 
 export function money(n: number | null | undefined): string {

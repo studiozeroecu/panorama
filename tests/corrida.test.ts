@@ -234,3 +234,13 @@ describe("tallasConCorrida", () => {
     expect(tallasConCorrida(["S", "M"], null)).toEqual(["S", "M"]);
   });
 });
+
+describe("tallas agregadas a mano", () => {
+  it("una XXS va antes de la XS, no al final", () => {
+    expect(tallasConCorrida(["XS", "S", "M", "L"], { XXS: 1 })).toEqual(["XXS", "XS", "S", "M", "L"]);
+  });
+
+  it("una XXXL va después de la XXL", () => {
+    expect(tallasConCorrida(["XL", "XXL"], { XXXL: 1 })).toEqual(["XL", "XXL", "XXXL"]);
+  });
+});

@@ -10,7 +10,7 @@ import {
 } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { TALLA_ORDER } from "@/lib/produccion/types";
+import { rangoTalla } from "@/lib/produccion/types";
 import type {
   Prenda,
   Proveedor,
@@ -47,7 +47,7 @@ interface FilaTalla {
 function aTallas(filas: FilaTalla[] | null | undefined): Record<string, number> {
   const out: Record<string, number> = {};
   const orden = [...(filas ?? [])].sort(
-    (a, b) => (TALLA_ORDER.indexOf(a.talla) + 1 || 99) - (TALLA_ORDER.indexOf(b.talla) + 1 || 99)
+    (a, b) => rangoTalla(a.talla) - rangoTalla(b.talla)
   );
   for (const f of orden) out[f.talla] = Number(f.unidades);
   return out;

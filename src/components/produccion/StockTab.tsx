@@ -4,7 +4,7 @@ import { useState } from "react";
 import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
-import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
+import { money, rangoTalla, type StockOnline } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha, sumarDias } from "@/lib/fechas";
 import SalidaBodega from "./SalidaBodega";
 
@@ -108,7 +108,7 @@ export default function StockTab() {
           const disp = items.reduce((s, v) => s + v.disponibles, 0);
           const vend = items.reduce((s, v) => s + v.vendidas, 0);
           const sorted = [...items].sort(
-            (a, b) => (TALLA_ORDER.indexOf(a.talla) + 1 || 99) - (TALLA_ORDER.indexOf(b.talla) + 1 || 99)
+            (a, b) => rangoTalla(a.talla) - rangoTalla(b.talla)
           );
           return (
             <div className="prod-card" key={k}>
