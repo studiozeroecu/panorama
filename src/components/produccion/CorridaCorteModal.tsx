@@ -433,14 +433,22 @@ export function HojaCorrida({
             <table>
               <thead>
                 <tr>
+                  <th></th>
                   {b.filas.map((f) => <th key={f.talla}>{f.talla}</th>)}
                   <th>POR CAPA</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
+                  <td style={{ fontSize: 13 }}>Corrida</td>
                   {b.filas.map((f) => <td key={f.talla}>{f.unidades}</td>)}
                   <td>{b.porCapa}</td>
+                </tr>
+                {/* En blanco: la cortadora lo anota a mano en la hoja impresa. */}
+                <tr>
+                  <td style={{ fontSize: 13 }}>Retazo</td>
+                  {b.filas.map((f) => <td key={f.talla}>&nbsp;</td>)}
+                  <td>&nbsp;</td>
                 </tr>
               </tbody>
             </table>
