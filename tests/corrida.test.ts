@@ -7,6 +7,7 @@ import {
   calcularArea,
   calcularTendido,
   DESPERDICIO_DOBLEZ_M,
+  columnasDocumento,
 } from "@/lib/produccion/corrida";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
 
@@ -196,5 +197,29 @@ describe("calcularTendido", () => {
   it("sin tela o sin mesa no hay tendido", () => {
     expect(calcularTendido(0, 9).capas).toBe(0);
     expect(calcularTendido(90, 0)).toEqual({ capas: 0, metrosUsables: 0, desperdicioDobleces: 0, sobra: 90 });
+  });
+});
+
+describe("columnasDocumento", () => {
+  const filas = [{ talla: "S", unidades: 2 }, { talla: "M", unidades: 3 }];
+  const retazo = (talla: string, unidades = "") => ({ talla, nueva: false, unidades });
+
+  it("sin retazos deja la corrida tal cual", () => {
+    expect(columnasDocumento(filas, [])).toEqual([
+      { talla: "S", corrida: 2, retazo: null },
+      { talla: "M", corrida: 3, retazo: null },
+    ]);
+  });
+
+  it("marca la talla elegida aunque no tenga cantidad", () => {
+    expect(columnasDocumento(filas, [retazo("M")])[1]).toEqual({ talla: "M", corrida: 3, retazo: 0 });
+  });
+
+  it("agrega una talla nueva en su orden y suma las repetidas", () => {
+    expect(columnasDocumento(filas, [retazo("xs", "1"), retazo("S", "2"), retazo("S", "1"), retazo("")])).toEqual([
+      { talla: "XS", corrida: 0, retazo: 1 },
+      { talla: "S", corrida: 2, retazo: 3 },
+      { talla: "M", corrida: 3, retazo: null },
+    ]);
   });
 });

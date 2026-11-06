@@ -77,6 +77,44 @@ export function tallasConUnidades(
     .filter((x) => x.unidades > 0);
 }
 
+/**
+ * Un retazo escrito en el formulario. `nueva` = la talla se escribe a mano porque
+ * no es de la prenda. Va solo en el papel: no entra en `corrida_base`.
+ */
+export interface FilaRetazo {
+  talla: string;
+  nueva: boolean;
+  unidades: string;
+}
+
+export interface ColumnaDocumento {
+  talla: string;
+  corrida: number;
+  /** null = esa talla no lleva retazo; 0 = sí lleva, sin cantidad escrita. */
+  retazo: number | null;
+}
+
+/**
+ * Las columnas del documento: las tallas de la corrida más las de los retazos,
+ * ordenadas de XS a XXL. Una talla repetida en los retazos se suma.
+ */
+export function columnasDocumento(
+  filas: { talla: string; unidades: number }[],
+  retazos: FilaRetazo[]
+): ColumnaDocumento[] {
+  const columnas = new Map<string, ColumnaDocumento>(
+    filas.map((f) => [f.talla, { talla: f.talla, corrida: f.unidades, retazo: null }])
+  );
+  for (const r of retazos) {
+    const talla = r.talla.trim().toUpperCase();
+    if (!talla) continue;
+    const c = columnas.get(talla) ?? { talla, corrida: 0, retazo: null };
+    c.retazo = (c.retazo ?? 0) + Math.max(parseInt(r.unidades, 10) || 0, 0);
+    columnas.set(talla, c);
+  }
+  return ordenarTallas([...columnas.keys()]).map((t) => columnas.get(t)!);
+}
+
 // ── Pieza 2 · Calculadora de área estimada ──────────────────────────
 //
 // Dos mesas de corte físicas. Los largos se miden una vez y no cambian, así que

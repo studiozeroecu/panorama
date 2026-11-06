@@ -6,11 +6,12 @@ import { useProd } from "./useProduccion";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
-import type { AnchoDocumento, AreaEstimada, MesaCorte } from "@/lib/produccion/corrida";
+import type { AnchoDocumento, AreaEstimada, ColumnaDocumento, FilaRetazo, MesaCorte } from "@/lib/produccion/corrida";
 import {
   MESAS_INICIALES,
   anchoDocumento,
   calcularArea,
+  columnasDocumento,
   guardarMesas,
   leerMesas,
   tallasConUnidades,
@@ -37,6 +38,8 @@ export interface BloqueCorrida {
   prenda: Prenda | undefined;
   ancho: AnchoDocumento;
   filas: { talla: string; unidades: number }[];
+  llevaRetazo: boolean;
+  columnas: ColumnaDocumento[];
   porCapa: number;
   /** Pieza 2: solo si se eligió una mesa para esta tela. Es opcional. */
   mesa?: { nombre: string; largo: number; area: AreaEstimada };
@@ -53,6 +56,8 @@ export default function CorridaCorteModal({
   const [sel, setSel] = useState<string[]>([]);
   // corridas[pedidoId][talla] = texto del input
   const [corridas, setCorridas] = useState<Record<string, Record<string, string>>>({});
+  // retazos[pedidoId] = sus filas. Sin clave = esa tela no lleva retazo.
+  const [retazos, setRetazos] = useState<Record<string, FilaRetazo[]>>({});
   const [fecha, setFecha] = useState(hoyEcuador());
   const [nota, setNota] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -104,6 +109,8 @@ export default function CorridaCorteModal({
             tallas,
             ancho,
             filas: tallasConUnidades(tallas, corrida),
+            llevaRetazo: !!retazos[pedido.id],
+            columnas: columnasDocumento(tallasConUnidades(tallas, corrida), retazos[pedido.id] ?? []),
             porCapa: totalCorrida(corrida),
             mesa: mesa && largo > 0
               ? {
@@ -116,7 +123,7 @@ export default function CorridaCorteModal({
         }),
     // prendaDe depende de data.prendas, que ya está en las dependencias.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel, porCortar, corridas, data.prendas, mesas, mesaDe]
+    [sel, porCortar, corridas, retazos, data.prendas, mesas, mesaDe]
   );
 
   const listo = bloques.length > 0 && bloques.every((b) => b.filas.length > 0);
@@ -169,6 +176,21 @@ export default function CorridaCorteModal({
     } finally {
       setGuardando(false);
     }
+  }
+
+  function alternarRetazo(pedidoId: string) {
+    setRetazos((prev) => {
+      if (!prev[pedidoId]) return { ...prev, [pedidoId]: [{ talla: "", nueva: false, unidades: "" }] };
+      const { [pedidoId]: _, ...resto } = prev;
+      return resto;
+    });
+  }
+
+  function ponerRetazo(pedidoId: string, i: number, cambio: Partial<FilaRetazo>) {
+    setRetazos((prev) => ({
+      ...prev,
+      [pedidoId]: prev[pedidoId].map((r, j) => (j === i ? { ...r, ...cambio } : r)),
+    }));
   }
 
   function ponerCorrida(pedidoId: string, talla: string, valor: string) {
@@ -287,6 +309,61 @@ export default function CorridaCorteModal({
                     = <b>{b.porCapa}</b> por capa
                   </div>
                 </div>
+
+                {/* Sin marcar, el documento no lleva la fila de retazo. */}
+                <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, fontSize: 12.5, cursor: "pointer" }}>
+                  <input type="checkbox" checked={b.llevaRetazo} onChange={() => alternarRetazo(b.pedido.id)} />
+                  Lleva retazo
+                </label>
+                {(retazos[b.pedido.id] ?? []).map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                    <select
+                      className="pinput"
+                      style={{ width: 140 }}
+                      value={r.nueva ? "__nueva__" : r.talla}
+                      onChange={(e) =>
+                        ponerRetazo(b.pedido.id, i, e.target.value === "__nueva__"
+                          ? { nueva: true, talla: "" }
+                          : { nueva: false, talla: e.target.value })
+                      }
+                    >
+                      <option value="">— Talla —</option>
+                      {b.tallas.map((t) => <option key={t} value={t}>{t}</option>)}
+                      <option value="__nueva__">+ Talla nueva…</option>
+                    </select>
+                    {r.nueva && (
+                      <input
+                        className="pinput" style={{ width: 90 }} placeholder="Ej: XXXL" value={r.talla}
+                        onChange={(e) => ponerRetazo(b.pedido.id, i, { talla: e.target.value })}
+                      />
+                    )}
+                    <input
+                      className="pinput" type="number" min={0} step={1} style={{ width: 90, textAlign: "center" }}
+                      placeholder="Cantidad" value={r.unidades}
+                      onChange={(e) => ponerRetazo(b.pedido.id, i, { unidades: e.target.value })}
+                    />
+                    <button
+                      className="btn" style={{ padding: "4px 10px" }}
+                      onClick={() =>
+                        setRetazos((prev) => ({
+                          ...prev,
+                          [b.pedido.id]: prev[b.pedido.id].filter((_, j) => j !== i),
+                        }))
+                      }
+                    >✕</button>
+                  </div>
+                ))}
+                {b.llevaRetazo && (
+                  <button
+                    className="btn" style={{ fontSize: 12, padding: "4px 10px", marginTop: 6 }}
+                    onClick={() =>
+                      setRetazos((prev) => ({
+                        ...prev,
+                        [b.pedido.id]: [...prev[b.pedido.id], { talla: "", nueva: false, unidades: "" }],
+                      }))
+                    }
+                  >+ Otra talla</button>
+                )}
 
                 {/* Pieza 2 · área estimada. Opcional: sin mesa elegida no pasa nada. */}
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
@@ -434,22 +511,24 @@ export function HojaCorrida({
               <thead>
                 <tr>
                   <th></th>
-                  {b.filas.map((f) => <th key={f.talla}>{f.talla}</th>)}
+                  {b.columnas.map((c) => <th key={c.talla}>{c.talla}</th>)}
                   <th>POR CAPA</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td style={{ fontSize: 13 }}>Corrida</td>
-                  {b.filas.map((f) => <td key={f.talla}>{f.unidades}</td>)}
+                  {b.columnas.map((c) => <td key={c.talla}>{c.corrida || "—"}</td>)}
                   <td>{b.porCapa}</td>
                 </tr>
-                {/* En blanco: la cortadora lo anota a mano en la hoja impresa. */}
-                <tr>
-                  <td style={{ fontSize: 13 }}>Retazo</td>
-                  {b.filas.map((f) => <td key={f.talla}>&nbsp;</td>)}
-                  <td>&nbsp;</td>
-                </tr>
+                {/* ✓ = esa talla lleva retazo, sin cantidad: la cortadora la anota a mano. */}
+                {b.llevaRetazo && (
+                  <tr>
+                    <td style={{ fontSize: 13 }}>Retazo</td>
+                    {b.columnas.map((c) => <td key={c.talla}>{c.retazo == null ? "" : c.retazo || "✓"}</td>)}
+                    <td>{b.columnas.reduce((s, c) => s + (c.retazo ?? 0), 0) || ""}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
             <p className="dato" style={{ marginTop: 7 }}>
