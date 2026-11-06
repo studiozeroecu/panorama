@@ -6,6 +6,7 @@ import { useProd } from "./useProduccion";
 import NombreTela, { PedidosUnidos } from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
+import { tallasConCorrida } from "@/lib/produccion/corrida";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
 import CorridaCorteModal from "./CorridaCorteModal";
 import CostoCorteCard from "./CostoCorteCard";
@@ -100,7 +101,7 @@ export default function CorteTab() {
   };
   const tallasDe = (p: PedidoTela | null) => {
     const pr = prendaDe(p);
-    return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
+    return tallasConCorrida(ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]), p?.corrida_base);
   };
 
   /**

@@ -8,6 +8,7 @@ import LogoutButton from "@/components/LogoutButton";
 import { fmtFecha } from "@/lib/fechas";
 import { ordenarTallas } from "@/lib/produccion/types";
 import { avanceCorte, type AvanceCorte } from "@/lib/produccion/avanceCorte";
+import { tallasConCorrida } from "@/lib/produccion/corrida";
 import RegistrarCorte from "./RegistrarCorte";
 import ExtrasCorte from "./ExtrasCorte";
 import MaquilasCortadora, { TEXTO_DESTINO, type MaquilaC } from "./MaquilasCortadora";
@@ -244,7 +245,7 @@ export default function CortadoraApp() {
   };
   const tallasDe = (p: Pedido) => {
     const pr = prendas.find((x) => x.id === p.prenda_id);
-    return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
+    return tallasConCorrida(ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]), p.corrida_base);
   };
 
   async function trasRegistrar(mensaje: string) {

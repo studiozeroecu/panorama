@@ -8,6 +8,7 @@ import {
   calcularTendido,
   DESPERDICIO_DOBLEZ_M,
   columnasDocumento,
+  tallasConCorrida,
 } from "@/lib/produccion/corrida";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
 
@@ -221,5 +222,15 @@ describe("columnasDocumento", () => {
       { talla: "S", corrida: 2, retazo: 3 },
       { talla: "M", corrida: 3, retazo: null },
     ]);
+  });
+});
+
+describe("tallasConCorrida", () => {
+  it("agrega la talla de la corrida en su orden, sin repetir", () => {
+    expect(tallasConCorrida(["S", "M", "L"], { XS: 2, M: 3 })).toEqual(["XS", "S", "M", "L"]);
+  });
+
+  it("sin corrida deja las de la prenda", () => {
+    expect(tallasConCorrida(["S", "M"], null)).toEqual(["S", "M"]);
   });
 });

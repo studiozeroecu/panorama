@@ -57,6 +57,15 @@ export function tallasDeCorrida(prenda: Prenda | undefined): string[] {
 }
 
 /**
+ * Las tallas de la prenda más las que la corrida añadió para esa tela (hacer XS
+ * en una prenda de S a L). Registrar el corte usa estas mismas: si no, la talla
+ * planeada no tendría dónde anotarse.
+ */
+export function tallasConCorrida(tallas: string[], corrida: Record<string, unknown> | null | undefined): string[] {
+  return ordenarTallas([...new Set([...tallas, ...Object.keys(corrida ?? {})])]);
+}
+
+/**
  * Unidades que salen de una capa. Ignora lo que no sea un entero positivo: el
  * formulario guarda texto y una talla vacía vale 0, no rompe el total.
  */

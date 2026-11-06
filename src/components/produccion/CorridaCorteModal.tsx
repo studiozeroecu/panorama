@@ -14,6 +14,7 @@ import {
   columnasDocumento,
   guardarMesas,
   leerMesas,
+  tallasConCorrida,
   tallasConUnidades,
   tallasDeCorrida,
   totalCorrida,
@@ -61,6 +62,7 @@ export default function CorridaCorteModal({
   // retazos[pedidoId] = sus filas. Sin clave = esa tela no lleva retazo.
   const [retazos, setRetazos] = useState<Record<string, FilaRetazo[]>>({});
   // ribs[pedidoId] = sus filas. Sin clave = esa tela no lleva rib. Solo van en el papel.
+  const [tallaNueva, setTallaNueva] = useState<Record<string, string>>({});
   const [ribs, setRibs] = useState<Record<string, { nombre: string; ancho: string }[]>>({});
   const [fecha, setFecha] = useState(hoyEcuador());
   const [nota, setNota] = useState("");
@@ -101,8 +103,8 @@ export default function CorridaCorteModal({
         .filter((p): p is PedidoTela => !!p)
         .map((pedido) => {
           const prenda = prendaDe(pedido);
-          const tallas = tallasDeCorrida(prenda);
           const corrida = corridas[pedido.id] ?? {};
+          const tallas = tallasConCorrida(tallasDeCorrida(prenda), corrida);
           const ancho = anchoDocumento(pedido);
           const iMesa = mesaDe[pedido.id];
           const mesa = iMesa !== undefined && iMesa !== "" ? mesas[Number(iMesa)] : undefined;
@@ -213,6 +215,14 @@ export default function CorridaCorteModal({
       ...prev,
       [pedidoId]: prev[pedidoId].map((r, j) => (j === i ? { ...r, ...cambio } : r)),
     }));
+  }
+
+  function agregarTalla(pedidoId: string) {
+    const talla = (tallaNueva[pedidoId] ?? "").trim().toUpperCase();
+    if (!talla) return;
+    // Basta una clave en la corrida: las tallas de la tela salen de ahí.
+    setCorridas((prev) => ({ ...prev, [pedidoId]: { [talla]: "", ...(prev[pedidoId] ?? {}) } }));
+    setTallaNueva((prev) => ({ ...prev, [pedidoId]: "" }));
   }
 
   function ponerCorrida(pedidoId: string, talla: string, valor: string) {
@@ -329,6 +339,16 @@ export default function CorridaCorteModal({
                   ))}
                   <div style={{ alignSelf: "flex-end", paddingBottom: 9, fontSize: 12.5 }}>
                     = <b>{b.porCapa}</b> por capa
+                  </div>
+                  <div style={{ alignSelf: "flex-end", display: "flex", gap: 6, marginLeft: "auto" }}>
+                    <input
+                      className="pinput" style={{ width: 90 }} placeholder="Ej: XS"
+                      value={tallaNueva[b.pedido.id] ?? ""}
+                      onChange={(e) => setTallaNueva((prev) => ({ ...prev, [b.pedido.id]: e.target.value }))}
+                      onKeyDown={(e) => e.key === "Enter" && agregarTalla(b.pedido.id)}
+                    />
+                    <button className="btn" style={{ fontSize: 12, padding: "4px 10px" }}
+                      onClick={() => agregarTalla(b.pedido.id)}>+ Talla</button>
                   </div>
                 </div>
 
