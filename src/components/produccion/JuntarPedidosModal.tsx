@@ -5,6 +5,7 @@ import { useProd } from "./useProduccion";
 import { Modal, Campo } from "@/components/ui";
 import { money, type PedidoTela } from "@/lib/produccion/types";
 import { ordenParaUnir, vistaUnion } from "@/lib/produccion/unirPedidos";
+import { validarAnchoCm } from "@/lib/produccion/recepcion";
 import { fmtFecha } from "@/lib/fechas";
 
 /**
@@ -17,6 +18,8 @@ export default function JuntarPedidosModal({ candidatos, onCerrar }: { candidato
   const [ids, setIds] = useState<string[]>([]);
   const [nombre, setNombre] = useState("");
   const [prendaId, setPrendaId] = useState("");
+  // null = no lo ha tocado: vale el más pequeño de los pedidos marcados.
+  const [ancho, setAncho] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
   const elegidos = ordenParaUnir(candidatos.filter((p) => ids.includes(p.id)));
@@ -25,11 +28,19 @@ export default function JuntarPedidosModal({ candidatos, onCerrar }: { candidato
   const nombreFinal = nombre.trim() || (elegidos[0]?.nombre_tela ?? "");
   const proveedorDe = (p: PedidoTela) => data.proveedores.find((x) => x.id === p.proveedor_id)?.empresa;
   const prendaDe = (id: string | null) => data.prendas.find((x) => x.id === id)?.nombre;
-  const listo = elegidos.length >= 2 && !!nombreFinal && (!hayVarias || vista.prendaIds.includes(prendaId));
+  const anchoTexto = ancho ?? (vista.anchos[0] != null ? String(vista.anchos[0]) : "");
+  // Sin ningún ancho medido no hay nada que elegir: la tela sigue sin ancho.
+  const anchoRes = anchoTexto.trim() ? validarAnchoCm(anchoTexto) : null;
+  const anchoError = anchoRes && "error" in anchoRes ? anchoRes.error : null;
+  const anchoCm = anchoRes && "cm" in anchoRes ? anchoRes.cm : null;
+  const faltaAncho = vista.anchos.length > 0 && anchoCm == null;
+  const listo = elegidos.length >= 2 && !!nombreFinal && !faltaAncho && !anchoError
+    && (!hayVarias || vista.prendaIds.includes(prendaId));
 
   function alternar(id: string) {
     setIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
     setPrendaId("");
+    setAncho(null);
   }
 
   async function juntar() {
@@ -39,6 +50,7 @@ export default function JuntarPedidosModal({ candidatos, onCerrar }: { candidato
       p_pedido_ids: elegidos.map((p) => p.id),
       p_nombre: nombreFinal,
       p_prenda_id: hayVarias ? prendaId : null,
+      p_ancho_real: anchoCm,
     });
     setOcupado(false);
     if (error) return toast(error.message, "error");
@@ -84,13 +96,21 @@ export default function JuntarPedidosModal({ candidatos, onCerrar }: { candidato
               ⚠ Los nombres son distintos: {vista.nombres.join(" y ")}. Revisa que sea la misma tela.
             </div>
           )}
-          {vista.anchosDistintos && (
-            <div style={{ fontSize: 12.5, color: "var(--warn)", marginBottom: 8 }}>
-              ⚠ Los anchos son distintos. Queda el del pedido más antiguo; corrígelo en Pedidos si hace falta.
-            </div>
-          )}
           <Campo label="Nombre de la tela">
             <input className="pinput" value={nombre || elegidos[0].nombre_tela} onChange={(e) => setNombre(e.target.value)} />
+          </Campo>
+          <Campo label="Ancho con el que queda (cm)">
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {vista.anchos.length > 1 && vista.anchos.map((a, i) => (
+                <button key={a} type="button" className={`btn${Number(anchoTexto) === a ? " primary" : ""}`}
+                  style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setAncho(String(a))}>
+                  {a} cm{i === 0 ? " (el más pequeño)" : ""}
+                </button>
+              ))}
+              <input className="pinput" type="number" step="0.01" min="0" style={{ width: 110 }} placeholder="Otro"
+                value={anchoTexto} onChange={(e) => setAncho(e.target.value)} />
+            </div>
+            {anchoError && <div style={{ fontSize: 12.5, color: "var(--warn)", marginTop: 4 }}>{anchoError}</div>}
           </Campo>
           {hayVarias && (
             <Campo label="Eran para prendas distintas: ¿para cuál es la tela?" requerido>
@@ -102,6 +122,7 @@ export default function JuntarPedidosModal({ candidatos, onCerrar }: { candidato
           )}
           <div style={{ background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginTop: 8 }}>
             <b>Quedará así:</b> {vista.totalMetros.toFixed(1)} m · {money(vista.totalPagar)} · {money(vista.valorMetro)} el metro
+            {anchoCm != null && ` · ancho ${anchoCm} cm`}
             <div className="sub" style={{ fontSize: 12.5, marginTop: 4 }}>
               {vista.colores.map((c) => `${c.color} ${c.metros.toFixed(1)} m`).join(" · ")}
             </div>

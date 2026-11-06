@@ -38,9 +38,14 @@ describe("vistaUnion", () => {
     expect(vistaUnion([a, { ...b, prenda_id: "hoodie-mujer" }]).prendaIds).toEqual(["hoodie", "hoodie-mujer"]);
   });
 
-  it("nota los anchos distintos", () => {
-    expect(vistaUnion([a, b]).anchosDistintos).toBe(false);
-    expect(vistaUnion([a, { ...b, ancho_real: 160 }]).anchosDistintos).toBe(true);
+  it("da los anchos de menor a mayor, sin repetir", () => {
+    expect(vistaUnion([a, b]).anchos).toEqual([150]);
+    expect(vistaUnion([a, { ...b, ancho_real: 145 }]).anchos).toEqual([145, 150]);
+  });
+
+  it("no cuenta un ancho migrado en metros ni uno vacío", () => {
+    expect(vistaUnion([a, { ...b, ancho_real: 1.45 }]).anchos).toEqual([150]);
+    expect(vistaUnion([a, { ...b, ancho_real: null }]).anchos).toEqual([150]);
   });
 });
 

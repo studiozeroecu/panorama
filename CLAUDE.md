@@ -71,7 +71,8 @@ versionadas. Orden real de ejecución:
 `schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27** →
 `schema_fase8y_salida_bodega.sql` ✅ **aplicada el 2026-10-27** →
-`schema_fase8z_unir_pedidos.sql` ✅ **aplicada el 2026-11-06**
+`schema_fase8z_unir_pedidos.sql` ✅ **aplicada el 2026-11-06** →
+`schema_fase8z2_ancho_al_juntar.sql` ✅ **aplicada el 2026-11-06**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -399,6 +400,18 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-11-06 — producción — `schema_fase8z2_ancho_al_juntar.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8z2.sql`: 3/3. Sin tablas ni columnas.
+⚠️ **Se aplicó antes de desplegar:** la pantalla nueva manda `p_ancho_real`. El código ya desplegado
+sigue funcionando con la fase aplicada (el parámetro lleva default).
+
+- **`fn_unir_pedidos` gana `p_ancho_real`** (DROP + CREATE, verificación de firma única). Al juntar
+  se elige el ancho: el más pequeño por defecto, cualquiera de los pedidos o uno escrito a mano
+  (10–400 cm, como `recepcion.ts`). Los anchos migrados en metros (menos de 10) no cuentan.
+- `ancho_recibido` no se toca: sigue siendo la foto de la recepción del pedido que se queda.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-11-06 — producción — `schema_fase8z_unir_pedidos.sql` ✅ EJECUTADA
 

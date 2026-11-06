@@ -3,6 +3,7 @@
  * confirmar: quien suma de verdad es fn_unir_pedidos, con el mismo criterio.
  */
 import type { PedidoTela } from "./types";
+import { ANCHO_MIN_CM } from "./recepcion";
 
 export interface VistaUnion {
   colores: { color: string; metros: number }[];
@@ -12,8 +13,11 @@ export interface VistaUnion {
   /** Ids de las prendas distintas. Con más de una, el dueño elige para cuál es. */
   prendaIds: string[];
   nombres: string[];
-  /** Hay más de un ancho real: los tendidos no van a rendir igual. */
-  anchosDistintos: boolean;
+  /**
+   * Los anchos reales distintos, de menor a mayor. El primero es el que queda si
+   * no se elige otro. Sin los migrados en metros: un 1.45 no es "el más pequeño".
+   */
+  anchos: number[];
 }
 
 /** El más antiguo se queda: es el primero que espera fn_unir_pedidos. */
@@ -35,7 +39,7 @@ export function vistaUnion(pedidos: PedidoTela[]): VistaUnion {
   }
   const totalMetros = ordenados.reduce((s, p) => s + Number(p.total_metros), 0);
   const totalPagar = ordenados.reduce((s, p) => s + Number(p.total_pagar), 0);
-  const anchos = ordenados.map((p) => p.ancho_real).filter((a): a is number => a != null).map(Number);
+  const anchos = ordenados.map((p) => Number(p.ancho_real)).filter((a) => a >= ANCHO_MIN_CM);
   return {
     colores: [...colores.values()],
     totalMetros,
@@ -43,6 +47,6 @@ export function vistaUnion(pedidos: PedidoTela[]): VistaUnion {
     valorMetro: totalMetros > 0 ? totalPagar / totalMetros : 0,
     prendaIds: [...new Set(ordenados.map((p) => p.prenda_id).filter((x): x is string => !!x))],
     nombres: [...new Set(ordenados.map((p) => p.nombre_tela.trim()))],
-    anchosDistintos: new Set(anchos).size > 1,
+    anchos: [...new Set(anchos)].sort((x, y) => x - y),
   };
 }
