@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Vacio } from "@/components/ui";
 import { useProd } from "./useProduccion";
+import { avanceCorte } from "@/lib/produccion/avanceCorte";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
 import type { AnchoDocumento, AreaEstimada, MesaCorte } from "@/lib/produccion/corrida";
@@ -20,7 +21,7 @@ import {
 /**
  * Documento de corrida de corte — pieza 1 de `docs/plan_cortadora.md`.
  *
- * Mateo elige una o varias telas ya entregadas, escribe para cada una cuántas
+ * Mateo elige una o varias telas por cortar, escribe para cada una cuántas
  * unidades de cada talla salen de UNA capa, e imprime el documento para la
  * cortadora.
  *
@@ -71,9 +72,15 @@ export default function CorridaCorteModal({
     });
   }
 
-  const entregados = useMemo(
-    () => data.pedidos.filter((p) => p.estado === "entregado"),
-    [data.pedidos]
+  // Mismo criterio que la lista "Por cortar" de CorteTab: lo ya cortado no se imprime.
+  const porCortar = useMemo(
+    () =>
+      data.pedidos.filter(
+        (p) =>
+          p.estado === "entregado" &&
+          !avanceCorte(p.total_metros, p.colores ?? [], data.cortes.filter((c) => c.pedido_id === p.id)).listo
+      ),
+    [data.pedidos, data.cortes]
   );
   const prendaDe = (p: PedidoTela) => data.prendas.find((x) => x.id === p.prenda_id);
 
@@ -81,7 +88,7 @@ export default function CorridaCorteModal({
   const bloques = useMemo(
     () =>
       sel
-        .map((id) => entregados.find((p) => p.id === id))
+        .map((id) => porCortar.find((p) => p.id === id))
         .filter((p): p is PedidoTela => !!p)
         .map((pedido) => {
           const prenda = prendaDe(pedido);
@@ -109,7 +116,7 @@ export default function CorridaCorteModal({
         }),
     // prendaDe depende de data.prendas, que ya está en las dependencias.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sel, entregados, corridas, data.prendas, mesas, mesaDe]
+    [sel, porCortar, corridas, data.prendas, mesas, mesaDe]
   );
 
   const listo = bloques.length > 0 && bloques.every((b) => b.filas.length > 0);
@@ -121,7 +128,7 @@ export default function CorridaCorteModal({
   function alternar(id: string) {
     setSel((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
-      const pedido = entregados.find((p) => p.id === id);
+      const pedido = porCortar.find((p) => p.id === id);
       const guardada = pedido?.corrida_base;
       if (guardada && !corridas[id]) {
         setCorridas((c) => ({
@@ -191,9 +198,9 @@ export default function CorridaCorteModal({
     >
       {/* Todo lo de arriba es el formulario: no sale impreso. */}
       <div className="no-imprimir">
-        {!entregados.length ? (
+        {!porCortar.length ? (
           <Vacio
-            titulo="No hay telas entregadas"
+            titulo="No hay telas por cortar"
             hint="Una tela aparece aquí cuando se confirma su llegada."
           />
         ) : (
@@ -226,7 +233,7 @@ export default function CorridaCorteModal({
               Telas para este documento
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
-              {entregados.map((p) => {
+              {porCortar.map((p) => {
                 const prenda = prendaDe(p);
                 const marcado = sel.includes(p.id);
                 return (
