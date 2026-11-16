@@ -7,6 +7,8 @@ import {
   calcularArea,
   calcularTendido,
   DESPERDICIO_DOBLEZ_M,
+  columnasDocumento,
+  tallasConCorrida,
 } from "@/lib/produccion/corrida";
 import type { PedidoTela, Prenda } from "@/lib/produccion/types";
 
@@ -16,7 +18,7 @@ function pedido(ancho_real: number | null, ancho_pedido: number | null): PedidoT
     rendimiento: null, ancho_pedido, ancho_real, proveedor_id: null, prenda_id: null,
     colores: [], total_metros: 50, valor_metro: 5, total_pagar: 250,
     estado: "entregado", fecha_entrega_real: "2026-10-01", corrida_base: null,
-    recibido_por_rol: null, ancho_recibido: null, destino_indicado: null,
+    recibido_por_rol: null, ancho_recibido: null, destino_indicado: null, pedidos_unidos: [],
   };
 }
 
@@ -24,7 +26,7 @@ function prenda(tallas: string[]): Prenda {
   return {
     id: "pr1", nombre: "ZZ prenda", consumo_metros: 1, costo_maquila: 1,
     precio_venta_local: 1, precio_venta_online: 1, lleva_estampado: false,
-    tallas, notas: "", archivada_en: null, consumo_m2: null,
+    tallas, notas: "", archivada_en: null, consumo_m2: null, es_conjunto: false, partes: [],
   };
 }
 
@@ -196,5 +198,49 @@ describe("calcularTendido", () => {
   it("sin tela o sin mesa no hay tendido", () => {
     expect(calcularTendido(0, 9).capas).toBe(0);
     expect(calcularTendido(90, 0)).toEqual({ capas: 0, metrosUsables: 0, desperdicioDobleces: 0, sobra: 90 });
+  });
+});
+
+describe("columnasDocumento", () => {
+  const filas = [{ talla: "S", unidades: 2 }, { talla: "M", unidades: 3 }];
+  const retazo = (talla: string, unidades = "") => ({ talla, nueva: false, unidades });
+
+  it("sin retazos deja la corrida tal cual", () => {
+    expect(columnasDocumento(filas, [])).toEqual([
+      { talla: "S", corrida: 2, retazo: null },
+      { talla: "M", corrida: 3, retazo: null },
+    ]);
+  });
+
+  it("marca la talla elegida aunque no tenga cantidad", () => {
+    expect(columnasDocumento(filas, [retazo("M")])[1]).toEqual({ talla: "M", corrida: 3, retazo: 0 });
+  });
+
+  it("agrega una talla nueva en su orden y suma las repetidas", () => {
+    expect(columnasDocumento(filas, [retazo("xs", "1"), retazo("S", "2"), retazo("S", "1"), retazo("")])).toEqual([
+      { talla: "XS", corrida: 0, retazo: 1 },
+      { talla: "S", corrida: 2, retazo: 3 },
+      { talla: "M", corrida: 3, retazo: null },
+    ]);
+  });
+});
+
+describe("tallasConCorrida", () => {
+  it("agrega la talla de la corrida en su orden, sin repetir", () => {
+    expect(tallasConCorrida(["S", "M", "L"], { XS: 2, M: 3 })).toEqual(["XS", "S", "M", "L"]);
+  });
+
+  it("sin corrida deja las de la prenda", () => {
+    expect(tallasConCorrida(["S", "M"], null)).toEqual(["S", "M"]);
+  });
+});
+
+describe("tallas agregadas a mano", () => {
+  it("una XXS va antes de la XS, no al final", () => {
+    expect(tallasConCorrida(["XS", "S", "M", "L"], { XXS: 1 })).toEqual(["XXS", "XS", "S", "M", "L"]);
+  });
+
+  it("una XXXL va después de la XXL", () => {
+    expect(tallasConCorrida(["XL", "XXL"], { XXXL: 1 })).toEqual(["XL", "XXL", "XXXL"]);
   });
 });

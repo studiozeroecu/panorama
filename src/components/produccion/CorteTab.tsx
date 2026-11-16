@@ -3,15 +3,19 @@
 import { useMemo, useState } from "react";
 import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
-import NombreTela from "./ResumenTela";
+import NombreTela, { PedidosUnidos } from "./ResumenTela";
 import { Modal, Campo, Fila, Badge, Vacio, Tallas } from "@/components/ui";
 import { ordenarTallas, type PedidoTela } from "@/lib/produccion/types";
+import { tallasConCorrida } from "@/lib/produccion/corrida";
 import { estimarUnidades } from "@/lib/produccion/estimacion";
 import CorridaCorteModal from "./CorridaCorteModal";
 import CostoCorteCard from "./CostoCorteCard";
 import CorregirCorteModal from "./CorregirCorteModal";
+import ConvertirConjuntoModal from "./ConvertirConjuntoModal";
+import JuntarPedidosModal from "./JuntarPedidosModal";
 import type { Corte } from "@/lib/produccion/types";
 import { avanceCorte } from "@/lib/produccion/avanceCorte";
+import { PARTES, nombreParte, etiquetaFila, type Parte } from "@/lib/produccion/conjuntos";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 
 export default function CorteTab() {
@@ -29,6 +33,10 @@ export default function CorteTab() {
   const [corrida, setCorrida] = useState(false);
   // Fase 8q: el corte cuyas cantidades se están corrigiendo.
   const [corrigiendo, setCorrigiendo] = useState<Corte | null>(null);
+  // Fase 8x: el corte de conjunto viejo que se está separando por partes.
+  const [separando, setSeparando] = useState<Corte | null>(null);
+  // Fase 8z: juntar pedidos de la misma tela antes de cortar.
+  const [juntando, setJuntando] = useState(false);
 
   /** Metros ya consumidos por pedido (mejora 1: inventario de tela). */
   const consumidoPorPedido = useMemo(() => {
@@ -60,9 +68,40 @@ export default function CorteTab() {
   }
 
   const prendaDe = (p: PedidoTela | null) => data.prendas.find((x) => x.id === p?.prenda_id);
+
+  /**
+   * El propósito de una tela cambia en cualquier momento. Con cortes se avisa: el
+   * corte toma su prenda del pedido, así que esos cortes también cambian de nombre.
+   * Lo que ya salió por Envío guardó su nombre y su costo, y no cambia.
+   */
+  async function cambiarProposito(p: PedidoTela, prendaId: string) {
+    const cortes = data.cortes.filter((c) => c.pedido_id === p.id).length;
+    const nombre = data.prendas.find((x) => x.id === prendaId)?.nombre ?? "sin especificar";
+    if (cortes && !window.confirm(
+      `«${p.nombre_tela}» ya tiene ${cortes} corte${cortes !== 1 ? "s" : ""}: también pasarán a ser de ${nombre}. ¿Cambiar?`
+    )) return;
+    const { error } = await supabase.from("prod_pedidos_tela").update({ prenda_id: prendaId || null }).eq("id", p.id);
+    if (error) return toast(error.message, "error");
+    toast(`«${p.nombre_tela}»: ahora es para ${nombre}`);
+    await reload();
+  }
+
+  /**
+   * Fase 8r: las filas del formulario. Una por color en una prenda sola; DOS por
+   * color (superior e inferior) si la prenda de la tela es un conjunto. La clave
+   * de cada fila es la que usan la matriz de tallas y los metros.
+   */
+  const filasDe = (p: PedidoTela | null) => {
+    const prenda = prendaDe(p);
+    return (p?.colores ?? []).flatMap((c) =>
+      prenda?.es_conjunto
+        ? PARTES.map((parte: Parte) => ({ clave: `${c.color}|${parte}`, color: c.color, metros: c.metros, parte }))
+        : [{ clave: c.color, color: c.color, metros: c.metros, parte: null as Parte | null }]
+    );
+  };
   const tallasDe = (p: PedidoTela | null) => {
     const pr = prendaDe(p);
-    return ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]);
+    return tallasConCorrida(ordenarTallas(pr?.tallas?.length ? pr.tallas : ["XS", "S", "M", "L", "XL", "XXL"]), p?.corrida_base);
   };
 
   /**
@@ -77,17 +116,22 @@ export default function CorteTab() {
     setErr(null);
     const tallas = tallasDe(pedidoSel);
 
-    const colores = (pedidoSel.colores ?? [])
-      .map((c) => {
-        const fila = matriz[c.color] ?? {};
+    const prenda = prendaDe(pedidoSel);
+    const colores = filasDe(pedidoSel)
+      .map((f) => {
+        const fila = matriz[f.clave] ?? {};
         const tallasObj: Record<string, number> = {};
         for (const t of tallas) {
           const n = parseInt(fila[t] ?? "0", 10) || 0;
           if (n > 0) tallasObj[t] = n;
         }
-        const mUsados = parseFloat(metrosUsados[c.color] ?? "");
+        const mUsados = parseFloat(metrosUsados[f.clave] ?? "");
         return {
-          color: c.color,
+          color: f.color,
+          // Fase 8r: en un conjunto cada fila dice su parte y paga la maquila a
+          // su propio precio (el de la parte en Prendas).
+          parte: f.parte,
+          costo_maquila: f.parte ? prenda?.partes.find((x) => x.parte === f.parte)?.costo_maquila ?? null : null,
           tallas: tallasObj,
           metros_usados: isNaN(mUsados) ? null : mUsados,
         };
@@ -135,6 +179,7 @@ export default function CorteTab() {
     avanceCorte(p.total_metros, p.colores ?? [], data.cortes.filter((c) => c.pedido_id === p.id)).listo;
   const porCortar = entregados.filter((p) => !estaCortada(p));
   const yaCortadas = entregados.filter(estaCortada);
+  const sinCortes = entregados.filter((p) => !data.cortes.some((c) => c.pedido_id === p.id));
 
   const tarjeta = (p: PedidoTela) => {
     const saldo = saldoDe(p);
@@ -153,8 +198,20 @@ export default function CorteTab() {
             <h4><NombreTela pedido={p} /></h4>
             <div className="prod-meta">
               {Number(p.total_metros).toFixed(1)} m comprados
-              {prenda ? ` · ${prenda.nombre}` : ""} · entregado {fmtFecha(p.fecha_entrega_real)}
+              {" · "}entregado {fmtFecha(p.fecha_entrega_real)}
             </div>
+            <label className="sub" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12.5 }}>
+              Propósito:
+              <select className="pinput" style={{ width: "auto", padding: "3px 6px", fontSize: 12.5 }}
+                value={p.prenda_id ?? ""} onChange={(e) => cambiarProposito(p, e.target.value)}>
+                <option value="">— Sin especificar —</option>
+                {/* Regla de la fase 8e: las archivadas no se eligen, pero la que ya tiene se conserva. */}
+                {data.prendas.filter((x) => !x.archivada_en || x.id === p.prenda_id).map((x) => (
+                  <option key={x.id} value={x.id}>{x.nombre}</option>
+                ))}
+              </select>
+            </label>
+            <PedidosUnidos pedido={p} />
             <div style={{ marginTop: 6 }}>
               <Badge color={saldo > 0.5 ? "verde" : "gris"}>
                 Saldo de tela: {saldo.toFixed(1)} m{sinRegistroMetros ? " (hay cortes sin metros registrados)" : ""}
@@ -185,14 +242,19 @@ export default function CorteTab() {
                 {c.metros_consumidos != null && <span className="sub"> · {Number(c.metros_consumidos).toFixed(1)} m usados</span>}
                 <div style={{ marginTop: 3 }}>
                   {(c.colores ?? []).map((col) => (
-                    <span key={col.color} style={{ marginRight: 10 }}>
-                      <b style={{ fontSize: 12 }}>{col.color}</b>{" "}
+                    <span key={col.id} style={{ marginRight: 10 }}>
+                      <b style={{ fontSize: 12 }}>{etiquetaFila(col.color, col.parte, prenda)}</b>{" "}
                       <Tallas tallas={col.tallas} />
                     </span>
                   ))}
                 </div>
                 <button className="btn" style={{ padding: "2px 9px", fontSize: 11.5, marginTop: 5 }}
                   onClick={() => setCorrigiendo(c)}>✏️ Corregir cantidades</button>
+                {/* Fase 8x: un conjunto cortado antes de la 8r, con una sola fila por color. */}
+                {prenda?.es_conjunto && (c.colores ?? []).length > 0 && (c.colores ?? []).every((col) => !col.parte) && (
+                  <button className="btn" style={{ padding: "2px 9px", fontSize: 11.5, marginTop: 5, marginLeft: 6 }}
+                    onClick={() => setSeparando(c)}>🧩 Separar en conjunto</button>
+                )}
                 <CostoCorteCard corte={c} />
               </div>
             ))}
@@ -207,12 +269,19 @@ export default function CorteTab() {
       <div className="section-head">
         <h2>Corte <span className="sub" style={{ fontWeight: 400 }}>· unidades por color y talla, con control de tela</span></h2>
         {/* A nivel de pantalla y no por tarjeta: el documento combina varias telas. */}
-        <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
-          📄 Corrida de corte
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {sinCortes.length >= 2 && (
+            <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setJuntando(true)}>🔗 Juntar telas</button>
+          )}
+          <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setCorrida(true)}>
+            📄 Corrida de corte
+          </button>
+        </div>
       </div>
+      {juntando && <JuntarPedidosModal candidatos={sinCortes} onCerrar={() => setJuntando(false)} />}
       <CorridaCorteModal abierto={corrida} onCerrar={() => setCorrida(false)} />
       {corrigiendo && <CorregirCorteModal corte={corrigiendo} onCerrar={() => setCorrigiendo(null)} />}
+      {separando && <ConvertirConjuntoModal corte={separando} onCerrar={() => setSeparando(null)} />}
 
       {!entregados.length ? (
         <Vacio titulo="Sin telas entregadas aún" hint="Al confirmar la entrega de una tela, aparece aquí para cortar." />
@@ -269,18 +338,30 @@ export default function CorteTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(pedidoSel.colores ?? []).map((c) => {
-                    const fila = matriz[c.color] ?? {};
+                  {filasDe(pedidoSel).map((c) => {
+                    const fila = matriz[c.clave] ?? {};
                     const unidades = tallas.reduce((s, t) => s + (parseInt(fila[t] ?? "0", 10) || 0), 0);
                     return (
-                      <tr key={c.color}>
-                        <td style={{ fontWeight: 500 }}>{c.color}<div className="sub" style={{ fontSize: 11 }}>{Number(c.metros).toFixed(1)} m pedidos</div></td>
+                      <tr key={c.clave}>
+                        <td style={{ fontWeight: 500 }}>
+                          {c.parte ? (
+                            <>
+                              {c.color}
+                              <div style={{ fontSize: 12, color: "var(--accent)" }}>
+                                {nombreParte(prendaDe(pedidoSel), c.parte)}
+                              </div>
+                            </>
+                          ) : c.color}
+                          {c.parte !== "inferior" && (
+                            <div className="sub" style={{ fontSize: 11 }}>{Number(c.metros).toFixed(1)} m pedidos</div>
+                          )}
+                        </td>
                         {tallas.map((t) => (
                           <td key={t} style={{ textAlign: "center" }}>
                             <input className="pinput" type="number" min="0" step="1" placeholder="0"
                               value={fila[t] ?? ""}
                               onChange={(e) =>
-                                setMatriz({ ...matriz, [c.color]: { ...fila, [t]: e.target.value } })
+                                setMatriz({ ...matriz, [c.clave]: { ...fila, [t]: e.target.value } })
                               } />
                           </td>
                         ))}
@@ -288,8 +369,8 @@ export default function CorteTab() {
                         <td style={{ textAlign: "right" }}>
                           <input className="pinput" type="number" min="0" step="0.1" placeholder="m"
                             style={{ width: 78, textAlign: "center", padding: "5px 4px" }}
-                            value={metrosUsados[c.color] ?? ""}
-                            onChange={(e) => setMetrosUsados({ ...metrosUsados, [c.color]: e.target.value })} />
+                            value={metrosUsados[c.clave] ?? ""}
+                            onChange={(e) => setMetrosUsados({ ...metrosUsados, [c.clave]: e.target.value })} />
                         </td>
                       </tr>
                     );

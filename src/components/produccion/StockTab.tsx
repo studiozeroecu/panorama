@@ -4,12 +4,14 @@ import { useState } from "react";
 import { nuevoId } from "@/lib/id";
 import { useProd } from "./useProduccion";
 import { Modal, Campo, Fila, Badge, Vacio } from "@/components/ui";
-import { money, TALLA_ORDER, type StockOnline } from "@/lib/produccion/types";
+import { money, rangoTalla, type StockOnline } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha, sumarDias } from "@/lib/fechas";
+import SalidaBodega from "./SalidaBodega";
 
 export default function StockTab() {
   const { data, supabase, reload, toast } = useProd();
   const [venta, setVenta] = useState<StockOnline | null>(null);
+  const [mandando, setMandando] = useState(false);
   const [cantidad, setCantidad] = useState("1");
   const [precio, setPrecio] = useState("");
   const [fecha, setFecha] = useState(hoyEcuador());
@@ -76,11 +78,17 @@ export default function StockTab() {
   return (
     <section>
       <div className="section-head">
-        <h2>Venta online <span className="sub" style={{ fontWeight: 400 }}>· stock disponible y registro de ventas</span></h2>
+        <h2>Bodega <span className="sub" style={{ fontWeight: 400 }}>· lo disponible y la venta en línea que sale de aquí</span></h2>
+        {!mandando && (
+          <button className="btn primary" style={{ fontSize: 12.5 }} onClick={() => setMandando(true)}>📦 Mandar desde bodega</button>
+        )}
       </div>
 
+      {/* Fase 8y: mercadería vieja (que no está en el sistema) a locales o ferias. */}
+      {mandando && <SalidaBodega alCerrar={() => setMandando(false)} />}
+
       <div className="cards" style={{ marginBottom: 24 }}>
-        <div className="card"><div className="label">En stock online</div><div className="value">{totalDisp}</div><div className="hint">unidades disponibles</div></div>
+        <div className="card"><div className="label">En bodega</div><div className="value">{totalDisp}</div><div className="hint">unidades disponibles</div></div>
         <div className="card"><div className="label">Vendidas online</div><div className="value">{totalVend}</div><div className="hint">unidades acumuladas</div></div>
         <div className="card"><div className="label">Ingreso online (30 días)</div>
           <div className="value">{money(
@@ -93,14 +101,14 @@ export default function StockTab() {
       </div>
 
       {!grupos.size ? (
-        <Vacio titulo="Sin stock online aún" hint='El stock entra desde "Envío" y cuando los estampados retornan del taller.' />
+        <Vacio titulo="La bodega está vacía" hint='El stock entra desde "Envío" y cuando los estampados retornan del taller.' />
       ) : (
         [...grupos.entries()].map(([k, items]) => {
           const [prenda, color, estampado] = k.split("||");
           const disp = items.reduce((s, v) => s + v.disponibles, 0);
           const vend = items.reduce((s, v) => s + v.vendidas, 0);
           const sorted = [...items].sort(
-            (a, b) => (TALLA_ORDER.indexOf(a.talla) + 1 || 99) - (TALLA_ORDER.indexOf(b.talla) + 1 || 99)
+            (a, b) => rangoTalla(a.talla) - rangoTalla(b.talla)
           );
           return (
             <div className="prod-card" key={k}>

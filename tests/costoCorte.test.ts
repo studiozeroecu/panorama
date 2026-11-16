@@ -114,3 +114,60 @@ describe("costoCorte — costos fijos por prenda (etiquetas, fundas…)", () => 
     expect(r.fijos.valor).toBe(0);
   });
 });
+
+describe("costoCorte — conjuntos (fase 8r)", () => {
+  // 18 blusas a $1.20 de maquila y 14 pantalones a $1.50; la blusa consume 0.8 m
+  // y el pantalón 1.2 m. Tela $300, horas $20, sin insumos, fijos $0.50 por prenda.
+  const r = costoCorte({
+    corte: { id: "a", total_unidades: 32, metros_consumidos: 60 },
+    pedido: { valor_metro: 5, total_pagar: 500 },
+    cortesDelPedido: [{ id: "a", total_unidades: 32, metros_consumidos: 60 }],
+    costoMaquilaUnitario: 0,
+    coloresMaquila: [
+      { unidades: 18, entregas: [], parte: "superior", costoUnitario: 1.2 },
+      { unidades: 14, entregas: [], parte: "inferior", costoUnitario: 1.5 },
+    ],
+    jornadas: [{ horas: 5, tarifa_hora: 4 }],
+    insumos: [],
+    estampado: 0,
+    costoFijoPorUnidad: 0.5,
+    consumoPartes: { superior: 0.8, inferior: 1.2 },
+  });
+
+  it("cada parte paga la maquila a SU precio", () => {
+    expect(r.maquila.esperado).toBe(42.6); // 18 × 1.20 + 14 × 1.50
+    expect(r.partes?.superior.maquila).toBe(21.6);
+    expect(r.partes?.inferior.maquila).toBe(21);
+  });
+
+  it("la tela se reparte según lo que consume cada parte", () => {
+    // pesos: 18 × 0.8 = 14.4 · 14 × 1.2 = 16.8 → la blusa se lleva 14.4/31.2 de $300
+    expect(r.partes?.superior.tela).toBe(138.46);
+    expect(r.partes?.inferior.tela).toBe(161.54);
+  });
+
+  it("costo por blusa, por pantalón y del set (una de cada)", () => {
+    const s = r.partes!.superior;
+    const i = r.partes!.inferior;
+    // las partes suman el total del corte
+    expect(r2(s.total + i.total)).toBe(r.total);
+    expect(r.partes?.costoSet).toBe(r2(s.costoUnitario! + i.costoUnitario!));
+  });
+
+  it("una prenda sola no trae desglose por partes", () => {
+    const sola = costoCorte({
+      corte: { id: "b", total_unidades: 10, metros_consumidos: 5 },
+      pedido: { valor_metro: 5, total_pagar: 25 },
+      cortesDelPedido: [{ id: "b", total_unidades: 10, metros_consumidos: 5 }],
+      costoMaquilaUnitario: 1,
+      coloresMaquila: [{ unidades: 10, entregas: [] }],
+      jornadas: [], insumos: [], estampado: 0,
+    });
+    expect(sola.partes).toBeNull();
+    expect(sola.maquila.esperado).toBe(10); // sin precio propio, usa el de la maquila
+  });
+});
+
+function r2(n: number) {
+  return Math.round(n * 100) / 100;
+}

@@ -63,7 +63,17 @@ versionadas. Orden real de ejecución:
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase6a_planificacion.sql` ✅ **aplicada antes del 2026-11-16** — finanzas →
-`schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
+`schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
+`schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
+`schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8t_destinos_y_costos.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8u_cierre_ferias.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8v_ordenes_estampado.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8w_lista_estampados.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8x_convertir_a_conjunto.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8y_salida_bodega.sql` ✅ **aplicada el 2026-10-27** →
+`schema_fase8z_unir_pedidos.sql` ✅ **aplicada el 2026-11-06** →
+`schema_fase8z2_ancho_al_juntar.sql` ✅ **aplicada el 2026-11-06**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
 
@@ -391,6 +401,254 @@ Formato:
 - <tabla.columna>: qué cambió y por qué.
 - Impacto en otras áreas: <ninguno | qué revisar>.
 ```
+
+### 2026-11-06 — producción — `schema_fase8z2_ancho_al_juntar.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8z2.sql`: 3/3. Sin tablas ni columnas.
+⚠️ **Se aplicó antes de desplegar:** la pantalla nueva manda `p_ancho_real`. El código ya desplegado
+sigue funcionando con la fase aplicada (el parámetro lleva default).
+
+- **`fn_unir_pedidos` gana `p_ancho_real`** (DROP + CREATE, verificación de firma única). Al juntar
+  se elige el ancho: el más pequeño por defecto, cualquiera de los pedidos o uno escrito a mano
+  (10–400 cm, como `recepcion.ts`). Los anchos migrados en metros (menos de 10) no cuentan.
+- `ancho_recibido` no se toca: sigue siendo la foto de la recepción del pedido que se queda.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-11-06 — producción — `schema_fase8z_unir_pedidos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8z.sql`: 5/5. ⚠️ **Se aplicó antes de
+desplegar:** `useProduccion` pide `pedidos_unidos`; sin la fase, `/produccion` no carga.
+
+- **Juntar telas** (*🔗 Juntar telas* en Corte, `JuntarPedidosModal.tsx`): dos pedidos de la misma
+  tela que llegaron juntos se cortan como uno. Decisión del dueño: quedan como **UN solo pedido**,
+  así saldo, cortadora, costos y resumen por tela no cambian: siguen viendo un pedido.
+- **`fn_unir_pedidos(ids[], nombre, prenda)`** (el primero = el más antiguo, es el que se queda):
+  suma metros por color (criterio `lower(btrim(color))`) y dinero; `valor_metro` = total ÷ metros.
+  Si los pedidos eran para **prendas distintas**, el dueño elige para cuál es. Solo telas
+  `entregado` y **sin cortes**. Metros + kilos mezclados queda en metros. Reintento =
+  `{"ya_unido": true}`, no error.
+- ⚠️ **Los otros pedidos se BORRAN** (no se archivan): con su `total_pagar` vivo, cada lista y
+  resumen contaría el dinero dos veces. Quedan como FOTO en la columna nueva
+  **`prod_pedidos_tela.pedidos_unidos`** (jsonb), que se muestra con `PedidosUnidos`. **No se puede
+  deshacer.** Vista previa en `src/lib/produccion/unirPedidos.ts`, con tests.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8y_salida_bodega.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8y.sql`: 3/3.
+
+- **"📦 Mandar desde bodega"** (pestaña Bodega, `SalidaBodega.tsx`): mercadería de ANTES de la
+  app (no está en el sistema) a locales, feria o que se queda en bodega, básica o estampada. Se
+  escribe prenda, costo de producción por prenda y colores × tallas, y se reparte con la MISMA
+  tarjeta de Envío (`ProduccionCard` con la prop `manual`).
+- **`fn_repartir_desde_bodega`**: hermana de `fn_repartir_entrega_maquila` (8t) sin maquila ni
+  entrega. Lo que se queda en bodega ENTRA al stock (`prod_bodega_ingresos.origen = 'manual'`);
+  las básicas a feria entran como `'estancada'`. Las estampadas son lotes pendientes que entran en
+  la orden de impresión. Idempotente por color: tabla `prod_salidas_bodega` (RLS admin), con el id
+  generado al escribir la fila.
+- `prod_lotes_estampado` gana **`tono`** (los lotes sin corte guardan el suyo; `tonoDeLote` lo mira
+  primero) y **`salida_id`** (Estampados agrupa por maquila, o por salida).
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8x_convertir_a_conjunto.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8x.sql`: 2/2. Sin tablas ni columnas nuevas.
+
+- **`fn_convertir_a_conjunto(corte, colores jsonb)`**: un corte de CONJUNTO registrado antes de la
+  8r tiene una sola fila por color. Lo parte: la fila vieja pasa a ser la **superior** y se crea
+  la **inferior** (mismo color, pedido_color, orden, capas, tono), cada una con las tallas que
+  escribe el dueño. En maquila cada parte toma su precio (`prod_prenda_partes.costo_maquila`) y
+  el MISMO estado y fechas; si el color ya había vuelto, sus entregas se rehacen completas por
+  parte (sin procesar, para Envío). Totales y jsonb de respaldo se reconstruyen como en la 8q.
+- ⚠️ **Solo si nada del corte pasó por Envío ni tiene bajas** (`procesado`): con algo ya en stock,
+  partirlo dejaría el stock contando lo viejo.
+- **Pantalla:** botón *🧩 Separar en conjunto* en Corte (solo si la prenda es conjunto y ningún
+  color tiene parte; `ConvertirConjuntoModal.tsx`), y un aviso en la tarjeta de Envío que lleva ahí.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8w_lista_estampados.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8w.sql`: 3/3. ⚠️ **Se aplicó antes de desplegar:** `useProduccion` pide `prod_estampados`.
+
+- **Lista de estampados** (`prod_estampados`, RLS admin, índice único `lower(btrim(nombre))`): la
+  orden de estampado suma metros por NOMBRE, así que el nombre se ELIGE de la lista
+  (`ElegirEstampado.tsx`, con "+ Nuevo estampado…") en vez de escribirse. Arranca con los nombres
+  ya usados en los lotes. Los lotes siguen guardando el nombre como texto en `disenos`.
+- **`fn_renombrar_estampado(viejo, nuevo, lote_ids[] | null)`**: cambia el nombre en los lotes que
+  aún no volvieron del taller (los retornados ya entraron al stock y no se tocan). Con
+  `lote_ids` = los de una producción (✏️ en la tabla); con null = desde la lista, en todos, y si el
+  nuevo ya existía los dos se funden. No deja juntar dos estampados de un mismo lote.
+- **Estampados agrupa los pendientes POR PRODUCCIÓN** (pedido del dueño): una tarjeta por maquila
+  con una tabla estampado · color · oscuro · destino · tallas, y se marca la producción entera
+  para la orden.
+  Lo que está **en el taller** se agrupa igual, dentro de su orden, con el retorno por lote o
+  *"Todo recibido"* (una llamada a `fn_retornar_lote_estampado` por lote, una tras otra).
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8v_ordenes_estampado.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8v.sql`: 3/3. ⚠️ **Se aplicó antes de desplegar:** `useProduccion` pide `prod_corte_colores.tono` y `prod_ordenes_estampado`; sin la
+fase, `/produccion` no carga.
+
+- **Tono claro / oscuro** (`prod_corte_colores.tono`): decide el film del estampado (claro y oscuro
+  nunca comparten metro, la regla de `dtf_lotes`). Es del COLOR de la tela, no del lote: el lote
+  lo toma por su maquila y su color (`tonoDeLote` en EstampadosTab). Se marca con el interruptor
+  *Oscuro* en Envío (se guarda al procesar, solo si cambió; arranca con lo guardado o con
+  `tonoSugerido` por el nombre) y se puede cambiar en Estampados. Sin marcar = claro, con aviso.
+- **Envío:** cada estampado se escribe UNA vez y trae solos los colores del destino
+  (`EstampadoGrupo.tallas` = fila → talla → cantidad), en vez de una fila por color.
+- **Orden de estampado** (`prod_ordenes_estampado` + `prod_lotes_estampado.orden_id`, RLS admin;
+  `fn_crear_orden_estampado(lote_ids[], taller, fecha, por_metro, nota)`, todo o nada): se marcan
+  lotes pendientes —de distintas producciones y destinos— y se mandan juntos al taller.
+- ⚠️ **Los metros se calculan, no se guardan, y se redondean sobre el TOTAL de la orden** por
+  estampado y tono (`ceil(unidades / por_metro)`, por defecto 4), no lote por lote:
+  2 + 2 + 3 estampados son 2 m, no 3. Al taller: metros por estampado y tono (botón *Copiar
+  resumen*); al dueño: el desglose por lote en fracción de metro. `src/lib/produccion/ordenEstampado.ts`
+  con tests.
+- Estampados muestra cada lote como cuadro estampado × talla; las órdenes en taller se agrupan
+  con su resumen. El retorno sigue siendo por lote (fase 8t).
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8u_cierre_ferias.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8u.sql`: 7/7. La pestaña Ferias carga los regresos por su
+cuenta (no en `useProduccion`): si la tabla faltara, solo ella mostraría el aviso.
+
+- **Pestaña nueva *Ferias*** (`FeriasTab.tsx`): cada feria con lo que fue (de Envío, del taller o
+  estancada), su costo, y al cerrar lo que regresó y lo vendido. Lógica en
+  `src/lib/produccion/ferias.ts` (con tests). **Lo vendido NO se guarda**: fue − regresó, por
+  línea. Las ganancias las anota el dueño en Finanzas.
+- **Mercadería estancada** (`fn_agregar_estancada`): lo que se saca de los locales para venderlo
+  con descuento. Se ESCRIBE a mano (muchas prendas son de antes de la app): prenda, color,
+  estampado, tallas y costo por prenda; la base le suma el operativo de feria. Entra como
+  `prod_feria_ingresos.origen = 'estancada'`, sin `prenda_id`.
+- **Cierre** (`fn_cerrar_feria(feria, retornos jsonb, fecha)`), una sola vez: por línea y talla,
+  cuántas regresan a **bodega** y cuántas a **locales** (sin decir a cuál, decisión del dueño).
+  Tabla nueva **`prod_feria_retornos`** (RLS + `admin_all_*`), contra la línea de la feria, para
+  que el costo sea el exacto de esa salida. Reintento = `{"ya_cerrada": true}`, no error.
+- ⚠️ **El costo operativo SE REEMPLAZA, no se acumula:** lo que vuelve a locales queda con
+  $2,50 en vez de $5; a la bodega, $0.
+- Lo que regresa a la bodega suma `prod_stock_online` + `prod_bodega_ingresos` (origen nuevo
+  `'feria'`, columna `feria_id`). Lo que regresa a locales y vino de producción queda también como
+  **envío a locales sin local** (`prod_envios_locales.feria_id`); la estancada no, porque ya
+  estaba contada en los locales.
+- La pantalla **no deja cerrar** una feria con estampadas suyas aún en el taller: llegarían a una
+  feria ya cerrada.
+- **Envío agrupado por producción** (no es schema, 2026-10-27, pedido del dueño al usarlo): una
+  tarjeta por corte con **colores en filas y tallas en columnas**, y la misma tabla para cada
+  destino; los estampados de cada destino llevan su color. Cada fila sigue siendo UNA entrega y
+  se procesa con su propia llamada a `fn_repartir_entrega_maquila`, una tras otra: si una falla,
+  las anteriores quedan hechas y el resto sigue pendiente (`GrupoForm` / `formDeEntrega` en
+  `reparto.ts`).
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8t_destinos_y_costos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8t.sql`: 10/10. Corrige la 8s el mismo día,
+tras verla en pantalla. ⚠️ **Aplicar y desplegar juntos:** el código nuevo manda la forma nueva de
+`p_reparto`; contra la función de la 8s, Envío fallaría con *"Marca al menos un destino"* o
+parecido (sin dañar datos).
+
+- **Tres destinos: Bodega, Locales y Feria** (decisiones del dueño, 2026-10-27). "Stock online" pasa
+  a llamarse **Bodega** en pantalla (`prod_stock_online` NO cambia de nombre); la venta en línea
+  sale de la bodega. La pestaña *Venta online* se llama ahora *Bodega*. **Estampado deja de ser
+  destino.**
+- **Estampado DENTRO de cada destino:** por destino se dice cuántas van con cada estampado, talla
+  por talla; lo que queda va **básico** (se calcula, no se escribe). Las básicas llegan ya a su
+  destino; las estampadas generan un **lote al taller con el destino anotado**
+  (`prod_lotes_estampado.destino`, `feria_id`, `local_destino`, `producto_codigo`, `precio_local`)
+  y `fn_retornar_lote_estampado` (reescrita, misma firma) las entrega solas ahí, **cada diseño con
+  su nombre**. Los lotes viejos (sin destino o sin tallas por diseño) vuelven a la bodega como en
+  la 8a (comprobación 9).
+- **Costo COMPLETO congelado en cada salida** (`costo_produccion`, `costo_estampado`,
+  `costo_operativo` en `prod_envios_locales`, `prod_feria_ingresos`, la nueva
+  `prod_bodega_ingresos` y en el lote; `costo_unitario` = el total). Producción = tela + maquila +
+  horas + insumos + fijos por prenda, calculado en pantalla con **`costoDeCorte`**
+  (`components/produccion/costoDeCorte.ts`, lo comparte con `CostoCorteCard` para que digan el
+  mismo número) **sin el estampado**, que ahora se cobra solo a las estampadas (por defecto $2,50).
+- **Costo operativo:** `fn_costo_operativo` — locales $2,50, feria $5, en línea $5, **bodega $0**
+  (se suma cuando sale a vender). ⚠️ Se mueve junto con `COSTO_OPERATIVO` de
+  `src/lib/produccion/reparto.ts`, que es solo para mostrar. El margen de locales se calcula contra
+  el costo completo.
+- **Tabla nueva:** `prod_bodega_ingresos` (RLS + `admin_all_*`): cada entrada a la bodega con su
+  costo, porque `prod_stock_online` suma lotes y no puede guardarlo. `prod_envios_locales` gana
+  `estampado` (antes no había forma de mandar estampadas a un local) y `lote_estampado_id`.
+- **`smoke_test_fase8s.sql` queda OBSOLETO** (usa la forma de `p_reparto` de la 8s). Falla a
+  propósito; no es regresión.
+- **Pendiente:** el $5 de la venta en línea al vender desde la bodega (StockTab); la parte B de
+  ferias (cierre y estancada); ResumenTab sigue con su propio cálculo de costos.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-27 — producción — `schema_fase8s_reparto_ferias.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8s.sql`: 9/9. El código pide `prod_ferias` y
+`prod_feria_ingresos`: un deploy sin la fase dejaría `/produccion` sin cargar (ya no aplica, la
+fase está en la base). El código viejo sigue funcionando con la fase aplicada.
+
+- **Envío reparte por talla entre varios destinos a la vez** (decisión del dueño, 2026-10-27):
+  stock online, estampado, locales y **feria**. Cada talla tiene que cuadrar EXACTO con lo que
+  llegó: se acabó el "resto que cae solo al online". La pantalla arranca con todo en online y
+  tiene un botón *"Lo que sobra → stock online"*.
+- **Función nueva:** `fn_repartir_entrega_maquila(p_entrega_id, p_reparto jsonb) → jsonb`
+  (SECURITY INVOKER, solo admin). Mismo lock + guarda de `procesado` que la 8o. Reemplaza en la
+  app a `fn_procesar_entrega_maquila`, que **no se borra** (otro nombre, sin riesgo de sobrecarga):
+  si se revierte el deploy, el código viejo la sigue usando. Auxiliar `fn_tallas_reparto` valida
+  cada mapa de tallas con un mensaje que dice qué columna está mal.
+- **Estampado por diseño × talla:** `prod_lotes_estampado.disenos` gana la clave **`tallas`** en
+  cada diseño (`[{nombre, unidades, tallas}]`); `lote.tallas` = la suma. Los lotes viejos no la
+  tienen. Con `sum(tallas) = total_unidades`, `fn_retornar_lote_estampado` devuelve las tallas
+  exactas (comprobación 7 del smoke). El retorno sigue etiquetando el stock con todos los diseños
+  juntos; separarlo por diseño es la parte C.
+- **Tablas nuevas** (RLS + `admin_all_*`): `prod_ferias` (`nombre`, `fecha`, `cerrada_en` null =
+  abierta) y `prod_feria_ingresos` (cada salida a una feria: tallas, unidades, `costo_unitario`
+  fotografiado = maquila + fijos, `origen` envio | estampado | estancada). Lo que queda en la
+  feria y lo vendido **no se guardan**: saldrán de restar los retornos.
+- **Las ganancias de feria NO se registran aquí:** el dueño las anota en Finanzas (Ventas
+  directas). Aquí solo qué salió, cuánto costó producirlo y (parte B) cuánto regresa.
+- `src/lib/produccion/reparto.ts` (con tests): faltantes por talla, problemas y el payload.
+- **Pendiente — parte B:** pestaña Ferias, cierre con retorno talla por talla al stock online o
+  a un local, y "agregar mercadería estancada" (lo que se saca de los locales para venderlo con
+  descuento). **Parte C:** el retorno de estampado elige destino (online, feria, locales) por talla
+  y diseño.
+- **Impacto en otras áreas: ninguno.**
+
+### 2026-10-26 — producción — `schema_fase8r_conjuntos.sql` ✅ EJECUTADA
+
+Verificada con `supabase/smoke_test_fase8r.sql`: 8/8. ⚠️ **Aplicar y desplegar
+juntos:** el código pide `prod_prendas.es_conjunto`, `prod_prenda_partes`, `prod_corte_colores.parte`
+y `prod_maquila_colores.costo_unitario`; sin la fase, `/produccion` y `/cortadora` no cargan.
+
+- **Conjuntos (sets) de dos partes.** Un conjunto sale de UNA tela y UN tendido (el rollo se parte
+  por la mitad), pero no salen las mismas de cada parte. Antes había que registrar dos cortes de la
+  misma tela. Decisiones del dueño (2026-10-26): se MARCA en la prenda, no por el nombre; siempre dos
+  partes (superior / inferior); cada una con su consumo, su maquila y su precio suelto; el precio de
+  la prenda conjunto es el del SET; un set es siempre de la misma talla.
+- **`prod_prendas.es_conjunto`** + tabla **`prod_prenda_partes`** (RLS admin + lectura cortadora).
+  ⚠️ En un conjunto, `prod_prendas.consumo_metros` y `costo_maquila` se guardan como la **SUMA** de
+  las partes — un derivado a propósito: la estimación de Pedidos/Corte lee `consumo_metros` y así
+  estima SETS sin saber de conjuntos. Lo escribe solo `PrendasTab`.
+- **`prod_corte_colores.parte`** (superior | inferior | null): en un corte de conjunto cada
+  (color, parte) es una fila propia, así que maquila, entregas parciales, bajas, Envío y
+  `fn_corregir_corte` funcionan por parte **sin cambios**. El índice único pasa de (corte, color) a
+  **(corte, color, parte)** (`uq_corte_colores_nombre_parte`); para prendas solas se comporta igual.
+- **`prod_maquila_colores.costo_unitario`**: precio de maquila de esa parte (null = el de la maquila).
+  Los costos (`costoCorte`, `ResumenTela`, Resumen mensual vía `costoMaquilaLote`, margen de Envío)
+  lo usan fila por fila.
+- **`fn_registrar_corte`: misma firma (8 parámetros), `create or replace`.** `parte` y
+  `costo_maquila` viajan dentro de cada elemento de `p_colores`. Valida: conjunto ⇒ cada fila con su
+  parte; prenda sola ⇒ ninguna; no repetir (color, parte). Reescrita sin asignaciones de destino.
+- **`fn_sync_maquila_colores`** (7b) compara color **y parte** al espejar al jsonb; antes, con dos
+  partes del mismo color, las pisaba a las dos.
+- **`fn_procesar_entrega_maquila`** (8o), copiada literal por script con un cambio: una parte entra
+  al stock como **"Conjunto — Blusa"**, así la superior y la inferior no se suman en la misma fila.
+- **Costos por parte** (`src/lib/produccion/conjuntos.ts` y `costoCorte.partes`, con tests): la tela
+  se reparte por prendas × consumo de cada parte; horas, insumos y estampado por prendas; la maquila,
+  cada una la suya. Costo del set = una de cada. Sets posibles = mínimo por color y talla (no se
+  guarda).
+- **Pantallas:** Prendas (marca y partes), Corte y cortadora (dos filas por color, precio de maquila
+  por parte), y la parte junto al color en Maquila, Envío, Corregir corte y la cortadora.
+- **Pendiente (fases siguientes):** venta de sets y stock armado de sets.
+- **Impacto en otras áreas: ninguno.**
 
 ### 2026-10-15 — producción — `schema_fase8q_corregir_corte.sql` ⏳ PENDIENTE DE APLICAR
 

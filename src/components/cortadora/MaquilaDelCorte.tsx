@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Maquiladora } from "./CortadoraApp";
+import type { ParteCorte } from "./RegistrarCorte";
 
 /**
  * A dónde va el corte y a qué precio — bloque final de RegistrarCorte.
@@ -25,6 +26,9 @@ export default function MaquilaDelCorte({
   onPrecio,
   precioDeLaPrenda,
   onCreada,
+  partes,
+  preciosParte,
+  onPrecioParte,
 }: {
   supabase: SupabaseClient;
   maquiladoras: Maquiladora[];
@@ -35,6 +39,10 @@ export default function MaquilaDelCorte({
   /** null = la prenda no tiene costo cargado. */
   precioDeLaPrenda: number | null;
   onCreada: (m: Maquiladora) => void;
+  /** Fase 8r: en un conjunto, un precio por parte en vez de uno solo. */
+  partes?: ParteCorte[] | null;
+  preciosParte?: Record<string, string>;
+  onPrecioParte?: (parte: string, valor: string) => void;
 }) {
   const [creando, setCreando] = useState(false);
   const [nombre, setNombre] = useState("");
@@ -120,22 +128,48 @@ export default function MaquilaDelCorte({
         </div>
       )}
 
-      <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>Precio unitario de maquila ($)</div>
-      <input
-        className="pinput" style={{ fontSize: 16 }}
-        type="number" inputMode="decimal" min={0} step="0.01"
-        placeholder="Ej. 1.50"
-        value={precio} onChange={(e) => onPrecio(e.target.value)}
-      />
-      <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--muted)" }}>
-        {precioDeLaPrenda != null
-          ? `Según la prenda: $${precioDeLaPrenda.toFixed(2)}. Cámbialo si con esta maquiladora es otro.`
-          : "La prenda no tiene precio de maquila cargado."}
-      </p>
-      {sinPrecio && (
-        <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--warn)" }}>
-          ⚠️ Sin precio, el corte quedará con maquila a $0. Puedes registrarlo igual y avisar a Mateo.
+      {partes?.length ? (
+        // Fase 8r: cada parte del conjunto paga la maquila a su propio precio.
+        partes.map((x) => {
+          const v = preciosParte?.[x.parte] ?? "";
+          const n = Number(v.replace(",", "."));
+          return (
+            <div key={x.parte}>
+              <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>
+                Precio de maquila · {x.nombre} ($)
+              </div>
+              <input
+                className="pinput" style={{ fontSize: 16 }}
+                type="number" inputMode="decimal" min={0} step="0.01" placeholder="Ej. 1.50"
+                value={v} onChange={(e) => onPrecioParte?.(x.parte, e.target.value)}
+              />
+              <p style={{ margin: "4px 0 0", fontSize: 12.5, color: (!v.trim() || !(n > 0)) ? "var(--warn)" : "var(--muted)" }}>
+                {x.costo != null ? `Según la prenda: $${x.costo.toFixed(2)}.` : "Sin precio cargado en la prenda."}
+                {(!v.trim() || !(n > 0)) && " ⚠️ Sin precio, esta parte quedará a $0."}
+              </p>
+            </div>
+          );
+        })
+      ) : (
+        <>
+        <div className="label" style={{ fontSize: 10.5, marginTop: 10 }}>Precio unitario de maquila ($)</div>
+        <input
+          className="pinput" style={{ fontSize: 16 }}
+          type="number" inputMode="decimal" min={0} step="0.01"
+          placeholder="Ej. 1.50"
+          value={precio} onChange={(e) => onPrecio(e.target.value)}
+        />
+        <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--muted)" }}>
+          {precioDeLaPrenda != null
+            ? `Según la prenda: $${precioDeLaPrenda.toFixed(2)}. Cámbialo si con esta maquiladora es otro.`
+            : "La prenda no tiene precio de maquila cargado."}
         </p>
+        {sinPrecio && (
+          <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--warn)" }}>
+            ⚠️ Sin precio, el corte quedará con maquila a $0. Puedes registrarlo igual y avisar a Mateo.
+          </p>
+        )}
+        </>
       )}
     </section>
   );

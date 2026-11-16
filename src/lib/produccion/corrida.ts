@@ -57,6 +57,15 @@ export function tallasDeCorrida(prenda: Prenda | undefined): string[] {
 }
 
 /**
+ * Las tallas de la prenda más las que la corrida añadió para esa tela (hacer XS
+ * en una prenda de S a L). Registrar el corte usa estas mismas: si no, la talla
+ * planeada no tendría dónde anotarse.
+ */
+export function tallasConCorrida(tallas: string[], corrida: Record<string, unknown> | null | undefined): string[] {
+  return ordenarTallas([...new Set([...tallas, ...Object.keys(corrida ?? {})])]);
+}
+
+/**
  * Unidades que salen de una capa. Ignora lo que no sea un entero positivo: el
  * formulario guarda texto y una talla vacía vale 0, no rompe el total.
  */
@@ -75,6 +84,44 @@ export function tallasConUnidades(
   return tallas
     .map((talla) => ({ talla, unidades: parseInt(corrida[talla] ?? "", 10) || 0 }))
     .filter((x) => x.unidades > 0);
+}
+
+/**
+ * Un retazo escrito en el formulario. `nueva` = la talla se escribe a mano porque
+ * no es de la prenda. Va solo en el papel: no entra en `corrida_base`.
+ */
+export interface FilaRetazo {
+  talla: string;
+  nueva: boolean;
+  unidades: string;
+}
+
+export interface ColumnaDocumento {
+  talla: string;
+  corrida: number;
+  /** null = esa talla no lleva retazo; 0 = sí lleva, sin cantidad escrita. */
+  retazo: number | null;
+}
+
+/**
+ * Las columnas del documento: las tallas de la corrida más las de los retazos,
+ * ordenadas de XS a XXL. Una talla repetida en los retazos se suma.
+ */
+export function columnasDocumento(
+  filas: { talla: string; unidades: number }[],
+  retazos: FilaRetazo[]
+): ColumnaDocumento[] {
+  const columnas = new Map<string, ColumnaDocumento>(
+    filas.map((f) => [f.talla, { talla: f.talla, corrida: f.unidades, retazo: null }])
+  );
+  for (const r of retazos) {
+    const talla = r.talla.trim().toUpperCase();
+    if (!talla) continue;
+    const c = columnas.get(talla) ?? { talla, corrida: 0, retazo: null };
+    c.retazo = (c.retazo ?? 0) + Math.max(parseInt(r.unidades, 10) || 0, 0);
+    columnas.set(talla, c);
+  }
+  return ordenarTallas([...columnas.keys()]).map((t) => columnas.get(t)!);
 }
 
 // ── Pieza 2 · Calculadora de área estimada ──────────────────────────

@@ -1,3 +1,5 @@
+import type { Parte } from "./conjuntos";
+
 export interface Prenda {
   id: string;
   nombre: string;
@@ -16,6 +18,22 @@ export interface Prenda {
   notas: string;
   /** Fase 8e: null = activa. Archivada no se ofrece al elegir, pero su historial sigue enlazado. */
   archivada_en: string | null;
+  /** Fase 8r: conjunto de dos partes. Sus precios de venta son los del SET. */
+  es_conjunto: boolean;
+  /** Fase 8r: la parte superior y la inferior (vacío en una prenda sola). */
+  partes: PartePrenda[];
+}
+
+/** Fase 8r: una parte de un conjunto, con su consumo, su maquila y su precio suelto. */
+export interface PartePrenda {
+  id: string;
+  prenda_id: string;
+  parte: Parte;
+  nombre: string;
+  consumo_metros: number | null;
+  costo_maquila: number;
+  precio_venta_local: number;
+  precio_venta_online: number;
 }
 
 export interface Proveedor {
@@ -77,12 +95,28 @@ export interface PedidoTela {
   ancho_recibido: number | null;
   /** Fase 8o: qué hacer con la tela al volver de maquila. SOLO informativo: Envío decide. */
   destino_indicado: "locales" | "estampado" | null;
+  /** Fase 8z: FOTO de los pedidos que se juntaron en este. Vacío = pedido normal. */
+  pedidos_unidos: PedidoUnido[];
+}
+
+export interface PedidoUnido {
+  id: string;
+  nombre_tela: string;
+  proveedor: string | null;
+  fecha_pedido: string;
+  fecha_entrega_real: string | null;
+  total_metros: number;
+  valor_metro: number;
+  total_pagar: number;
+  ancho_real: number | null;
 }
 
 export interface ColorCorte {
   id: string;
   pedido_color_id: string | null;
   color: string;
+  /** Fase 8r: superior / inferior en un corte de conjunto; null en una prenda sola. */
+  parte: Parte | null;
   tallas: Record<string, number>;
   unidades: number;
   metros_usados: number | null;
@@ -120,6 +154,12 @@ export interface ColorMaquila {
   corte_color_id: string;
   // color / tallas / unidades NO se guardan aquí: vienen por join del corte
   color: string;
+  /** Fase 8r: la parte del conjunto (viene del corte). */
+  parte: Parte | null;
+  /** Fase 8v: claro / oscuro, para el film del estampado (viene del corte). null = sin marcar. */
+  tono: "claro" | "oscuro" | null;
+  /** Fase 8r: precio de maquila de ESTA fila; null = el de la maquila. */
+  costo_unitario: number | null;
   tallas: Record<string, number>;
   unidades: number;
   estado: EstadoColorMaquila;
@@ -154,6 +194,8 @@ export interface Maquila {
 export interface Diseno {
   nombre: string;
   unidades: number;
+  /** Fase 8s: qué tallas lleva este diseño. Los lotes anteriores no la tienen. */
+  tallas?: Record<string, number>;
 }
 
 export interface LoteEstampado {
@@ -171,6 +213,32 @@ export interface LoteEstampado {
   fecha_envio: string | null;
   fecha_retorno: string | null;
   estado: "pendiente" | "en_taller" | "retornado";
+  /** Fase 8t: a dónde entra al volver del taller. null = lote anterior: a la bodega. */
+  destino: "bodega" | "local" | "feria" | null;
+  feria_id: string | null;
+  local_destino: string | null;
+  /** Fase 8v: la orden con la que se mandó al taller. */
+  orden_id: string | null;
+  /** Fase 8y: tono de un lote SIN producción (desde bodega); los demás lo toman del corte. */
+  tono: "claro" | "oscuro" | null;
+  /** Fase 8y: agrupa los lotes de una misma salida desde bodega. */
+  salida_id: string | null;
+}
+
+/** Fase 8w: la lista de estampados. Se elige de aquí para que el mismo se llame siempre igual. */
+export interface Estampado {
+  id: string;
+  nombre: string;
+  archivada_en: string | null;
+}
+
+/** Fase 8v: lotes que se mandaron juntos al taller. */
+export interface OrdenEstampado {
+  id: string;
+  fecha: string;
+  taller_id: string | null;
+  por_metro: number;
+  nota: string | null;
 }
 
 export interface StockOnline {
@@ -213,13 +281,47 @@ export interface EnvioLocal {
   local_destino: string | null;
 }
 
+/** Fase 8s: una feria a la que sale mercadería a vender. */
+export interface Feria {
+  id: string;
+  nombre: string;
+  fecha: string;
+  observaciones: string | null;
+  cerrada_en: string | null;
+}
+
+/** Fase 8s: una salida de mercadería hacia una feria. */
+export interface IngresoFeria {
+  id: string;
+  feria_id: string;
+  fecha: string;
+  origen: "envio" | "estampado" | "estancada";
+  entrega_id: string | null;
+  maquila_id: string | null;
+  prenda_id: string | null;
+  prenda_nombre: string;
+  color: string;
+  estampado: string;
+  tallas: Record<string, number>;
+  unidades: number;
+  costo_unitario: number;
+}
+
 export const TALLA_ORDER = ["XS", "S", "M", "L", "XL", "XXL"];
 
+/**
+ * Más amplio que TALLA_ORDER, que son las columnas fijas de los formularios: una
+ * talla agregada a mano tiene que caer en su sitio. Una XXS al final se confundió
+ * con XXL en el corte.
+ */
+const ORDEN_TALLAS = ["XXS", ...TALLA_ORDER, "XXXL", "3XL", "4XL"];
+
+export function rangoTalla(talla: string): number {
+  return ORDEN_TALLAS.indexOf(talla) + 1 || 99;
+}
+
 export function ordenarTallas(tallas: string[]): string[] {
-  return [...tallas].sort(
-    (a, b) =>
-      (TALLA_ORDER.indexOf(a) + 1 || 99) - (TALLA_ORDER.indexOf(b) + 1 || 99)
-  );
+  return [...tallas].sort((a, b) => rangoTalla(a) - rangoTalla(b));
 }
 
 export function money(n: number | null | undefined): string {

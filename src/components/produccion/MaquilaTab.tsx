@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useProd } from "./useProduccion";
 import NombreTela from "./ResumenTela";
+import AccionesLote from "./AccionesLote";
 import { Modal, Campo, Badge, Vacio, Tallas } from "@/components/ui";
 import { money, type Maquila, type ColorMaquila } from "@/lib/produccion/types";
 import { hoyEcuador, fmtFecha } from "@/lib/fechas";
+import { etiquetaFila, costoMaquilaLote } from "@/lib/produccion/conjuntos";
 
 export default function MaquilaTab() {
   const { data, supabase, reload, toast } = useProd();
@@ -72,6 +74,14 @@ export default function MaquilaTab() {
           {terminada ? <Badge color="verde">Terminado</Badge> : <span className="sub" style={{ fontSize: 12 }}>{entregados}/{m.colores.length} entregados</span>}
         </div>
 
+        {/* Todo el lote de una vez: enviado o recibido completo. */}
+        {!terminada && (
+          <div style={{ marginTop: 8 }}>
+            <AccionesLote supabase={supabase} colores={m.colores}
+              onListo={async (msg) => { toast(msg); await reload(); }} />
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 12, margin: "12px 0", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 180 }}>
             <div className="label" style={{ fontSize: 10.5 }}>Maquiladora</div>
@@ -114,7 +124,7 @@ export default function MaquilaTab() {
               {m.colores.map((c: ColorMaquila) => (
                 <tr key={c.id}>
                   <td>
-                    <b style={{ fontSize: 13 }}>{c.color}</b>
+                    <b style={{ fontSize: 13 }}>{etiquetaFila(c.color, c.parte, prenda)}</b>
                     <div style={{ marginTop: 3 }}><Tallas tallas={c.tallas} /></div>
                   </td>
                   <td className="num" style={{ textAlign: "center" }}>{c.unidades}</td>
@@ -166,7 +176,7 @@ export default function MaquilaTab() {
         </div>
         {Number(m.costo_unitario) > 0 && (
           <div className="sub" style={{ fontSize: 12, marginTop: 8, textAlign: "right" }}>
-            Costo total maquila: <b>{money(Number(m.costo_unitario) * m.total_unidades)}</b>
+            Costo total maquila: <b>{money(costoMaquilaLote(m))}</b>
           </div>
         )}
       </div>

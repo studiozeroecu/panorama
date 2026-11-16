@@ -10,7 +10,7 @@ import {
 } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { TALLA_ORDER } from "@/lib/produccion/types";
+import { rangoTalla } from "@/lib/produccion/types";
 import type {
   Prenda,
   Proveedor,
@@ -23,6 +23,10 @@ import type {
   StockOnline,
   VentaOnline,
   EnvioLocal,
+  Feria,
+  IngresoFeria,
+  OrdenEstampado,
+  Estampado,
   EstadoPedido,
   EstadoColorMaquila,
 } from "@/lib/produccion/types";
@@ -43,7 +47,7 @@ interface FilaTalla {
 function aTallas(filas: FilaTalla[] | null | undefined): Record<string, number> {
   const out: Record<string, number> = {};
   const orden = [...(filas ?? [])].sort(
-    (a, b) => (TALLA_ORDER.indexOf(a.talla) + 1 || 99) - (TALLA_ORDER.indexOf(b.talla) + 1 || 99)
+    (a, b) => rangoTalla(a.talla) - rangoTalla(b.talla)
   );
   for (const f of orden) out[f.talla] = Number(f.unidades);
   return out;
@@ -68,6 +72,7 @@ interface FilaPedido {
   recibido_por_rol: "admin" | "cortadora" | null;
   ancho_recibido: number | string | null;
   destino_indicado: "locales" | "estampado" | null;
+  pedidos_unidos: PedidoTela["pedidos_unidos"] | null;
   colores:
     | { id: string; color: string; metros: number | string; kilos: number | string | null; orden: number }[]
     | null;
@@ -88,6 +93,7 @@ interface FilaCorte {
     | {
         id: string;
         pedido_color_id: string | null;
+        parte: "superior" | "inferior" | null;
         color: string;
         unidades: number | string;
         metros_usados: number | string | null;
@@ -111,7 +117,11 @@ interface FilaMaquila {
         fecha_envio: string | null;
         fecha_entrega: string | null;
         procesado: boolean;
-        corte_color: { color: string; unidades: number; orden: number; tallas: FilaTalla[] | null } | null;
+        costo_unitario: number | string | null;
+        corte_color: {
+          color: string; parte: "superior" | "inferior" | null; tono: "claro" | "oscuro" | null; unidades: number; orden: number;
+          tallas: FilaTalla[] | null;
+        } | null;
         entregas:
           | {
               id: string; fecha: string; tallas: Record<string, number>; unidades: number; procesado: boolean;
@@ -135,6 +145,10 @@ export interface ProdData {
   stock: StockOnline[];
   ventasOnline: VentaOnline[];
   enviosLocales: EnvioLocal[];
+  ferias: Feria[];
+  feriaIngresos: IngresoFeria[];
+  ordenesEstampado: OrdenEstampado[];
+  estampados: Estampado[];
   productosVatex: { codigo: string; descripcion: string }[];
 }
 
@@ -151,6 +165,10 @@ const VACIO: ProdData = {
   stock: [],
   ventasOnline: [],
   enviosLocales: [],
+  ferias: [],
+  feriaIngresos: [],
+  ordenesEstampado: [],
+  estampados: [],
   productosVatex: [],
 };
 
@@ -184,8 +202,11 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
     const [
       prendas, proveedores, costosFijos, maquiladoras, talleres,
       pedidos, cortes, maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, productos,
+      ferias, feriaIngresos, ordenesEstampado, estampados,
     ] = await Promise.all([
-      supabase.from("prod_prendas").select("*").order("nombre"),
+      // Fase 8r: las partes de cada conjunto vienen anidadas. Se siguen cargando
+      // todas las prendas, archivadas incluidas (regla de la fase 8e).
+      supabase.from("prod_prendas").select("*, partes:prod_prenda_partes (*)").order("nombre"),
       supabase.from("prod_proveedores").select("*").order("empresa"),
       supabase.from("prod_costos_fijos").select("*").order("nombre"),
       supabase.from("prod_maquiladoras").select("*").order("nombre"),
@@ -198,6 +219,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           `id, nombre_tela, fecha_pedido, unidad, rendimiento, ancho_pedido, ancho_real,
            proveedor_id, prenda_id, total_metros, valor_metro, total_pagar, estado,
            fecha_entrega_real, corrida_base, recibido_por_rol, ancho_recibido, destino_indicado,
+           pedidos_unidos,
            colores:prod_pedido_colores (id, color, metros, kilos, orden)`
         )
         .order("fecha_pedido", { ascending: false }),
@@ -207,7 +229,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           `id, pedido_id, fecha, maquiladora_id, total_unidades, metros_consumidos,
            observaciones, corrida_base,
            colores:prod_corte_colores (
-             id, pedido_color_id, color, unidades, metros_usados, orden,
+             id, pedido_color_id, color, parte, unidades, metros_usados, orden,
              tallas:prod_corte_color_tallas (talla, unidades)
            ),
            insumos:prod_corte_insumos (id, descripcion, cantidad, costo),
@@ -219,9 +241,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
         .select(
           `id, corte_id, maquiladora_id, costo_unitario, total_unidades,
            colores:prod_maquila_colores (
-             id, corte_color_id, estado, fecha_envio, fecha_entrega, procesado,
+             id, corte_color_id, estado, fecha_envio, fecha_entrega, procesado, costo_unitario,
              corte_color:prod_corte_colores (
-               color, unidades, orden,
+               color, parte, tono, unidades, orden,
                tallas:prod_corte_color_tallas (talla, unidades)
              ),
              entregas:prod_maquila_entregas (id, fecha, tallas, unidades, procesado, tipo, motivo)
@@ -233,10 +255,14 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       sel("prod_ventas_online", "fecha"),
       sel("prod_envios_locales", "fecha"),
       supabase.from("products").select("codigo, descripcion").order("codigo"),
+      sel("prod_ferias", "fecha"),
+      sel("prod_feria_ingresos", "created_at"),
+      sel("prod_ordenes_estampado", "created_at"),
+      supabase.from("prod_estampados").select("*").order("nombre"),
     ]);
 
     const failed = [prendas, proveedores, costosFijos, maquiladoras, talleres, pedidos, cortes,
-      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales].find((r) => r.error);
+      maquilas, lotesEstampado, stock, ventasOnline, enviosLocales, ferias, feriaIngresos, ordenesEstampado, estampados].find((r) => r.error);
     if (failed?.error) {
       setError(
         failed.error.message.includes("does not exist") ||
@@ -273,6 +299,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       recibido_por_rol: p.recibido_por_rol ?? null,
       ancho_recibido: p.ancho_recibido == null ? null : Number(p.ancho_recibido),
       destino_indicado: p.destino_indicado ?? null,
+      pedidos_unidos: p.pedidos_unidos ?? [],
       colores: [...(p.colores ?? [])]
         .sort((a, b) => a.orden - b.orden)
         .map((c) => ({
@@ -308,6 +335,7 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           id: c.id,
           pedido_color_id: c.pedido_color_id,
           color: c.color,
+          parte: c.parte ?? null,
           unidades: Number(c.unidades),
           metros_usados: c.metros_usados == null ? null : Number(c.metros_usados),
           orden: c.orden,
@@ -327,6 +355,9 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
           id: c.id,
           corte_color_id: c.corte_color_id,
           color: c.corte_color?.color ?? "",
+          parte: c.corte_color?.parte ?? null,
+          tono: c.corte_color?.tono ?? null,
+          costo_unitario: c.costo_unitario == null ? null : Number(c.costo_unitario),
           unidades: Number(c.corte_color?.unidades ?? 0),
           tallas: aTallas(c.corte_color?.tallas),
           estado: c.estado,
@@ -340,7 +371,18 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
     }));
 
     setData({
-      prendas: (prendas.data ?? []) as Prenda[],
+      // Fase 8r: PostgREST da los numeric como texto; las partes se normalizan aquí.
+      prendas: ((prendas.data ?? []) as Prenda[]).map((p) => ({
+        ...p,
+        es_conjunto: !!p.es_conjunto,
+        partes: (p.partes ?? []).map((x) => ({
+          ...x,
+          consumo_metros: x.consumo_metros == null ? null : Number(x.consumo_metros),
+          costo_maquila: Number(x.costo_maquila),
+          precio_venta_local: Number(x.precio_venta_local),
+          precio_venta_online: Number(x.precio_venta_online),
+        })),
+      })),
       proveedores: (proveedores.data ?? []) as Proveedor[],
       costosFijos: (costosFijos.data ?? []) as CostoFijo[],
       maquiladoras: (maquiladoras.data ?? []) as Catalogo[],
@@ -352,6 +394,10 @@ export function ProdProvider({ children }: { children: React.ReactNode }) {
       stock: (stock.data ?? []) as StockOnline[],
       ventasOnline: (ventasOnline.data ?? []) as VentaOnline[],
       enviosLocales: (enviosLocales.data ?? []) as EnvioLocal[],
+      ferias: (ferias.data ?? []) as Feria[],
+      feriaIngresos: (feriaIngresos.data ?? []) as IngresoFeria[],
+      ordenesEstampado: (ordenesEstampado.data ?? []) as OrdenEstampado[],
+      estampados: (estampados.data ?? []) as Estampado[],
       productosVatex: (productos.data ?? []) as { codigo: string; descripcion: string }[],
     });
     setError(null);

@@ -623,6 +623,8 @@ textarea.pinput {
 }
 .corrida-bloque .dato { font-size: 12.5px; margin: 2px 0; }
 .corrida-bloque .dato b { font-weight: 700; }
+.corrida-bloque .capas { font-size: 15px; margin: 8px 0 6px; }
+.corrida-bloque .capas b { font-weight: 800; }
 .corrida-bloque .aviso { color: #9a3412; font-weight: 700; }
 /* Las reglas globales de tabla son del tema oscuro y pisan a la hoja: `table`
    trae `background: var(--surface)`, `tr:last-child td` quita el borde de abajo
@@ -653,7 +655,9 @@ textarea.pinput {
 .corrida-hoja tbody tr:hover td { background: #ffffff; }
 .corrida-hoja .hoja-nota {
   margin-top: 14px;
-  font-size: 12.5px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
   border-top: 1px solid #bbbbbb;
   padding-top: 8px;
   white-space: pre-wrap;
