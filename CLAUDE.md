@@ -63,6 +63,7 @@ versionadas. Orden real de ejecución:
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase6a_planificacion.sql` ✅ **aplicada antes del 2026-11-16** — finanzas →
+`finanzas_fase6d_sueldo_vatex.sql` ✅ **aplicada el 2026-11-16** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar** →
 `schema_fase8r_conjuntos.sql` ✅ **aplicada el 2026-10-26** →
 `schema_fase8s_reparto_ferias.sql` ✅ **aplicada el 2026-10-27** →
@@ -669,6 +670,18 @@ Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
 - **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
   CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
 - **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
+
+### 2026-11-16 — finanzas — `finanzas_fase6d_sueldo_vatex.sql` ✅ EJECUTADA (2026-11-16)
+
+Un solo bloque DO, repetible. Probar con `finanzas_fase6d_sueldo_vatex_prueba_en_seco.sql` (10 pruebas).
+- Nuevas: `sueldo_vatex_tarifas` (cuánto paga VATEX al dueño desde qué mes: `desde` día 1, único;
+  `monto` ≥ 0, 0 = ya no hay sueldo; `dia_pago`) y `sueldo_vatex_pagos` (cada pago recibido).
+  RLS admin, nada para anon.
+- Es el sueldo **personal** del dueño: no crea movimientos, no toca caja, gastos ni rentabilidad.
+  Lo que se debe se calcula (`resumenSueldoVatex`, pagos al mes más antiguo primero).
+- Pantalla: sección *"Sueldo de VATEX (personal)"* al final de *Mi sueldo* (`SueldoVatex.tsx`),
+  que carga aparte: si falla, el resto de Mi sueldo sigue.
+- Impacto en otras áreas: **ninguno**.
 
 ### 2026-10-15 — finanzas — `finanzas_fase6a_planificacion.sql` ✅ EJECUTADA (antes del 2026-11-16)
 

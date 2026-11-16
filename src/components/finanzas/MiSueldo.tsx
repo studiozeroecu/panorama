@@ -10,6 +10,7 @@ import { mesDe, type Periodo } from "@/lib/finanzas/periodos";
 import type { Medio, RegistroSueldo } from "@/lib/finanzas/tipos";
 import { Modal, Campo, Fila, Badge } from "@/components/ui";
 import { BannerError, NavPeriodo, mensajeError, nuevoId, useIngresos } from "./comunes";
+import SueldoVatex from "./SueldoVatex";
 
 /**
  * Mi sueldo: cada prenda vendida te genera ganancia (VATEX $2,50, fuera $5).
@@ -106,6 +107,8 @@ export default function MiSueldo({ avisar }: { avisar: (m: string) => void }) {
           </p>
         </>
       ) : null}
+
+      <SueldoVatex avisar={avisar} />
 
       <ModalPagarme
         supabase={supabase}

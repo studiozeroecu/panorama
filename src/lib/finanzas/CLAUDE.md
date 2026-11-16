@@ -341,6 +341,14 @@ notas (`textoRetencion`). No hay columnas de retención: si algún día hace fal
 retenciones para el SRI, sí habría que guardarlas aparte (SQL nuevo). Los últimos porcentajes
 usados se recuerdan en `localStorage` de ese navegador (solo comodidad).
 
+## Sueldo de VATEX (fase 6D, `finanzas_fase6d_sueldo_vatex.sql`)
+
+VATEX le paga al dueño un sueldo **personal** ($300 al mes, 2026-11-16). No es de Bear & Trend:
+**no crea movimientos** ni entra a caja, gastos o rentabilidad. `sueldo_vatex_tarifas` guarda el
+valor desde un mes (un cambio = otra fila; 0 = se acabó) y `sueldo_vatex_pagos` lo recibido.
+`resumenSueldoVatex` (`sueldoVatex.ts`, con pruebas) cuenta cada mes cuyo día de pago ya llegó
+y aplica los pagos al más antiguo. Pantalla: `SueldoVatex.tsx` al final de *Mi sueldo*.
+
 ## Decisiones tomadas
 
 1. Se mantiene la tabla `cheques` (con columna `medio`) para todas las cuotas.

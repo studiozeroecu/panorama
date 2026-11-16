@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { gastosPorMes } from "./plan";
+import type { PagoSueldoVatex, TarifaSueldoVatex } from "./sueldoVatex";
 import type {
   Cheque,
   Cobro,
@@ -377,5 +378,21 @@ export async function cargarIngresos(supabase: SupabaseClient): Promise<DatosIng
     ),
     pagosSueldo: pagos.map((r) => numeros<PagoSueldo>(r, ["monto"])),
     sueldo: { ganado: num(s.ganado), pagado: num(s.pagado), saldo: num(s.saldo) },
+  };
+}
+
+/** Sueldo personal de VATEX: sus valores por mes y lo que ya pagó. */
+export async function cargarSueldoVatex(
+  supabase: SupabaseClient
+): Promise<{ tarifas: TarifaSueldoVatex[]; pagos: PagoSueldoVatex[] }> {
+  const [tarifas, pagos] = await todasOFalla([
+    leerTodo<Record<string, unknown>>("el sueldo de VATEX", (a, b) =>
+      supabase.from("sueldo_vatex_tarifas").select("*").order("desde").range(a, b)),
+    leerTodo<Record<string, unknown>>("los pagos del sueldo de VATEX", (a, b) =>
+      supabase.from("sueldo_vatex_pagos").select("*").order("fecha").order("id").range(a, b)),
+  ]);
+  return {
+    tarifas: tarifas.map((r) => numeros<TarifaSueldoVatex>(r, ["monto", "dia_pago"])),
+    pagos: pagos.map((r) => numeros<PagoSueldoVatex>(r, ["monto"])),
   };
 }
