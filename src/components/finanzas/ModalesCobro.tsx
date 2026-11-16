@@ -7,8 +7,44 @@ import { hoyEcuador, fmtFecha } from "@/lib/fechas";
 import { money, aCentavos } from "@/lib/finanzas/formato";
 import { MEDIOS } from "@/lib/finanzas/categorias";
 import { GANANCIA_POR_PRENDA, repartoAbono } from "@/lib/finanzas/ingresos";
+import {
+  calcularRetencion,
+  IVA_ECUADOR,
+  PORCENTAJES_RENTA,
+  PORCENTAJES_RET_IVA,
+  textoRetencion,
+} from "@/lib/finanzas/retencion";
 import type { FacturaCobrar, Medio } from "@/lib/finanzas/tipos";
 import { mensajeError, nuevoId } from "./comunes";
+
+// Últimos porcentajes de retención usados, en este navegador (solo comodidad:
+// si no se pueden leer, vuelven los de siempre).
+const CLAVE_PCTS = "finanzas.retencion.pcts";
+function leerPorcentajes(): { iva: string; renta: string; retIva: string } {
+  const def = { iva: String(IVA_ECUADOR), renta: "1.75", retIva: "30" };
+  try {
+    const x = JSON.parse(localStorage.getItem(CLAVE_PCTS) ?? "null");
+    return x && typeof x === "object" ? { ...def, ...x } : def;
+  } catch {
+    return def;
+  }
+}
+function guardarPorcentajes(p: { iva: string; renta: string; retIva: string }) {
+  try {
+    localStorage.setItem(CLAVE_PCTS, JSON.stringify(p));
+  } catch {
+    // sin almacenamiento: la próxima vez salen los de siempre
+  }
+}
+
+function FilaRet({ texto, valor, fuerte, color }: { texto: string; valor: number; fuerte?: boolean; color?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontWeight: fuerte ? 600 : undefined, color }}>
+      <span>{texto}</span>
+      <span className="num">{money(valor)}</span>
+    </div>
+  );
+}
 
 /**
  * Nueva factura por cobrar, o EDITAR una que ya existe (`factura`).
@@ -49,12 +85,21 @@ export function FormFactura({
   const [esperada, setEsperada] = useState("");
   const [esInicial, setEsInicial] = useState(false);
   const [notas, setNotas] = useState("");
+  // "me retienen": se escribe el valor de la factura y se guarda lo que de verdad llega
+  const [conRet, setConRet] = useState(false);
+  const [subtotal, setSubtotal] = useState("");
+  const [ivaPct, setIvaPct] = useState(String(IVA_ECUADOR));
+  const [rentaPct, setRentaPct] = useState("1.75");
+  const [retIvaPct, setRetIvaPct] = useState("30");
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!abierto) return;
     setGuardando(false); setErr(null); setAnular(false);
+    setConRet(false); setSubtotal("");
+    const ult = leerPorcentajes();
+    setIvaPct(ult.iva); setRentaPct(ult.renta); setRetIvaPct(ult.retIva);
     if (factura) {
       // editar: se llena con lo guardado
       setId(factura.id);
@@ -74,10 +119,16 @@ export function FormFactura({
 
   const nPrendas = prendas.trim() === "" ? 0 : Number(prendas);
   const tarifa = esVatex ? GANANCIA_POR_PRENDA.vatex : GANANCIA_POR_PRENDA.fuera;
+  const pcts = { iva: parseFloat(ivaPct), renta: parseFloat(rentaPct), retIva: parseFloat(retIvaPct) };
+  const ret =
+    conRet && parseFloat(subtotal) > 0 && pcts.iva >= 0 && pcts.renta >= 0 && pcts.retIva >= 0
+      ? calcularRetencion({ subtotal: parseFloat(subtotal), ivaPct: pcts.iva, rentaPct: pcts.renta, retIvaPct: pcts.retIva })
+      : null;
 
   async function guardar() {
     if (guardando) return;
-    const m = parseFloat(monto);
+    if (conRet && !ret) return setErr("Escribe el valor de la factura sin IVA y los porcentajes de retención.");
+    const m = ret ? ret.aRecibir : parseFloat(monto);
     if (!esVatex && !cliente.trim()) return setErr("Falta el cliente.");
     if (!(m > 0)) return setErr("El monto debe ser mayor a 0.");
     if (!Number.isInteger(nPrendas) || nPrendas < 0) return setErr("Las prendas deben ser un número entero (0 o más).");
@@ -94,8 +145,10 @@ export function FormFactura({
       fecha_factura: fecha,
       fecha_vencimiento: esperada || null,
       es_saldo_inicial: esInicial,
-      notas: notas.trim(),
+      // el desglose de la retención queda en las notas (lo guardado es lo que llega)
+      notas: ret ? [notas.trim(), textoRetencion(ret, pcts.renta, pcts.retIva)].filter(Boolean).join("\n") : notas.trim(),
     };
+    if (ret) guardarPorcentajes({ iva: ivaPct, renta: rentaPct, retIva: retIvaPct });
     const { error } = editando
       ? await supabase.from("cuentas_por_cobrar").update({ ...campos, anulada: anular }).eq("id", id)
       : await supabase.from("cuentas_por_cobrar").upsert({ id, ...campos }, { onConflict: "id", ignoreDuplicates: true });
@@ -144,10 +197,64 @@ export function FormFactura({
           </datalist>
         </Campo>
       )}
+      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginBottom: 10 }}>
+        <input type="checkbox" checked={conRet} onChange={(e) => setConRet(e.target.checked)} />
+        Me retienen (calcular cuánto me llega de verdad)
+      </label>
+      {conRet && (
+        <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+          <Fila>
+            <Campo label="Valor de la factura SIN IVA ($)" requerido>
+              <input className="pinput" type="number" step="0.01" min="0" value={subtotal} autoFocus
+                onChange={(e) => setSubtotal(e.target.value)} />
+            </Campo>
+            <Campo label="IVA (%)">
+              <input className="pinput" type="number" step="1" min="0" value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} />
+            </Campo>
+          </Fila>
+          <Fila>
+            <Campo label="Retención renta (%)">
+              <input className="pinput" type="number" step="0.01" min="0" list="fin-pct-renta" value={rentaPct}
+                onChange={(e) => setRentaPct(e.target.value)} />
+              <datalist id="fin-pct-renta">
+                {PORCENTAJES_RENTA.map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </Campo>
+            <Campo label="Retención IVA (% del IVA)">
+              <input className="pinput" type="number" step="1" min="0" list="fin-pct-iva" value={retIvaPct}
+                onChange={(e) => setRetIvaPct(e.target.value)} />
+              <datalist id="fin-pct-iva">
+                {PORCENTAJES_RET_IVA.map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </Campo>
+          </Fila>
+          {ret ? (
+            <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+              <FilaRet texto="Subtotal" valor={ret.subtotal} />
+              <FilaRet texto={`IVA ${ivaPct}%`} valor={ret.iva} />
+              <FilaRet texto="Total de la factura" valor={ret.total} fuerte />
+              <FilaRet texto={`− Retención renta ${rentaPct}%`} valor={-ret.retRenta} />
+              <FilaRet texto={`− Retención IVA ${retIvaPct}%`} valor={-ret.retIva} />
+              <FilaRet texto="Te llega (esto queda por cobrar)" valor={ret.aRecibir} fuerte color="var(--good)" />
+            </div>
+          ) : (
+            <p className="sub" style={{ fontSize: 12, margin: 0 }}>Escribe el valor sin IVA para ver el cálculo.</p>
+          )}
+          <p className="sub" style={{ fontSize: 11.5, margin: "6px 0 0" }}>
+            Los porcentajes se recuerdan para la próxima factura. Cuáles te tocan te lo confirma tu contador.
+          </p>
+        </div>
+      )}
       <Fila>
-        <Campo label="Monto ($)" requerido>
-          <input className="pinput" type="number" step="0.01" min="0" value={monto} onChange={(e) => setMonto(e.target.value)} />
-        </Campo>
+        {conRet ? (
+          <Campo label="Monto por cobrar ($)">
+            <input className="pinput" value={ret ? ret.aRecibir.toFixed(2) : ""} disabled />
+          </Campo>
+        ) : (
+          <Campo label="Monto ($)" requerido>
+            <input className="pinput" type="number" step="0.01" min="0" value={monto} onChange={(e) => setMonto(e.target.value)} />
+          </Campo>
+        )}
         <Campo label="Prendas vendidas">
           <input className="pinput" type="number" step="1" min="0" value={prendas} onChange={(e) => setPrendas(e.target.value)} />
         </Campo>

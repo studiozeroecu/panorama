@@ -18,11 +18,21 @@ export interface PagoAPagar {
   medio: string;
   numero: string;
   ambito: "empresa" | "personal";
+  /** qué se paga: una cuota/cheque, un gasto fijo o una tarjeta (cada uno con su función) */
+  origen?: "cheque" | "fijo" | "tarjeta";
+  fijoId?: string;
+  fechaProgramada?: string;
+  tarjetaId?: string;
+  corteId?: string;
 }
 
 /**
- * Pagar un pago programado: la base lo marca pagado Y registra el gasto en
- * una sola operación (pagar_cuota). Si ya estaba pagado no duplica nada.
+ * Pagar algo programado. Cada tipo tiene su función en la base, y todas marcan
+ * el pago Y registran el gasto en una sola operación:
+ *  - cuota/cheque → pagar_cuota
+ *  - gasto fijo   → pagar_gasto_fijo (una vez por fecha del calendario)
+ *  - tarjeta      → pagar_tarjeta (el monto propuesto es lo estimado; se cambia)
+ * El id de la operación se crea al abrir: un doble clic no duplica.
  */
 export function ModalPagar({
   supabase,
@@ -36,12 +46,18 @@ export function ModalPagar({
   onHecho: (mensaje: string) => void;
 }) {
   const [fecha, setFecha] = useState(hoyEcuador());
+  const [monto, setMonto] = useState("");
+  const [idOperacion, setIdOperacion] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const origen = pago?.origen ?? "cheque";
+  const montoEditable = origen !== "cheque";
 
   useEffect(() => {
     if (pago) {
       setFecha(hoyEcuador());
+      setMonto(pago.monto.toFixed(2));
+      setIdOperacion(nuevoId());
       setErr(null);
       setGuardando(false);
     }
@@ -49,20 +65,41 @@ export function ModalPagar({
 
   async function confirmar() {
     if (!pago || guardando) return;
+    const m = montoEditable ? parseFloat(monto) : pago.monto;
+    if (!(m > 0)) return setErr("El monto debe ser mayor a 0.");
     setGuardando(true);
     setErr(null);
-    const { data, error } = await supabase.rpc("pagar_cuota", {
-      p_cheque_id: pago.chequeId,
-      p_fecha: fecha,
-      p_origen: "web",
-    });
+    const { data, error } =
+      origen === "fijo"
+        ? await supabase.rpc("pagar_gasto_fijo", {
+            p_id: idOperacion,
+            p_gasto_fijo_id: pago.fijoId,
+            p_fecha_programada: pago.fechaProgramada,
+            p_monto: m,
+            p_fecha: fecha,
+            p_origen: "web",
+          })
+        : origen === "tarjeta"
+          ? await supabase.rpc("pagar_tarjeta", {
+              p_id: idOperacion,
+              p_tarjeta_id: pago.tarjetaId,
+              p_monto: m,
+              p_fecha: fecha,
+              p_corte_id: pago.corteId ?? null,
+              p_origen: "web",
+            })
+          : await supabase.rpc("pagar_cuota", {
+              p_cheque_id: pago.chequeId,
+              p_fecha: fecha,
+              p_origen: "web",
+            });
     setGuardando(false);
     if (error) return setErr(mensajeError(error));
     const r = data as { resultado?: string } | null;
     onHecho(
-      r?.resultado === "ya_pagado"
+      r?.resultado === "ya_pagado" || r?.resultado === "ya_registrado"
         ? "Ya estaba pagado — no se registró nada nuevo"
-        : `Pagado ${money(pago.monto)} a ${pago.quien} y registrado como gasto (${pago.ambito})`
+        : `Pagado ${money(m)} a ${pago.quien} y registrado como gasto (${origen === "tarjeta" ? "empresa" : pago.ambito})`
     );
   }
 
@@ -84,19 +121,148 @@ export function ModalPagar({
         <>
           {err && <div className="error-banner">{err}</div>}
           <p style={{ marginTop: 0 }}>
-            <strong>{pago.quien}</strong> <EtiquetaAmbito ambito={pago.ambito} />
+            <strong>{pago.quien}</strong> <EtiquetaAmbito ambito={origen === "tarjeta" ? "empresa" : pago.ambito} />
             {pago.concepto && <span className="sub"> · {pago.concepto}</span>}
           </p>
           <p className="sub" style={{ marginTop: 0 }}>
             {pago.medio}{pago.numero ? ` #${pago.numero}` : ""} · programado para {fmtFecha(pago.fecha)}
           </p>
-          <p style={{ fontSize: 22, margin: "6px 0 14px" }}>{money(pago.monto)}</p>
-          <Campo label="Fecha en que se pagó" requerido>
-            <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-          </Campo>
+          {montoEditable ? (
+            <Fila>
+              <Campo label={origen === "tarjeta" ? "Cuánto pagas ($)" : "Monto ($)"} requerido>
+                <input className="pinput" type="number" step="0.01" min="0" value={monto} onChange={(e) => setMonto(e.target.value)} />
+              </Campo>
+              <Campo label="Fecha en que se pagó" requerido>
+                <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+              </Campo>
+            </Fila>
+          ) : (
+            <>
+              <p style={{ fontSize: 22, margin: "6px 0 14px" }}>{money(pago.monto)}</p>
+              <Campo label="Fecha en que se pagó" requerido>
+                <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+              </Campo>
+            </>
+          )}
           <p className="sub" style={{ fontSize: 12 }}>
-            Se marca como pagado y se registra el gasto
-            {pago.ambito === "personal" ? " con ámbito personal (no entra a la rentabilidad del negocio)" : ""}.
+            {origen === "tarjeta" ? (
+              "Se registra como gasto del negocio (categoría tarjeta). Si pagas menos de lo estimado, lo que falta sigue apareciendo por pagar."
+            ) : (
+              <>
+                Se marca como pagado y se registra el gasto
+                {pago.ambito === "personal" ? " con ámbito personal (no entra a la rentabilidad del negocio)" : ""}.
+              </>
+            )}
+          </p>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/** Un gasto suelto para ModalGasto (hormiga, o un pago contra un estimado). */
+export interface GastoSuelto {
+  titulo: string;
+  categoria: string;
+  ambito: "empresa" | "personal";
+  concepto?: string;
+  monto?: number;
+  fecha?: string;
+  /** texto de ayuda debajo */
+  ayuda?: string;
+}
+
+/**
+ * Anotar un gasto suelto: un gasto hormiga, o lo que se pagó contra un
+ * estimado (maquila, DTF…). Lo registra registrar_gasto; el id se crea al
+ * abrir, así un doble clic no lo duplica.
+ */
+export function ModalGasto({
+  supabase,
+  gasto,
+  onCerrar,
+  onHecho,
+}: {
+  supabase: SupabaseClient;
+  gasto: GastoSuelto | null;
+  onCerrar: () => void;
+  onHecho: (mensaje: string) => void;
+}) {
+  const [id, setId] = useState("");
+  const [monto, setMonto] = useState("");
+  const [fecha, setFecha] = useState(hoyEcuador());
+  const [concepto, setConcepto] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (gasto) {
+      setId(nuevoId());
+      setMonto(gasto.monto ? gasto.monto.toFixed(2) : "");
+      setFecha(gasto.fecha ?? hoyEcuador());
+      setConcepto(gasto.concepto ?? "");
+      setErr(null);
+      setGuardando(false);
+    }
+  }, [gasto]);
+
+  async function confirmar() {
+    if (!gasto || guardando) return;
+    const m = parseFloat(monto);
+    if (!(m > 0)) return setErr("El monto debe ser mayor a 0.");
+    setGuardando(true);
+    setErr(null);
+    const { data, error } = await supabase.rpc("registrar_gasto", {
+      p_id: id,
+      p_monto: m,
+      p_categoria: gasto.categoria,
+      p_concepto: concepto.trim(),
+      p_ambito: gasto.ambito,
+      p_fecha: fecha,
+      p_origen: "web",
+    });
+    setGuardando(false);
+    if (error) return setErr(mensajeError(error));
+    const r = data as { resultado?: string } | null;
+    onHecho(
+      r?.resultado === "ya_registrado"
+        ? "Ese gasto ya estaba registrado — no se duplicó"
+        : `Gasto de ${money(m)} registrado (${gasto.categoria})`
+    );
+  }
+
+  return (
+    <Modal
+      titulo={gasto?.titulo ?? "Anotar gasto"}
+      abierto={gasto != null}
+      onCerrar={guardando ? () => {} : onCerrar}
+      pie={
+        <>
+          <button className="btn" onClick={onCerrar} disabled={guardando}>Cancelar</button>
+          <button className="btn primary" onClick={confirmar} disabled={guardando || !fecha}>
+            {guardando ? "Guardando…" : "Registrar gasto"}
+          </button>
+        </>
+      }
+    >
+      {gasto && (
+        <>
+          {err && <div className="error-banner">{err}</div>}
+          <Fila>
+            <Campo label="Monto ($)" requerido>
+              <input className="pinput" type="number" step="0.01" min="0" value={monto} autoFocus
+                onChange={(e) => setMonto(e.target.value)} />
+            </Campo>
+            <Campo label="Fecha" requerido>
+              <input className="pinput" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+            </Campo>
+          </Fila>
+          <Campo label="En qué (opcional)">
+            <input className="pinput" value={concepto} onChange={(e) => setConcepto(e.target.value)} />
+          </Campo>
+          <p className="sub" style={{ fontSize: 12, margin: 0 }}>
+            Categoría <strong>{gasto.categoria}</strong> · <EtiquetaAmbito ambito={gasto.ambito} />
+            {gasto.ayuda ? <><br />{gasto.ayuda}</> : null}
           </p>
         </>
       )}

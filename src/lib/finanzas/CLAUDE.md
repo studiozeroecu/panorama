@@ -293,6 +293,54 @@ gasto nuevo**. Cuándo y cómo se reconoce el sueldo como gasto se decide en la 
   **tope (por defecto $900, editable)**; un cheque solo que pasa el tope está bien. Nunca
   antes de la fecha base ni desordenados. Solo aplica a `medio = cheque`; se puede apagar.
 
+## Fase 6: planificación (`finanzas_fase6a_planificacion.sql`)
+
+Pedidos del dueño (2026-10-15). Tablas, funciones y vistas: ver el registro del `CLAUDE.md` raíz.
+
+- **Gastos fijos** (`gastos_fijos`): guardería, arriendo… Mensual (un día) o quincenal (dos días),
+  fin opcional. Las fechas de cada mes **no se guardan**: `fechasDeFijo` (`plan.ts`) y
+  `fn_es_fecha_de_fijo` las calculan igual (el 31 cae el último día del mes). Cada pago es una fila de
+  `gastos_fijos_pagos`, **única por fecha programada** → `pagar_gasto_fijo`. En la agenda entran como
+  pagos más (`origen: "fijo"`), con vencidos y "atento".
+- **Préstamos en cuotas**: en `FormDeuda`, switch *Cheques (30/60/90…)* / *Cuotas*. Cuotas =
+  `fechasPeriodicas` (mensual el mismo día, o quincenal 15 y fin de mes). Siguen siendo pagos de la
+  deuda en `cheques`; en quincena/mes solo suma la cuota del periodo.
+- **Estimados del mes** (`estimados_gasto`, uno activo por categoría): `valorEstimado` sugiere solo
+  → a mano (`estimados_mes`) > mismo mes del año pasado > promedio de los 3 meses anteriores sin
+  temporada × temporada del mes > base × temporada. `temporadas_mes` (nov 1,20, dic 1,50). En la
+  agenda van **aparte** ("pagos seguros" vs "con estimados"): pendiente = estimado − gastado −
+  programado de esa categoría en el mes. Los pagos contra el estimado son gastos normales
+  (`registrar_gasto` con su categoría) y se van sumando.
+- **Tarjetas** (`tarjetas`, `tarjeta_cortes`, `tarjeta_pagos`): mismas para el dueño y el negocio →
+  todo pago es **gasto de empresa, categoría `tarjeta`**, sin preguntar (`pagar_tarjeta`). En cada
+  corte se anota saldo, mínimo y cuánto se va a pagar; lo que falta de eso entra a la agenda en la
+  fecha de pago (`origen: "tarjeta"`). Consumo del periodo y lo que falta: `v_tarjeta_cortes`.
+  Corte sin anotar → **aviso en la página de Finanzas** (`AvisoCortes`, con `cortePendiente`).
+  **El bot no avisa nada de tarjetas** (decisión del dueño).
+- **Caja**: `saldos_caja` (una foto por cuenta y día). `cuadreCaja` compara las dos últimas fechas:
+  había + ingresos − gastos (todo, empresa y personal: salen de las mismas cuentas) contra lo que hay.
+  Si falta, un botón lo registra como **gasto hormiga** (categoría `hormiga`, empresa) con la fecha
+  del cuadre, y la caja vuelve a cuadrar. "+ Gasto hormiga" rápido en Quincena/Mes, Fijos y Caja.
+- **Pantallas:** pestañas *Fijos y estimados* (`FijosEstimados.tsx`), *Tarjetas* (`Tarjetas.tsx`),
+  *Caja* (`Caja.tsx`). `ModalPagar` elige la función por `origen` (cuota → `pagar_cuota`, fijo →
+  `pagar_gasto_fijo`, tarjeta → `pagar_tarjeta`, con monto editable); `ModalGasto` →
+  `registrar_gasto`. Carga: `cargarFinanzas` trae también lo de planificación (así el bot, la alerta
+  y el resumen del lunes cuentan fijos y tarjetas); `cargarPlan` para las pantallas nuevas.
+- ⚠️ **`cargarFinanzas` lee las tablas nuevas: sin el SQL 6A aplicado, Finanzas, el bot y los crons
+  fallan al cargar.** Ejecutar el SQL ANTES de publicar.
+- La alerta diaria (`alertas.ts`) sigue avisando solo cheques/cuotas; los botones del bot
+  (`pagar_cuota`) no tocan fijos ni tarjetas.
+
+## Retenciones al cobrar (2026-11-16, sin cambio de base)
+
+Al dueño le retienen (VATEX y otros clientes). En la factura nueva, casilla *"Me retienen"*: se
+escribe el valor **sin IVA**, IVA % (15), retención renta % y retención IVA % (sobre el IVA);
+`calcularRetencion` (`retencion.ts`, con pruebas) redondea cada valor a centavos por separado.
+**Se guarda como `monto` lo que de verdad llega** (total − retenciones) y el desglose va a las
+notas (`textoRetencion`). No hay columnas de retención: si algún día hace falta el reporte de
+retenciones para el SRI, sí habría que guardarlas aparte (SQL nuevo). Los últimos porcentajes
+usados se recuerdan en `localStorage` de ese navegador (solo comodidad).
+
 ## Decisiones tomadas
 
 1. Se mantiene la tabla `cheques` (con columna `medio`) para todas las cuotas.

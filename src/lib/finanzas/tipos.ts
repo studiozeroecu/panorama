@@ -180,6 +180,127 @@ export interface DatosIngresos {
   sueldo: { ganado: number; pagado: number; saldo: number };
 }
 
+// ------------------------------------------------------------
+// Planificación (fase 6A): gastos fijos, estimados, tarjetas, caja
+// ------------------------------------------------------------
+
+export interface GastoFijo {
+  id: string;
+  nombre: string;
+  monto: number;
+  frecuencia: "mensual" | "quincenal";
+  /** día(s) del mes; si el día no existe en el mes, cae el último */
+  dias: number[];
+  fecha_inicio: string;
+  fecha_fin: string | null;
+  ambito: Ambito;
+  categoria: string;
+  medio: Medio;
+  activo: boolean;
+  notas: string;
+}
+
+export interface PagoFijo {
+  id: string;
+  gasto_fijo_id: string;
+  fecha_programada: string;
+  fecha_pago: string;
+  monto: number;
+}
+
+export interface EstimadoGasto {
+  id: string;
+  nombre: string;
+  categoria: string;
+  base: number;
+  ambito: Ambito;
+  activo: boolean;
+  notas: string;
+}
+
+/** Valor fijado a mano para un mes ("YYYY-MM-01"). */
+export interface EstimadoMes {
+  estimado_id: string;
+  mes: string;
+  monto: number;
+}
+
+export interface Temporada {
+  mes: number;
+  factor: number;
+  nota: string;
+}
+
+/** Fila de v_tarjetas. */
+export interface Tarjeta {
+  id: string;
+  nombre: string;
+  banco: string;
+  dia_corte: number;
+  dia_pago: number;
+  activa: boolean;
+  notas: string;
+  ultimo_corte: string | null;
+  saldo_ultimo_corte: number | null;
+  pagado_despues_del_corte: number;
+  saldo_estimado_hoy: number | null;
+}
+
+/** Fila de v_tarjeta_cortes: consumo y lo que falta los calcula la base. */
+export interface CorteTarjeta {
+  id: string;
+  tarjeta_id: string;
+  tarjeta: string;
+  banco: string;
+  fecha_corte: string;
+  fecha_pago: string;
+  saldo_total: number;
+  pago_minimo: number;
+  pago_estimado: number;
+  notas: string;
+  fecha_corte_anterior: string | null;
+  saldo_anterior: number | null;
+  pagos_entre_cortes: number;
+  consumo: number | null;
+  pagado_del_corte: number;
+  falta_de_lo_estimado: number;
+}
+
+export interface PagoTarjeta {
+  id: string;
+  tarjeta_id: string;
+  corte_id: string | null;
+  fecha: string;
+  monto: number;
+  notas: string;
+}
+
+export interface CuentaDinero {
+  id: string;
+  nombre: string;
+  tipo: "banco" | "efectivo";
+  banco: string;
+  ambito: Ambito;
+  activa: boolean;
+}
+
+export interface SaldoCaja {
+  id: string;
+  fecha: string;
+  cuenta_id: string;
+  monto: number;
+  notas: string;
+}
+
+/** Gasto real de un mes por categoría (para estimados). */
+export interface GastoMes {
+  /** "YYYY-MM" */
+  mes: string;
+  categoria: string;
+  ambito: Ambito;
+  total: number;
+}
+
 /** Lo que cargar.ts trae de la base para un periodo. */
 export interface DatosFinanzas {
   deudas: Deuda[];
@@ -189,4 +310,15 @@ export interface DatosFinanzas {
   chequesPagados: Cheque[];
   /** movimientos con fecha dentro del rango cargado */
   movimientos: Movimiento[];
+  // --- fase 6 (opcionales: el bot y las pruebas viejas no los traen) ---
+  fijos?: GastoFijo[];
+  pagosFijos?: PagoFijo[];
+  cortes?: CorteTarjeta[];
+  tarjetas?: Tarjeta[];
+  pagosTarjeta?: PagoTarjeta[];
+  estimados?: EstimadoGasto[];
+  estimadosMes?: EstimadoMes[];
+  temporadas?: Temporada[];
+  /** gasto real por mes y categoría, desde 12 meses antes del periodo */
+  historialGastos?: GastoMes[];
 }

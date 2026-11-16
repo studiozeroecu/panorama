@@ -62,6 +62,7 @@ versionadas. Orden real de ejecución:
 `finanzas_v2_sql1_ampliar.sql` ✅ **aplicada en octubre 2026 (antes del 2026-10-14)** — finanzas →
 `finanzas_fase5a_ingresos.sql` ✅ **aplicada el 2026-10-15** — finanzas →
 `finanzas_fase5a2_editar_factura.sql` ✅ **aplicada el 2026-10-15** — finanzas →
+`finanzas_fase6a_planificacion.sql` ✅ **aplicada antes del 2026-11-16** — finanzas →
 `schema_fase8q_corregir_corte.sql` ⏳ **escrita, PENDIENTE de aplicar**
 *(sí: la 8m va ANTES que la 8l. Se escribió después, pero se aplicó primero)*
 *(no hay 8f en la cadena: esa fase fue la ficha de estampado y no tocó schema)*
@@ -410,6 +411,26 @@ Verificable con `supabase/smoke_test_fase8q.sql` (7 comprobaciones).
 - **Pantalla:** `CorregirCorteModal.tsx`, botón *"✏️ Corregir cantidades"* bajo cada corte en
   CorteTab. Muestra el mínimo de cada talla (`entregadoPorTalla` en `src/lib/produccion/entregas.ts`).
 - **Impacto en otras áreas: ninguno.** Sin tabla ni columna nuevas, así que sin RLS nueva.
+
+### 2026-10-15 — finanzas — `finanzas_fase6a_planificacion.sql` ✅ EJECUTADA (antes del 2026-11-16)
+
+Un solo bloque DO, repetible. Probar con `finanzas_fase6a_planificacion_prueba_en_seco.sql` (17 pruebas).
+- Nuevas: `gastos_fijos` (mensual o quincenal, `dias int[]`, fin opcional; las fechas de cada mes se
+  calculan con `fn_es_fecha_de_fijo`, el día 31 cae el último del mes) + `gastos_fijos_pagos` (uno
+  por fecha programada); `estimados_gasto` (uno activo por categoría) + `estimados_mes` (valor
+  fijado a mano) + `temporadas_mes` (factor por mes; sembrado nov 1,20 y dic 1,50, no se pisa al
+  re-ejecutar); `tarjetas` + `tarjeta_cortes` (saldo, mínimo y pago estimado por corte) +
+  `tarjeta_pagos`.
+- `movimientos`: + `gasto_fijo_pago_id`, `tarjeta_pago_id` (únicos, restrict); categorías
+  `hormiga` y `tarjeta`. Los pagos de tarjeta cuentan como gasto del negocio (decisión del dueño:
+  sus tarjetas son las mismas para él y el negocio).
+- Funciones `pagar_gasto_fijo`, `pagar_tarjeta`, `registrar_gasto` (gasto rápido / hormiga);
+  vistas `v_tarjeta_cortes` (consumo del periodo calculado) y `v_tarjetas` (saldo estimado hoy);
+  `v_movimientos` gana 2 columnas.
+- Pantallas (6B+6C): pestañas *Fijos y estimados*, *Tarjetas*, *Caja*; aviso de corte de tarjeta en
+  la página de Finanzas; switch Cheques/Cuotas al crear deuda. Detalle en `src/lib/finanzas/CLAUDE.md`.
+- ⚠️ **Ejecutar ANTES de publicar el código:** `cargarFinanzas` (web, bot y crons) ya lee estas tablas.
+- Impacto en otras áreas: **ninguno**.
 
 ### 2026-10-15 — finanzas — `finanzas_fase5a2_editar_factura.sql` ✅ EJECUTADA (2026-10-15)
 

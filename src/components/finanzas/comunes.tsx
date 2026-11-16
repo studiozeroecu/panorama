@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { cargarFinanzas, cargarIngresos, ErrorCarga } from "@/lib/finanzas/cargar";
+import { cargarFinanzas, cargarIngresos, cargarPlan, ErrorCarga, type DatosPlan } from "@/lib/finanzas/cargar";
+import { hoyEcuador } from "@/lib/fechas";
 import { anterior, contiene, periodoDe, siguiente, type Periodo } from "@/lib/finanzas/periodos";
 import type { Ambito, DatosFinanzas, DatosIngresos, Exigibilidad } from "@/lib/finanzas/tipos";
 import { Badge } from "@/components/ui";
@@ -81,6 +82,37 @@ export function useIngresos() {
     setCargando(true);
     try {
       setDatos(await cargarIngresos(supabase));
+      setError(null);
+    } catch (e) {
+      setDatos(null);
+      setError(
+        e instanceof ErrorCarga
+          ? e.message
+          : `No se pudo cargar Finanzas — los totales no son confiables. (${e instanceof Error ? e.message : String(e)})`
+      );
+    } finally {
+      setCargando(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    recargar();
+  }, [recargar]);
+
+  return { supabase, datos, error, cargando, recargar };
+}
+
+/** Carga lo de planificación (gastos fijos, estimados, tarjetas, caja). */
+export function usePlan() {
+  const supabase = useMemo(() => createClient(), []);
+  const [datos, setDatos] = useState<DatosPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(true);
+
+  const recargar = useCallback(async () => {
+    setCargando(true);
+    try {
+      setDatos(await cargarPlan(supabase, hoyEcuador()));
       setError(null);
     } catch (e) {
       setDatos(null);

@@ -21,6 +21,7 @@ import {
   validarCuotas,
   type CuotaBorrador,
 } from "@/lib/finanzas/cuotas";
+import { fechasPeriodicas } from "@/lib/finanzas/plan";
 import type { Ambito, Exigibilidad, Medio, TipoDeuda } from "@/lib/finanzas/tipos";
 import { mensajeError, nuevoId } from "./comunes";
 
@@ -96,6 +97,12 @@ export default function FormDeuda({
   const [genBanco, setGenBanco] = useState("");
   const [alSabado, setAlSabado] = useState(true);
   const [tope, setTope] = useState(String(TOPE_CHEQUES_POR_DIA));
+  // modo "Cuotas" (préstamos): N cuotas mensuales el día X, o quincenales
+  const [modo, setModo] = useState<"cheques" | "cuotas">("cheques");
+  const [nCuotas, setNCuotas] = useState("12");
+  const [frecuencia, setFrecuencia] = useState<"mensual" | "quincenal">("mensual");
+  const [primeraCuota, setPrimeraCuota] = useState(hoyEcuador());
+  const [valorCuota, setValorCuota] = useState("");
 
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -111,6 +118,7 @@ export default function FormDeuda({
     setCuotas([]);
     setPlazos("30/60/90/120"); setFechaBase(hoyEcuador()); setGenMedio("cheque"); setGenNumero(""); setGenBanco("");
     setAlSabado(true); setTope(String(TOPE_CHEQUES_POR_DIA));
+    setModo("cheques"); setNCuotas("12"); setFrecuencia("mensual"); setPrimeraCuota(hoyEcuador()); setValorCuota("");
     setGuardando(false); setErr(null);
   }, [abierto]);
 
@@ -149,6 +157,36 @@ export default function FormDeuda({
       alSabado && genMedio === "cheque"
         ? ajustarASabados(base, { ocupado, tope: topeNum, despuesDe: fechaBase }).map(aFila)
         : base.map(aFila)
+    );
+  }
+
+  /**
+   * Préstamos: N cuotas mensuales (el mismo día cada mes) o quincenales (15 y
+   * fin de mes). Con valor de cuota fijo, todas valen eso y la última cuadra
+   * con el total; sin él, el total se reparte en partes iguales.
+   */
+  function generarCuotas() {
+    const n = parseInt(nCuotas, 10);
+    if (!(n >= 1 && n <= 120)) return setErr("Escribe cuántas cuotas son (entre 1 y 120).");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(primeraCuota)) return setErr("Falta la fecha de la primera cuota.");
+    const fechas = fechasPeriodicas(primeraCuota, n, frecuencia);
+    const fija = parseFloat(valorCuota);
+    let montos: number[];
+    if (fija > 0) {
+      const totalC = montoNum > 0 ? aCentavos(montoNum) : aCentavos(fija) * n;
+      const ultimo = totalC - aCentavos(fija) * (n - 1);
+      if (ultimo <= 0) return setErr(`Con cuotas de ${money(fija)}, ${n} cuotas pasan del monto de la deuda.`);
+      montos = [...Array(n - 1).fill(aCentavos(fija)), ultimo].map((c) => c / 100);
+      if (!(montoNum > 0)) setMonto((totalC / 100).toFixed(2));
+    } else {
+      if (!(montoNum > 0)) return setErr("Escribe el monto de la deuda o el valor de cada cuota.");
+      montos = repartirCuotas({ total: montoNum, plazosDias: fechas.map(() => 0), fechaBase: primeraCuota }).map((c) => c.monto);
+    }
+    setErr(null);
+    setCuotas(
+      fechas.map((fecha, i) =>
+        aFila({ fecha, monto: montos[i], medio: genMedio === "cheque" ? "transferencia" : genMedio, numero: "", banco: genBanco.trim() })
+      )
     );
   }
 
@@ -308,7 +346,51 @@ export default function FormDeuda({
       </details>
 
       <h4 style={{ margin: "8px 0 6px" }}>Pagos programados (cheques / cuotas)</h4>
-      <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <button type="button" className={`prod-tab${modo === "cheques" ? " active" : ""}`} onClick={() => setModo("cheques")}>
+          Cheques (30/60/90…)
+        </button>
+        <button type="button" className={`prod-tab${modo === "cuotas" ? " active" : ""}`} onClick={() => setModo("cuotas")}>
+          Cuotas (préstamo)
+        </button>
+      </div>
+      {modo === "cuotas" && (
+        <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+          <Fila>
+            <Campo label="Número de cuotas">
+              <input className="pinput" type="number" min="1" step="1" value={nCuotas} onChange={(e) => setNCuotas(e.target.value)} />
+            </Campo>
+            <Campo label="Cada cuánto">
+              <select className="pinput" value={frecuencia} onChange={(e) => setFrecuencia(e.target.value as "mensual" | "quincenal")}>
+                <option value="mensual">Mensual (el mismo día cada mes)</option>
+                <option value="quincenal">Quincenal (el 15 y fin de mes)</option>
+              </select>
+            </Campo>
+            <Campo label={frecuencia === "mensual" ? "Primera cuota (fija el día)" : "Desde"}>
+              <input className="pinput" type="date" value={primeraCuota} onChange={(e) => setPrimeraCuota(e.target.value)} />
+            </Campo>
+          </Fila>
+          <Fila>
+            <Campo label="Valor de cada cuota (opcional)">
+              <input className="pinput" type="number" step="0.01" min="0" value={valorCuota} onChange={(e) => setValorCuota(e.target.value)}
+                placeholder="si no, se reparte el total" />
+            </Campo>
+            <Campo label="Medio">
+              <select className="pinput" value={genMedio} onChange={(e) => setGenMedio(e.target.value as Medio)}>
+                {MEDIOS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </Campo>
+            <div style={{ display: "flex", alignItems: "flex-end", marginBottom: 12 }}>
+              <button className="btn" type="button" onClick={generarCuotas}>Generar cuotas</button>
+            </div>
+          </Fila>
+          <p className="sub" style={{ fontSize: 11.5, margin: 0 }}>
+            En Quincena y Mes solo se suma la cuota que cae en ese periodo, no todo el préstamo.
+            {frecuencia === "mensual" && " Si el día no existe en un mes (31 en febrero), cae el último día."}
+          </p>
+        </div>
+      )}
+      <div className="card" style={{ padding: 12, marginBottom: 10, display: modo === "cheques" ? undefined : "none" }}>
         <Fila>
           <Campo label="Plazos en días">
             <input className="pinput" value={plazos} onChange={(e) => setPlazos(e.target.value)} placeholder="30/60/90/120" />

@@ -3,11 +3,11 @@
 import { useMemo, useState } from "react";
 import { fmtFecha, hoyEcuador } from "@/lib/fechas";
 import { money } from "@/lib/finanzas/formato";
-import { armarAgenda, DIAS_ATENTO, type ItemPago, type ItemPosible } from "@/lib/finanzas/agenda";
+import { armarAgenda, DIAS_ATENTO, type ItemEstimado, type ItemPago, type ItemPosible } from "@/lib/finanzas/agenda";
 import { anterior, periodoDe, quincenasDelMes, siguiente, type Periodo } from "@/lib/finanzas/periodos";
 import { Badge } from "@/components/ui";
 import { BannerError, EtiquetaAmbito, EtiquetaExigibilidad, useDatosFinanzas } from "./comunes";
-import { ModalPagar, type PagoAPagar } from "./ModalesPago";
+import { ModalGasto, ModalPagar, type GastoSuelto, type PagoAPagar } from "./ModalesPago";
 
 /**
  * Pantalla Quincena / Mes. Todo lo que muestra sale de armarAgenda (la única
@@ -24,6 +24,7 @@ export default function VistaPeriodo({
   const [periodo, setPeriodo] = useState<Periodo>(() => periodoDe(tipo, hoy));
   const [conPersonal, setConPersonal] = useState(false);
   const [pagando, setPagando] = useState<PagoAPagar | null>(null);
+  const [gasto, setGasto] = useState<GastoSuelto | null>(null);
   const { supabase, datos, error, cargando, recargar } = useDatosFinanzas(periodo);
 
   const agenda = useMemo(
@@ -51,6 +52,19 @@ export default function VistaPeriodo({
             <button className="btn" onClick={() => setPeriodo(periodoDe(tipo, hoy))}>Hoy</button>
           )}
         </div>
+        <button
+          className="btn"
+          onClick={() =>
+            setGasto({
+              titulo: "Gasto hormiga",
+              categoria: "hormiga",
+              ambito: "empresa",
+              ayuda: "Gastitos del negocio (taxi, fundas, almuerzo de trabajo…). Cuentan como gasto de la empresa.",
+            })
+          }
+        >
+          + Gasto hormiga
+        </button>
       </div>
 
       {error ? (
@@ -70,7 +84,7 @@ export default function VistaPeriodo({
 
           <div className="cards" style={{ marginBottom: 22 }}>
             <div className="card">
-              <div className="label">Pagos de {tipo === "quincena" ? "la quincena" : "el mes"}</div>
+              <div className="label">Pagos seguros de {tipo === "quincena" ? "la quincena" : "el mes"}</div>
               <div className="value">{money(agenda.totalPagos)}</div>
               <div className="hint">
                 {agenda.pagos.length} pago{agenda.pagos.length !== 1 ? "s" : ""}
@@ -78,6 +92,15 @@ export default function VistaPeriodo({
                   ` · empresa ${money(agenda.totalPagosEmpresa)} · personal ${money(agenda.totalPagosPersonal)}`}
               </div>
             </div>
+            {agenda.estimados.length > 0 && (
+              <div className="card">
+                <div className="label">Con estimados</div>
+                <div className="value">{money(agenda.totalPagos + agenda.totalEstimadoPendiente)}</div>
+                <div className="hint">
+                  seguros + lo que falta de los estimados del mes ({money(agenda.totalEstimadoPendiente)})
+                </div>
+              </div>
+            )}
             {agenda.esActual && (
               <div className="card">
                 <div className="label">Vencidos de antes</div>
@@ -116,6 +139,31 @@ export default function VistaPeriodo({
             <ListaPagos items={agenda.pagos} onPagar={setPagando} posibles={agenda.posibles} />
           ) : (
             <div className="card empty">Nada programado en este periodo.</div>
+          )}
+
+          {agenda.estimados.length > 0 && (
+            <>
+              <h3 style={{ margin: "22px 0 8px" }}>
+                Estimados de {nombreMes(agenda.estimados[0].mes)} — faltan {money(agenda.totalEstimadoPendiente)}
+              </h3>
+              <p className="sub" style={{ fontSize: 12, margin: "0 0 8px" }}>
+                No son pagos seguros: es lo que se calcula que se va a gastar.
+                {tipo === "quincena" && " Se muestran los del mes completo."} Cada pago que anotes se descuenta de lo que falta.
+              </p>
+              <ListaEstimados
+                items={agenda.estimados}
+                onPago={(e) =>
+                  setGasto({
+                    titulo: `Pago de ${e.nombre}`,
+                    categoria: e.categoria,
+                    ambito: e.ambito,
+                    concepto: e.nombre,
+                    monto: e.pendiente > 0 ? e.pendiente : undefined,
+                    ayuda: "Se registra como gasto y se descuenta del estimado del mes.",
+                  })
+                }
+              />
+            </>
           )}
 
           {agenda.proximos.length > 0 && (
@@ -193,6 +241,16 @@ export default function VistaPeriodo({
         </>
       ) : null}
 
+      <ModalGasto
+        supabase={supabase}
+        gasto={gasto}
+        onCerrar={() => setGasto(null)}
+        onHecho={async (m) => {
+          setGasto(null);
+          avisar(m);
+          await recargar();
+        }}
+      />
       <ModalPagar
         supabase={supabase}
         pago={pagando}
@@ -248,6 +306,8 @@ function ListaPagos({
               </td>
               <td>
                 <strong>{p.quien}</strong> <EtiquetaAmbito ambito={p.ambito} /> <EtiquetaExigibilidad exigibilidad={p.exigibilidad} />
+                {p.origen === "fijo" && <> <Badge>fijo</Badge></>}
+                {p.origen === "tarjeta" && <> <Badge>tarjeta</Badge></>}
                 {p.vencido && <> <Badge color="rojo">vencido</Badge></>}
                 {p.estado === "rebotado" && <> <Badge color="rojo">rebotado</Badge></>}
                 {p.concepto && <div className="sub" style={{ fontSize: 11.5 }}>{p.concepto}</div>}
@@ -271,6 +331,11 @@ function ListaPagos({
                         medio: p.medio,
                         numero: p.numero,
                         ambito: p.ambito,
+                        origen: p.origen,
+                        fijoId: p.fijoId,
+                        fechaProgramada: p.fechaProgramada,
+                        tarjetaId: p.tarjetaId,
+                        corteId: p.corteId,
                       })
                     }
                   >
@@ -294,6 +359,58 @@ function ListaPagos({
               <td></td>
               <td className="num">{money(x.monto)}</td>
               <td></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const nombreMes = (mes: string) => MESES[Number(mes.slice(5, 7)) - 1] ?? mes;
+
+const FUENTES: Record<ItemEstimado["fuente"], string> = {
+  a_mano: "puesto a mano",
+  mismo_mes_anio_pasado: "como el mismo mes del año pasado",
+  promedio: "promedio de los meses anteriores × temporada",
+  base: "valor base × temporada",
+};
+
+function ListaEstimados({ items, onPago }: { items: ItemEstimado[]; onPago: (e: ItemEstimado) => void }) {
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Estimado</th>
+            <th style={{ textAlign: "right" }}>Del mes</th>
+            <th style={{ textAlign: "right" }}>Ya gastado</th>
+            <th style={{ textAlign: "right" }}>Programado</th>
+            <th style={{ textAlign: "right" }}>Falta</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((e) => (
+            <tr key={e.estimadoId}>
+              <td>
+                <strong>{e.nombre}</strong> <EtiquetaAmbito ambito={e.ambito} />
+                <div className="sub" style={{ fontSize: 11.5 }}>{e.categoria} · {FUENTES[e.fuente]}</div>
+              </td>
+              <td className="num">{money(e.monto)}</td>
+              <td className="num">{money(e.gastado)}</td>
+              <td className="num">{money(e.programado)}</td>
+              <td className="num">
+                {e.pasado > 0 ? (
+                  <span style={{ color: "var(--bad)" }}>se pasó {money(e.pasado)}</span>
+                ) : (
+                  money(e.pendiente)
+                )}
+              </td>
+              <td style={{ textAlign: "right" }}>
+                <button className="btn" style={{ fontSize: 12 }} onClick={() => onPago(e)}>+ Pago</button>
+              </td>
             </tr>
           ))}
         </tbody>
